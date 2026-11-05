@@ -29,7 +29,7 @@ See [`docs/mcp-tools.md`](docs/mcp-tools.md) for the full tool catalogue.
 
 ## Web interface capabilities
 
-`contextos-web` binds to a loopback address, because it has no authentication of its own, and reaches vaults only through the MCP servers it is configured with.
+`contextos-web` binds to a loopback address, because it has no authentication of its own. It reaches everything through MCP servers, and needs only one: `contextos`, which serves every vault. Further MCP servers are optional, and give workflows and apps access to data and functions from third-party services.
 
 | Area | Capability |
 | --- | --- |
