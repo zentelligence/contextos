@@ -136,7 +136,7 @@ fn config_vault_add_list_remove_round_trips() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
-fn config_vault_remove_rejects_removing_the_last_vault() -> Result<(), Box<dyn std::error::Error>> {
+fn config_vault_remove_permits_removing_the_last_vault() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = tempdir()?;
     let vault = fixture.path().join("vault");
     fs::create_dir(&vault)?;
@@ -155,9 +155,9 @@ fn config_vault_remove_rejects_removing_the_last_vault() -> Result<(), Box<dyn s
 
     let output = contextos(&config, &["config", "vault", "remove", "mine"])?;
 
-    assert!(!output.status.success());
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let list = contextos(&config, &["config", "vault", "list"])?;
-    assert!(String::from_utf8(list.stdout)?.contains("mine"));
+    assert!(String::from_utf8(list.stdout)?.contains("No vaults configured"));
     Ok(())
 }
 

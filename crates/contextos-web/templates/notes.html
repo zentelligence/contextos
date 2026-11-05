@@ -1,0 +1,164 @@
+{% import "metadata_panel.html" as metadata %}
+{% macro render_tree(events) %}
+{% for event in events %}
+  {% match event %}
+  {% when TreeEvent::OpenFolder with (label, is_open) %}
+  <details class="nav-group" {% if *is_open %}open{% endif %}>
+    <summary class="nav-group-summary">
+      <span class="nav-group-heading-link"><span class="nav-group-label-text">{{ label }}</span></span>
+      <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+    </summary>
+    <div class="tree-nest">
+  {% when TreeEvent::CloseFolder %}
+    </div>
+  </details>
+  {% when TreeEvent::Note with (note) %}
+  <a class="notes-list-item{% if note.active %} active{% endif %}" href="{{ note.href }}">
+  {% if note.has_custom_title || (note.date.is_empty() && note.time.is_empty()) %}
+    <span class="notes-list-item-title">{{ note.title }}</span>
+  {% endif %}
+    <span class="notes-list-item-meta hint mono">{{ note.date }}{% if !note.date.is_empty() && !note.time.is_empty() %} &middot; {% endif %}{{ note.time }}</span>
+  </a>
+  {% endmatch %}
+{% endfor %}
+{% endmacro %}
+
+{% macro sidebar_pane(title, events, empty_message) %}
+<aside class="notes-sidebar">
+  <div class="section-label">{{ title }}</div>
+{% if events.is_empty() %}
+  <p class="hint italic">{{ empty_message }}</p>
+{% else %}
+  <div class="tree-nest">
+  {% call render_tree(events) %}{% endcall %}
+  </div>
+{% endif %}
+</aside>
+{% endmacro %}
+
+<div class="notes-screen" hx-ext="json-enc">
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+  <div class="notes-layout{% if date_structure_active %} notes-layout-split{% else if !metadata_panel_side_is_left %} notes-layout-metadata-right{% endif %}">
+    <div class="notes-side-column">
+    {% if let Some(selected) = selected %}
+      {% if metadata_panel_side_is_left %}
+        {% call metadata::metadata_panel(urls.notes(selected.relative_path), selected.expected_hash, selected.weekday, selected.iso_week, selected.metadata_fields.clone(), "note") %}{% endcall %}
+      {% endif %}
+    {% endif %}
+    {% if date_structure_active && date_structure_side_is_left %}
+      {% call sidebar_pane("Dated", dated_tree_events, "No dated notes yet.") %}{% endcall %}
+    {% endif %}
+    {% if date_structure_active && !date_structure_side_is_left %}
+      {% call sidebar_pane("Regular", regular_tree_events, "No other notes.") %}{% endcall %}
+    {% endif %}
+    {% if !date_structure_active %}
+      {% call sidebar_pane("Notes", regular_tree_events, "No unique notes yet. Use the note icon in the header to start one.") %}{% endcall %}
+    {% endif %}
+    </div>
+    <div class="notes-main">
+    {% if let Some(selected) = selected %}
+      <div class="notes-main-header">
+        <span class="ic ic-file-text" aria-hidden="true"></span>
+        <span class="header-actions">
+        <button
+          type="button"
+          class="btn small"
+          title="Delete note"
+          aria-label="Delete note"
+          hx-get="{{ urls.notes_action(selected.relative_path, "confirm-delete") }}"
+          hx-target="#notes-main-body"
+          hx-swap="outerHTML"
+        >Delete</button>
+        </span>
+      </div>
+
+      <div class="notes-main-body" id="notes-main-body">
+      <form
+        class="notes-rename-form"
+        hx-patch="{{ urls.notes_action(selected.relative_path, "rename") }}"
+        hx-target="closest .notes-screen"
+        hx-swap="outerHTML"
+      >
+        <label for="notes-rename-field" class="hint">File name</label>
+        <div class="notes-rename-row">
+          <input id="notes-rename-field" type="text" name="new_name" value="{{ selected.rename_value }}" required>
+          <span class="hint mono">.md</span>
+          <button type="submit" class="btn small">Rename</button>
+        </div>
+      </form>
+
+      <form
+        id="notes-body-form"
+        class="notes-body-form"
+        hx-patch="{{ urls.notes(selected.relative_path) }}"
+        hx-target="closest .notes-screen"
+        hx-swap="outerHTML"
+      >
+        <input type="hidden" name="expected_hash" value="{{ selected.expected_hash }}">
+        <div class="save-bar save-bar-top">
+          <button type="submit" class="btn primary small" title="Save note" aria-label="Save note">Save</button>
+        </div>
+        <textarea name="content" class="notes-body-textarea" placeholder="Start typing&hellip;">{{ selected.body }}</textarea>
+        <div class="save-bar">
+          <button type="submit" class="btn primary small" title="Save note" aria-label="Save note">Save</button>
+        </div>
+      </form>
+      </div>
+    {% else if let Some(page_file) = page_file %}
+      <div class="notes-main-header">
+        <span class="ic ic-file-text" aria-hidden="true"></span>
+        <span class="notes-title">{{ page_file.title }}</span>
+      </div>
+      <div class="notes-main-body" id="notes-main-body">
+        <div class="wiki-rendered">{{ page_file.html|safe }}</div>
+      </div>
+    {% else if let Some(creating) = creating %}
+      <div class="notes-main-header">
+        <span class="ic ic-square-pen" aria-hidden="true"></span>
+        <span class="notes-title">New note</span>
+      </div>
+
+      <div class="notes-main-body" id="notes-main-body">
+      <form
+        id="notes-create-form"
+        class="notes-body-form"
+        hx-post="{{ urls.notes("") }}"
+        hx-target="closest .notes-screen"
+        hx-swap="outerHTML"
+      >
+        <div class="field-row">
+          <label for="notes-create-path-field">File path</label>
+          <input id="notes-create-path-field" type="text" name="path" value="{{ creating.default_path }}" required>
+        </div>
+        <div class="save-bar save-bar-top">
+          <button type="submit" class="btn primary small" title="Save note" aria-label="Save note">Save</button>
+        </div>
+        <textarea name="content" class="notes-body-textarea" placeholder="Start typing&hellip;">{{ creating.default_body }}</textarea>
+        <div class="save-bar">
+          <button type="submit" class="btn primary small" title="Save note" aria-label="Save note">Save</button>
+        </div>
+      </form>
+      </div>
+    {% else %}
+      <p class="hint italic">Select a note, or start one from the header.</p>
+    {% endif %}
+    </div>
+  {% if date_structure_active || !metadata_panel_side_is_left %}
+    <div class="notes-side-column">
+    {% if let Some(selected) = selected %}
+      {% if !metadata_panel_side_is_left %}
+        {% call metadata::metadata_panel(urls.notes(selected.relative_path), selected.expected_hash, selected.weekday, selected.iso_week, selected.metadata_fields.clone(), "note") %}{% endcall %}
+      {% endif %}
+    {% endif %}
+    {% if date_structure_active && date_structure_side_is_left %}
+      {% call sidebar_pane("Regular", regular_tree_events, "No other notes.") %}{% endcall %}
+    {% endif %}
+    {% if date_structure_active && !date_structure_side_is_left %}
+      {% call sidebar_pane("Dated", dated_tree_events, "No dated notes yet.") %}{% endcall %}
+    {% endif %}
+    </div>
+  {% endif %}
+  </div>
+</div>

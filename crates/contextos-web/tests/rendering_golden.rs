@@ -1,12 +1,9 @@
-//! Golden-file determinism suite (Phase 15 gate, `web-rendering.md` §5):
-//! one fixture per stage (wikilink, embed, triple-colon fence, callout,
-//! `.base` view, `.canvas`, Mermaid diagram) renders twice per run,
-//! asserting both run-to-run identity and a match against a checked-in
-//! golden file.
+//! Golden-file determinism suite: one fixture per stage (wikilink, embed, triple-colon
+//! fence, callout, `.base` view, `.canvas`, Mermaid diagram) renders twice per run, asserting both run-to-run
+//! identity and a match against a checked-in golden file.
 //!
-//! Set `UPDATE_GOLDEN=1` to (re)write the golden files from the current
-//! renderer output, the standard bootstrap/refresh path for this kind of
-//! suite: a missing golden file without that flag is a test failure, not a
+//! Set `UPDATE_GOLDEN=1` to (re)write the golden files from the current renderer output, the standard
+//! bootstrap/refresh path for this kind of suite: a missing golden file without that flag is a test failure, not a
 //! silent pass, so an accidentally deleted golden is caught by CI.
 
 mod support;
@@ -46,7 +43,6 @@ async fn router_over(vault_dir: &Path, config_dir: &Path) -> Result<Router, BoxE
         clients,
         Some(config_dir),
         &config_dir.join("web.toml"),
-        "contextos".to_owned(),
     ))
 }
 
@@ -104,7 +100,7 @@ async fn render_twice_and_check_golden(
 
 #[tokio::test]
 // A straight-line sequence of fixture writes and one golden-comparison
-// call per content type (seven kinds, `web-rendering.md` §5); splitting it
+// call per content type (seven kinds); splitting it
 // into helper functions would not reduce complexity, only indirection.
 #[allow(clippy::too_many_lines)]
 async fn golden_file_determinism_suite() -> Result<(), BoxError> {
@@ -112,39 +108,41 @@ async fn golden_file_determinism_suite() -> Result<(), BoxError> {
     let config_dir = tempfile::tempdir()?;
 
     write(vault_dir.path(), "index.md", "# Root\n")?;
+    // A note, a Base, a Canvas, and a diagram are only ever shown inside the section that owns their folder, so every
+    // fixture is read on the wiki screen.
     write(
         vault_dir.path(),
-        "target-note.md",
+        "memory/wiki/target-note.md",
         "# Target note\n\nResolved target content.\n",
     )?;
     write(
         vault_dir.path(),
-        "embed-target.md",
+        "memory/wiki/embed-target.md",
         "# Embed target\n\nEmbedded content body.\n",
     )?;
     write(
         vault_dir.path(),
-        "wikilink-fixture.md",
+        "memory/wiki/wikilink-fixture.md",
         "# Wikilink fixture\n\nA [[target-note]] link.\n",
     )?;
     write(
         vault_dir.path(),
-        "embed-fixture.md",
+        "memory/wiki/embed-fixture.md",
         "# Embed fixture\n\n![[embed-target]]\n",
     )?;
     write(
         vault_dir.path(),
-        "fence-fixture.md",
+        "memory/wiki/fence-fixture.md",
         "# Fence fixture\n\n:::warning\nA recognised fence body.\n:::\n",
     )?;
     write(
         vault_dir.path(),
-        "callout-fixture.md",
+        "memory/wiki/callout-fixture.md",
         "# Callout fixture\n\n> [!tip] Handy\n> A callout body.\n",
     )?;
     write(
         vault_dir.path(),
-        "base-fixture.base",
+        "memory/wiki/base-fixture.base",
         "views:\n  - type: table\n    name: \"All\"\n    order:\n      - file.path\n      - status\n",
     )?;
     write(
@@ -154,34 +152,62 @@ async fn golden_file_determinism_suite() -> Result<(), BoxError> {
     )?;
     write(
         vault_dir.path(),
-        "canvas-fixture.canvas",
+        "memory/wiki/canvas-fixture.canvas",
         "{\"nodes\":[{\"id\":\"n1\",\"type\":\"text\",\"x\":0,\"y\":0,\"width\":160,\"height\":60,\"text\":\"Node\"}],\"edges\":[]}\n",
     )?;
-    write(vault_dir.path(), "mermaid-fixture.mermaid", "graph TD\n  A --> B\n")?;
+    write(
+        vault_dir.path(),
+        "memory/wiki/mermaid-fixture.mermaid",
+        "graph TD\n  A --> B\n",
+    )?;
 
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
     render_twice_and_check_golden(
         &router,
-        &format!("/{VAULT_NAME}/wikilink-fixture.md"),
+        &format!("/{VAULT_NAME}/wiki/wikilink-fixture.md"),
         "wikilink",
         "html",
     )
     .await?;
-    render_twice_and_check_golden(&router, &format!("/{VAULT_NAME}/embed-fixture.md"), "embed", "html").await?;
-    render_twice_and_check_golden(&router, &format!("/{VAULT_NAME}/fence-fixture.md"), "fence", "html").await?;
-    render_twice_and_check_golden(&router, &format!("/{VAULT_NAME}/callout-fixture.md"), "callout", "html").await?;
-    render_twice_and_check_golden(&router, &format!("/{VAULT_NAME}/base-fixture.base"), "base", "html").await?;
     render_twice_and_check_golden(
         &router,
-        &format!("/{VAULT_NAME}/canvas-fixture.canvas"),
+        &format!("/{VAULT_NAME}/wiki/embed-fixture.md"),
+        "embed",
+        "html",
+    )
+    .await?;
+    render_twice_and_check_golden(
+        &router,
+        &format!("/{VAULT_NAME}/wiki/fence-fixture.md"),
+        "fence",
+        "html",
+    )
+    .await?;
+    render_twice_and_check_golden(
+        &router,
+        &format!("/{VAULT_NAME}/wiki/callout-fixture.md"),
+        "callout",
+        "html",
+    )
+    .await?;
+    render_twice_and_check_golden(
+        &router,
+        &format!("/{VAULT_NAME}/wiki/base-fixture.base"),
+        "base",
+        "html",
+    )
+    .await?;
+    render_twice_and_check_golden(
+        &router,
+        &format!("/{VAULT_NAME}/wiki/canvas-fixture.canvas"),
         "canvas",
         "html",
     )
     .await?;
     render_twice_and_check_golden(
         &router,
-        &format!("/{VAULT_NAME}/mermaid-fixture.mermaid"),
+        &format!("/{VAULT_NAME}/wiki/mermaid-fixture.mermaid"),
         "mermaid",
         "html",
     )

@@ -1,0 +1,352 @@
+{% import "vault_settings_nav.html" as settings_nav %}
+{% import "vault_settings_tasks.html" as tasks_editor %}
+<div class="vault-settings settings" hx-ext="json-enc">
+  <h1>Vault Settings</h1>
+  <div class="settings-grid">
+    {% call settings_nav::nav(nav) %}{% endcall %}
+    <div>
+      <section class="settings-panel" id="pane-tasks">
+        <h2>Tasks</h2>
+        <p class="hint">
+          How the Tasks screens read this vault's tasks, saved to <code>.contextos/tasks.toml</code>: the stages a task
+          moves through, what a task can be, how urgent it can be, and what the hierarchy view calls each level.
+        </p>
+        {% call tasks_editor::pane(tasks, vault_name) %}{% endcall %}
+      </section>
+      <section class="settings-panel" id="pane-inbox_outbox" hidden>
+        <h2>Inbox &amp; Outbox</h2>
+        <p class="hint">
+          Which registered agent an Inbox "Ingest" action assigns a task to, and the Inbox/Outbox/processed
+          directory names. The agent must already be registered in <code>.contextos/agents.toml</code>.
+        </p>
+      {% if let Some(error) = inbox_outbox_error %}
+        <p class="hint error">{{ error }}</p>
+      {% endif %}
+        <form
+          hx-patch="{{ urls.settings() }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-vals="js:{target: 'inbox_outbox', curator_agent: document.getElementById('curator-agent-field').value, inbox_dir: document.getElementById('inbox-dir-field').value, outbox_dir: document.getElementById('outbox-dir-field').value, processed_dir: document.getElementById('processed-dir-field').value, expected_hash: '{{ inbox_outbox_expected_hash }}'}"
+        >
+          <div class="field-row">
+            <label for="curator-agent-field">Curator agent</label>
+            <select id="curator-agent-field">
+            {% for option in curator_agent_options %}
+              <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="inbox-dir-field">Inbox directory</label>
+            <input id="inbox-dir-field" type="text" value="{{ inbox_dir_value }}">
+          </div>
+          <div class="field-row">
+            <label for="outbox-dir-field">Outbox directory</label>
+            <input id="outbox-dir-field" type="text" value="{{ outbox_dir_value }}">
+          </div>
+          <div class="field-row">
+            <label for="processed-dir-field">Processed directory</label>
+            <input id="processed-dir-field" type="text" value="{{ processed_dir_value }}">
+          </div>
+          <button type="submit" class="btn primary small">Save</button>
+        </form>
+      </section>
+      <section class="settings-panel" id="pane-journal" hidden>
+        <h2>Journal</h2>
+        <p class="hint">
+          Where the Journal screen's date-partitioned entries live, and which Templater-compatible daily-note template
+          a new day starts from: its sections become the day's tabs, in its order, and its first save writes it.
+        </p>
+      {% if let Some(error) = journal_error %}
+        <p class="hint error">{{ error }}</p>
+      {% endif %}
+        <form
+          hx-patch="{{ urls.settings() }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-vals="js:{target: 'journal', journal_dir: document.getElementById('journal-dir-field').value, template_path: document.getElementById('journal-template-path-field').value, date_format: document.getElementById('journal-date-format-field').value, date_structure_side: document.getElementById('journal-date-structure-side-field').value, task_opened_section: document.getElementById('journal-task-opened-section-field').value, task_closed_section: document.getElementById('journal-task-closed-section-field').value, read_only_sections: document.getElementById('journal-read-only-sections-field').value, expected_hash: '{{ journal_expected_hash }}'}"
+        >
+          <div class="field-row">
+            <label for="journal-dir-field">Journal directory</label>
+            <input id="journal-dir-field" type="text" value="{{ journal_dir_value }}">
+          </div>
+          <div class="field-row">
+            <label for="journal-template-path-field">Template path</label>
+            <input id="journal-template-path-field" type="text" value="{{ template_path_value }}">
+          </div>
+          <div class="field-row">
+            <label for="journal-date-format-field">Date format</label>
+            <input id="journal-date-format-field" type="text" value="{{ journal_date_format_value }}">
+          </div>
+          <p class="hint">
+            A brand-new entry's own default path within the Journal directory, in Templater/moment.js format
+            (<code>YYYY</code>, <code>MM</code>, <code>DD</code>, <code>MMMM</code>, <code>dddd</code>,
+            <code>Do</code>, <code>ww</code>; <code>/</code> for real folders). This is only ever a default for a
+            new entry, never a shape an existing one is assumed to fit.
+          </p>
+          <div class="field-row">
+            <label for="journal-date-structure-side-field">Folder pane position</label>
+            <select id="journal-date-structure-side-field">
+              <option value="left" {% if journal_date_structure_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !journal_date_structure_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <p class="hint">
+            A day's sections are the template's <code>##</code> headings. The settings below name sections by their
+            heading text, without the <code>#</code> marks; leave one blank for none.
+          </p>
+          <div class="field-row">
+            <label for="journal-task-opened-section-field">New tasks section</label>
+            <input id="journal-task-opened-section-field" type="text" value="{{ journal_task_opened_section_value }}">
+          </div>
+          <div class="field-row">
+            <label for="journal-task-closed-section-field">Closed tasks section</label>
+            <input id="journal-task-closed-section-field" type="text" value="{{ journal_task_closed_section_value }}">
+          </div>
+          <p class="hint">
+            A task is listed under these sections of the day's entry when it is created or closed. A day's entry
+            without the section gains it.
+          </p>
+          <div class="field-row">
+            <label for="journal-read-only-sections-field">Read-only sections</label>
+            <textarea id="journal-read-only-sections-field" rows="3">{{ journal_read_only_sections_value }}</textarea>
+          </div>
+          <p class="hint">
+            One heading per line. These sections are shown but never offered for editing, such as one another tool
+            appends to.
+          </p>
+          <button type="submit" class="btn primary small">Save</button>
+        </form>
+      </section>
+      <section class="settings-panel" id="pane-notes" hidden>
+        <h2>Notes</h2>
+        <p class="hint">
+          Where the Notes screen's own date-partitioned unique notes live, and which Templater-compatible template
+          seeds a brand-new note's own frontmatter and initial body every time one is started.
+        </p>
+      {% if let Some(error) = notes_error %}
+        <p class="hint error">{{ error }}</p>
+      {% endif %}
+        <form
+          hx-patch="{{ urls.settings() }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-vals="js:{target: 'notes', notes_dir: document.getElementById('notes-dir-field').value, template_path: document.getElementById('notes-template-path-field').value, date_format: document.getElementById('notes-date-format-field').value, date_structure_active: document.getElementById('notes-date-structure-active-field').checked, date_structure_side: document.getElementById('notes-date-structure-side-field').value, metadata_panel_side: document.getElementById('notes-metadata-panel-side-field').value, expected_hash: '{{ notes_expected_hash }}'}"
+        >
+          <div class="field-row">
+            <label for="notes-dir-field">Notes directory</label>
+            <input id="notes-dir-field" type="text" value="{{ notes_dir_value }}">
+          </div>
+          <div class="field-row">
+            <label for="notes-template-path-field">Template path</label>
+            <input id="notes-template-path-field" type="text" value="{{ notes_template_path_value }}">
+          </div>
+          <div class="field-row">
+            <label for="notes-date-format-field">Date format</label>
+            <input id="notes-date-format-field" type="text" value="{{ notes_date_format_value }}">
+          </div>
+          <p class="hint">
+            A brand-new note's own default path within the Notes directory, in Templater/moment.js format
+            (<code>YYYY</code>, <code>MM</code>, <code>DD</code>, <code>HH</code>, <code>mm</code>,
+            <code>MMMM</code>, <code>dddd</code>, <code>Do</code>, <code>ww</code>; <code>/</code> for real
+            folders). This is only ever a default for a new note, never a shape an existing one is assumed to fit -
+            a note filed anywhere else still shows up in the regular pane below.
+          </p>
+          <div class="field-row checkbox-row">
+            <input id="notes-date-structure-active-field" type="checkbox" {% if notes_date_structure_active %}checked{% endif %}>
+            <label for="notes-date-structure-active-field">Split the sidebar into a dated and a regular pane</label>
+          </div>
+          <div class="field-row">
+            <label for="notes-date-structure-side-field">Dated pane side</label>
+            <select id="notes-date-structure-side-field">
+              <option value="left" {% if notes_date_structure_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !notes_date_structure_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="notes-metadata-panel-side-field">Metadata panel side</label>
+            <select id="notes-metadata-panel-side-field">
+              <option value="left" {% if notes_metadata_panel_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !notes_metadata_panel_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <p class="hint">
+            Which side a selected note's own metadata (status, tags, and other frontmatter fields) stacks above the
+            folder pane already on that side - independently of the dated pane's own side above.
+          </p>
+          <button type="submit" class="btn primary small">Save</button>
+        </form>
+      </section>
+      <section class="settings-panel" id="pane-wiki" hidden>
+        <h2>Wiki</h2>
+        <p class="hint">
+          Where the compiled Wiki's own domain/topic/article folder tree lives, and which side of the split screen
+          the folder-tree sidebar and the metadata panel each render on.
+        </p>
+      {% if let Some(error) = wiki_error %}
+        <p class="hint error">{{ error }}</p>
+      {% endif %}
+        <form
+          hx-patch="{{ urls.settings() }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-vals="js:{target: 'wiki', wiki_dir: document.getElementById('wiki-dir-field').value, date_structure_side: document.getElementById('wiki-tree-side-field').value, metadata_panel_side: document.getElementById('wiki-metadata-panel-side-field').value, expected_hash: '{{ wiki_expected_hash }}'}"
+        >
+          <div class="field-row">
+            <label for="wiki-dir-field">Wiki directory</label>
+            <input id="wiki-dir-field" type="text" value="{{ wiki_dir_value }}">
+          </div>
+          <div class="field-row">
+            <label for="wiki-tree-side-field">Folder-tree pane position</label>
+            <select id="wiki-tree-side-field">
+              <option value="left" {% if wiki_tree_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !wiki_tree_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="wiki-metadata-panel-side-field">Metadata panel side</label>
+            <select id="wiki-metadata-panel-side-field">
+              <option value="left" {% if wiki_metadata_panel_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !wiki_metadata_panel_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <p class="hint">
+            Which side a selected page's own metadata (frontmatter fields, shown and edited as real fields) stacks
+            above the folder-tree pane already on that side - independently of the folder-tree pane's own side
+            above.
+          </p>
+          <button type="submit" class="btn primary small">Save</button>
+        </form>
+      </section>
+      <section class="settings-panel" id="pane-insights" hidden>
+        <h2>Insights</h2>
+        <p class="hint">
+          Where the sharded insight-note store lives, and which side of the split screen the shard picker and the
+          metadata panel each render on.
+        </p>
+      {% if let Some(error) = insights_error %}
+        <p class="hint error">{{ error }}</p>
+      {% endif %}
+        <form
+          hx-patch="{{ urls.settings() }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-vals="js:{target: 'insights', insights_dir: document.getElementById('insights-dir-field').value, date_structure_side: document.getElementById('insights-shard-side-field').value, metadata_panel_side: document.getElementById('insights-metadata-panel-side-field').value, expected_hash: '{{ insights_expected_hash }}'}"
+        >
+          <div class="field-row">
+            <label for="insights-dir-field">Insights directory</label>
+            <input id="insights-dir-field" type="text" value="{{ insights_dir_value }}">
+          </div>
+          <div class="field-row">
+            <label for="insights-shard-side-field">Shard-picker pane position</label>
+            <select id="insights-shard-side-field">
+              <option value="left" {% if insights_shard_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !insights_shard_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="insights-metadata-panel-side-field">Metadata panel side</label>
+            <select id="insights-metadata-panel-side-field">
+              <option value="left" {% if insights_metadata_panel_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !insights_metadata_panel_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <p class="hint">
+            Which side a selected note's own metadata (status, and other frontmatter fields) stacks above the
+            shard-picker pane already on that side - independently of the shard-picker pane's own side above.
+          </p>
+          <button type="submit" class="btn primary small">Save</button>
+        </form>
+      </section>
+      <section class="settings-panel" id="pane-entity_docs" hidden>
+        <h2>Entity folders</h2>
+        <p class="hint">
+          Which side of the split screen the folder-list pane renders on. Each entity's own root folder is already
+          fixed by its slug in <code>.contextos/entities.toml</code> - there is nothing to configure there.
+        </p>
+      {% if let Some(error) = entity_error %}
+        <p class="hint error">{{ error }}</p>
+      {% endif %}
+        <form
+          hx-patch="{{ urls.settings() }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-vals="js:{target: 'entity_docs', date_structure_side: document.getElementById('entity-folder-side-field').value, metadata_panel_side: document.getElementById('entity-metadata-panel-side-field').value, expected_hash: '{{ entity_expected_hash }}'}"
+        >
+          <div class="field-row">
+            <label for="entity-folder-side-field">Folder-list pane position</label>
+            <select id="entity-folder-side-field">
+              <option value="left" {% if entity_folder_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !entity_folder_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="entity-metadata-panel-side-field">Metadata panel side</label>
+            <select id="entity-metadata-panel-side-field">
+              <option value="left" {% if entity_metadata_panel_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !entity_metadata_panel_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <button type="submit" class="btn primary small">Save</button>
+        </form>
+      </section>
+      <section class="settings-panel" id="pane-profile" hidden>
+        <h2>Profile</h2>
+        <p class="hint">
+          Which side of the Profile screen's own sidebar renders on, and the optional Templater-compatible template
+          that seeds a brand-new entity's own profile page. Identity, Operating, and Entities each sit at a fixed
+          location (<code>memory/identity</code>, <code>memory/operating</code>, <code>memory/entities</code>) -
+          there is nothing to configure there.
+        </p>
+      {% if let Some(error) = profile_error %}
+        <p class="hint error">{{ error }}</p>
+      {% endif %}
+        <form
+          hx-patch="{{ urls.settings() }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-vals="js:{target: 'profile', date_structure_side: document.getElementById('profile-side-field').value, entity_template_path: document.getElementById('profile-entity-template-path-field').value, expected_hash: '{{ profile_expected_hash }}'}"
+        >
+          <div class="field-row">
+            <label for="profile-side-field">Sidebar position</label>
+            <select id="profile-side-field">
+              <option value="left" {% if profile_side_is_left %}selected{% endif %}>Left</option>
+              <option value="right" {% if !profile_side_is_left %}selected{% endif %}>Right</option>
+            </select>
+          </div>
+          <div class="field-row">
+            <label for="profile-entity-template-path-field">Entity profile template path</label>
+            <input id="profile-entity-template-path-field" type="text" value="{{ profile_entity_template_path_value }}" placeholder="(none - minimal frontmatter and a heading)">
+          </div>
+          <button type="submit" class="btn primary small">Save</button>
+        </form>
+      </section>
+      <section class="settings-panel" id="pane-health" hidden>
+        <div id="vault-health" hx-get="{{ urls.health() }}" hx-trigger="load" hx-swap="outerHTML"><p class="hint">Checking vault health&hellip;</p></div>
+      </section>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var nav = document.getElementById('vault-settings-nav');
+  if(!nav) return;
+  function showPane(name){
+    var button = nav.querySelector('button[data-pane="' + name + '"]');
+    if(!button) return;
+    nav.querySelectorAll('button[data-pane]').forEach(function(b){ b.classList.toggle('active', b === button); });
+    nav.querySelectorAll('button[data-pane]').forEach(function(b){
+      var section = document.getElementById('pane-' + b.dataset.pane);
+      if(section) section.hidden = b !== button;
+    });
+  }
+  nav.addEventListener('click', function(event){
+    var button = event.target.closest('button[data-pane]');
+    if(!button) return;
+    showPane(button.dataset.pane);
+    history.replaceState(history.state, '', '#' + button.dataset.pane);
+  });
+  // A link from a vault management page, or the header and footer health indicators, names a pane in the fragment.
+  if(location.hash.length > 1) showPane(location.hash.slice(1));
+})();
+</script>

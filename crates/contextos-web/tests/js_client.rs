@@ -1,7 +1,9 @@
 //! The `/static/`-served JS client library wraps
 //! `POST /mcp/{server_name}/{tool_name}` as `callTool(serverName, toolName,
-//! args)` returning a Promise, with no LLM step between an app's own
-//! JavaScript and the tool result.
+//! args, options)` returning a Promise, with no LLM step between an app's
+//! own JavaScript and the tool result. By default the promise resolves with
+//! the tool's unwrapped payload and rejects on an MCP-level tool error;
+//! `options.raw = true` recovers the untouched MCP result envelope.
 //!
 //! Verified by actually fetching the shipped script over HTTP from
 //! `/static/` and running it under Node against a real, live
@@ -39,9 +41,9 @@ async fn spawn_server(
     let entry = support::real_contextos_entry("contextos", &config_path)?;
     let clients = Arc::new(contextos_web::mcp_client::McpClientSet::connect(&[entry]).await?);
     // No `static_dir` configured: `contextos-web-client.js` is served from
-    // the crate's own embedded `static/` assets (FR-250), matching what a
+    // the crate's own embedded `static/` assets, matching what a
     // zero-configuration install actually serves.
-    let router = contextos_web::build_router(clients, None, &config_dir.join("web.toml"), "contextos".to_owned());
+    let router = contextos_web::build_router(clients, None, &config_dir.join("web.toml"));
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let handle = tokio::spawn(async move {
@@ -72,7 +74,7 @@ fn load_client_preamble(addr: SocketAddr) -> String {
 }
 
 #[tokio::test]
-async fn call_tool_resolves_with_the_real_tool_result() -> Result<(), BoxError> {
+async fn call_tool_resolves_with_the_unwrapped_structured_payload_by_default() -> Result<(), BoxError> {
     if !node_is_available() {
         eprintln!("skipping: no `node` binary on PATH");
         return Ok(());
@@ -102,7 +104,85 @@ async fn call_tool_resolves_with_the_real_tool_result() -> Result<(), BoxError> 
         String::from_utf8_lossy(&output.stderr)
     );
     let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    // Unwrapped down to `structuredContent` itself, not the raw envelope
+    // (`{ content: [...], structuredContent: {...}, isError: false }`).
+    assert_eq!(result["vaults"][0]["name"], "contract-fixture");
+    assert!(result.get("structuredContent").is_none());
+    assert!(result.get("content").is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_tool_with_raw_option_resolves_with_the_untouched_envelope() -> Result<(), BoxError> {
+    if !node_is_available() {
+        eprintln!("skipping: no `node` binary on PATH");
+        return Ok(());
+    }
+    let dir = tempfile::tempdir()?;
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(&vault)?;
+    let (addr, _server) = spawn_server(dir.path(), &vault).await?;
+
+    let script = format!(
+        "{preamble}\
+         .then((callTool) => callTool('contextos', 'vault_info', {{}}, {{ baseUrl, raw: true }}))\n\
+         .then((result) => {{ process.stdout.write(JSON.stringify(result)); }})\n\
+         .catch((error) => {{ process.stderr.write(String(error)); process.exit(1); }});\n",
+        preamble = load_client_preamble(addr)
+    );
+    let output = tokio::task::spawn_blocking(move || run_node_script(&script)).await??;
+
+    assert!(
+        output.status.success(),
+        "node script failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(result["structuredContent"]["vaults"][0]["name"], "contract-fixture");
+    assert_eq!(result["isError"], false);
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_tool_rejects_on_an_mcp_level_tool_error() -> Result<(), BoxError> {
+    if !node_is_available() {
+        eprintln!("skipping: no `node` binary on PATH");
+        return Ok(());
+    }
+    let dir = tempfile::tempdir()?;
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(&vault)?;
+    let (addr, _server) = spawn_server(dir.path(), &vault).await?;
+
+    // No file exists at this path in the freshly created, empty vault:
+    // `fs_read_text_file` reports this as an `isError: true` tool result,
+    // a transport-level *success* (HTTP 200) carrying an MCP-level failure,
+    // exercising the promise-rejection contract distinct from
+    // `call_tool_rejects_on_an_unconfigured_server`'s transport-level one.
+    let script = format!(
+        "{preamble}\
+         .then((callTool) => callTool('contextos', 'fs_read_text_file', {{ path: 'contract-fixture://missing.md' }}, {{ baseUrl }}))\n\
+         .then(() => {{ process.stderr.write('expected a rejection'); process.exit(1); }})\n\
+         .catch((error) => {{\n\
+         \x20\x20process.stdout.write(JSON.stringify({{\n\
+         \x20\x20\x20\x20message: error.message,\n\
+         \x20\x20\x20\x20hasCode: typeof error.code === 'string' && error.code.length > 0,\n\
+         \x20\x20\x20\x20resultIsError: error.result && error.result.isError,\n\
+         \x20\x20}}));\n\
+         }});\n",
+        preamble = load_client_preamble(addr)
+    );
+    let output = tokio::task::spawn_blocking(move || run_node_script(&script)).await??;
+
+    assert!(
+        output.status.success(),
+        "node script failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert!(result["message"].as_str().is_some_and(|m| !m.is_empty()));
+    assert_eq!(result["hasCode"], true);
+    assert_eq!(result["resultIsError"], true);
     Ok(())
 }
 

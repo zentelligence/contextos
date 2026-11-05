@@ -39,6 +39,7 @@ fn contextos_index_rebuilds_the_text_index_and_link_graph_for_every_managed_vaul
     // an in-memory report.
     let index = TantivyIndex::try_from(TextIndexConfig {
         directory: vault.join(".contextos").join("index"),
+        writer_lock_wait: TextIndexConfig::DEFAULT_WRITER_LOCK_WAIT,
     })?;
     let entries = index.entries()?;
     let mut paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
@@ -50,8 +51,9 @@ fn contextos_index_rebuilds_the_text_index_and_link_graph_for_every_managed_vaul
 #[test]
 fn contextos_index_reports_disabled_search_without_failing() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = tempdir()?;
-    let data_home = tempdir()?;
+    let home = tempdir()?;
     let vault = fixture.path().join("vault");
+    let state = fixture.path().join("state");
     std::fs::create_dir(&vault)?;
     let config = fixture.path().join("config.toml");
     std::fs::write(
@@ -60,6 +62,7 @@ fn contextos_index_reports_disabled_search_without_failing() -> Result<(), Box<d
             r"
             [[vault]]
             path = {vault:?}
+            state_directory = {state:?}
             [vault.search]
             text = false
             graph = false
@@ -71,12 +74,14 @@ fn contextos_index_reports_disabled_search_without_failing() -> Result<(), Box<d
 
     let output = Command::new(env!("CARGO_BIN_EXE_contextos"))
         .args(["--config", config.to_str().ok_or("non-UTF-8 config")?, "index"])
-        .env("XDG_DATA_HOME", data_home.path())
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
         .output()?;
     let stdout = String::from_utf8(output.stdout)?;
 
     assert!(output.status.success(), "{stdout}");
     assert!(stdout.contains("search indexing disabled"));
+    assert!(!home.path().join(".contextos").exists());
     Ok(())
 }
 

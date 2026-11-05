@@ -29,7 +29,7 @@ use contextos_core::{
 use contextos_fs::{Filesystem, FsError};
 use contextos_search::VaultSearchService;
 use rmcp::ErrorData;
-use rmcp::model::{CallToolResult, Tool};
+use rmcp::model::{CallToolResponse, CallToolResult, ClientCapabilities, InputResponses, ProtocolVersion, Tool};
 use thiserror::Error;
 
 use crate::server::{RoutedMutationService, WriteCoordinator};
@@ -69,10 +69,36 @@ pub struct ModuleManifest {
 pub struct ModuleCall {
     pub name: String,
     pub arguments: serde_json::Map<String, serde_json::Value>,
+    /// The client's answers to the input requests of this module's previous
+    /// input-required result for this call, keyed as that result keyed its
+    /// requests; `None` on a first call. Untrusted client input, like the
+    /// arguments.
+    pub input_responses: Option<InputResponses>,
+    /// The state this module returned in its previous input-required result
+    /// for this call, as the client echoed it back; `None` on a first call.
+    /// Untrusted client input: any client can send any state, including on its
+    /// first call, so a module must not act on it without verifying it, for
+    /// example by sealing it with rmcp's `RequestStateCodec` or by keeping the
+    /// real state on the server and sending only a key.
+    pub request_state: Option<String>,
+    /// The MCP protocol revision of the calling session. An input-required
+    /// result is valid only from 2026-07-28 ([`ProtocolVersion::has_initialize`] is `false`); rmcp refuses one
+    /// for an earlier revision, so a module serving earlier clients must complete without asking.
+    pub protocol_version: Option<ProtocolVersion>,
+    /// The capabilities the client declared, such as elicitation or sampling,
+    /// which an input-required result's requests must stay within.
+    pub client_capabilities: Option<ClientCapabilities>,
 }
 
 /// Boxed future returned by [`ServerModule::handle`].
-pub type ServerModuleFuture<'a> = Pin<Box<dyn Future<Output = Result<CallToolResult, ErrorData>> + Send + 'a>>;
+///
+/// A module completes a call with a `CallToolResult` (converted with `.into()`), or answers
+/// [`CallToolResponse::InputRequired`] to ask the client for input before completing: the multi round-trip pattern of
+/// MCP protocol revision 2026-07-28, valid only for a client on that revision ([`ModuleCall::protocol_version`]). The
+/// client then retries the call with [`ModuleCall::input_responses`] and [`ModuleCall::request_state`] filled in.
+/// [`CallToolResponse::Task`] is not supported: this server keeps no tasks for a client to poll, so the call is answered
+/// with a `module/task-unsupported` tool error instead.
+pub type ServerModuleFuture<'a> = Pin<Box<dyn Future<Output = Result<CallToolResponse, ErrorData>> + Send + 'a>>;
 
 /// An in-process extension module. Implementors receive core
 /// capabilities through the injected [`ModuleContext`], which exposes no
@@ -90,6 +116,20 @@ pub trait ServerModule: Send + Sync {
 
     /// Handles one call already routed to this module by tool name.
     fn handle<'a>(&'a self, call: ModuleCall, ctx: &'a ModuleContext) -> ServerModuleFuture<'a>;
+}
+
+/// Answers a module's task reply with a `module/task-unsupported` tool error, passing every other reply through. This
+/// server keeps no tasks, so a client handed a task could never poll it for the result.
+pub(crate) fn refuse_tasks(response: CallToolResponse) -> CallToolResponse {
+    match response {
+        CallToolResponse::Task(_) => CallToolResult::structured_error(serde_json::json!({
+            "code": "module/task-unsupported",
+            "message": "the module answered with a task, which this server cannot serve",
+            "remediation": "Report this to the module's author: a module must complete the call or ask for input instead.",
+        }))
+        .into(),
+        other => other,
+    }
 }
 
 /// Collects extension modules and validates their namespacing and tool-name

@@ -1,8 +1,9 @@
-//! App registration and serving contract tests (Phase 16, `delivery-plan.md`'s
-//! gate): real `contextos-mcp` sessions against real temporary vault
-//! fixtures, exercising `GET /{{vault_name}}/apps/`, `GET
-//! /{{vault_name}}/apps/{{slug}}/...`, and `POST
-//! /{{vault_name}}/apps/rescan` end to end. No mocking, per `testing.md`.
+//! App registration and serving contract tests: real `contextos-mcp`
+//! sessions against real temporary vault fixtures, exercising `GET
+//! /{{vault_name}}/apps/`, `GET /{{vault_name}}/apps/{{slug}}/...`,
+//! `POST /{{vault_name}}/apps/rescan`, and `PATCH
+//! /{{vault_name}}/apps/{{slug}}` (favouriting) end to end. No mocking, per
+//! `testing.md`.
 
 mod support;
 
@@ -11,7 +12,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use contextos_web::McpClientSet;
 use tower::ServiceExt as _;
 
@@ -27,7 +28,6 @@ async fn router_over(vault_dir: &Path, config_dir: &Path) -> Result<Router, BoxE
         clients,
         Some(config_dir),
         &config_dir.join("web.toml"),
-        "contextos".to_owned(),
     ))
 }
 
@@ -41,8 +41,10 @@ fn write_two_vault_config(
     let path = dir.join("config.toml");
     #[allow(clippy::unnecessary_debug_formatting)]
     let content = format!(
-        "[[vault]]\npath = {vault_a:?}\nname = {name_a:?}\n[vault.search]\ntext = false\ngraph = false\n\n\
-         [[vault]]\npath = {vault_b:?}\nname = {name_b:?}\n[vault.search]\ntext = false\ngraph = false\n"
+        "[[vault]]\npath = {vault_a:?}\nname = {name_a:?}\nstate_directory = \".contextos\"\n\
+         [vault.search]\ntext = false\ngraph = false\n\n\
+         [[vault]]\npath = {vault_b:?}\nname = {name_b:?}\nstate_directory = \".contextos\"\n\
+         [vault.search]\ntext = false\ngraph = false\n"
     );
     std::fs::write(&path, content)?;
     Ok(path)
@@ -62,7 +64,6 @@ async fn router_over_two_vaults(
         clients,
         Some(config_dir),
         &config_dir.join("web.toml"),
-        "contextos".to_owned(),
     ))
 }
 
@@ -82,6 +83,25 @@ async fn post(router: &Router, path: &str) -> Result<StatusCode, BoxError> {
         .oneshot(Request::builder().method("POST").uri(path).body(Body::empty())?)
         .await?;
     Ok(response.status())
+}
+
+/// `PATCH` with a `{"favourite": ...}` JSON body, matching the star toggle's own real request
+/// shape (`hx-ext="json-enc"`, `docs/http-routing-response-contract.md`'s PATCH "submit partial
+/// update" row): no test in this file sends the old, non-compliant plain POST any more.
+async fn patch_favourite(router: &Router, path: &str, favourite: bool) -> Result<(StatusCode, String), BoxError> {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(path)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!("{{\"favourite\":{favourite}}}")))?,
+        )
+        .await?;
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    Ok((status, String::from_utf8_lossy(&body).into_owned()))
 }
 
 fn write(dir: &Path, relative: &str, content: &str) -> std::io::Result<()> {
@@ -130,7 +150,6 @@ async fn a_valid_spa_manifest_registers_and_serves() -> Result<(), BoxError> {
             name = "Task Register Dashboard"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
             mcp_servers = ["contextos"]
         "#,
         "index.html",
@@ -146,6 +165,10 @@ async fn a_valid_spa_manifest_registers_and_serves() -> Result<(), BoxError> {
     let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/task-register/")).await?;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Task Register"));
+    // A `spa` app's entry is served raw and unwrapped, never composed into
+    // the shell the way a `js` app's entry is (shell composition applies
+    // only to `js`).
+    assert!(!body.contains("shell-body"));
     Ok(())
 }
 
@@ -162,7 +185,6 @@ async fn the_apps_listing_and_a_registered_apps_root_render_identically_without_
             name = "Task Register Dashboard"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
         "#,
         "index.html",
         "<html><body>Task Register</body></html>",
@@ -195,7 +217,6 @@ async fn a_spa_apps_sub_path_falls_back_to_its_own_entry_file_spa_routing() -> R
             name = "Task Register Dashboard"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
         "#,
         "index.html",
         "<html><body>SPA shell</body></html>",
@@ -220,7 +241,6 @@ async fn a_schema_violation_fails_registration_without_blocking_other_apps() -> 
             name = "Broken App"
             kind = "not-a-real-kind"
             entry = "index.html"
-            target = "_blank"
         "#,
         "index.html",
         "<html></html>",
@@ -232,7 +252,6 @@ async fn a_schema_violation_fails_registration_without_blocking_other_apps() -> 
             name = "Healthy App"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
         "#,
         "index.html",
         "<html><body>Healthy</body></html>",
@@ -261,7 +280,6 @@ async fn an_mcp_servers_entry_absent_from_web_toml_fails_registration() -> Resul
             name = "Needs Unknown Server"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
             mcp_servers = ["not-configured-anywhere"]
         "#,
         "index.html",
@@ -287,7 +305,6 @@ async fn a_missing_entry_file_fails_registration() -> Result<(), BoxError> {
             name = "No Entry"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
         "#,
         "",
         "",
@@ -297,6 +314,175 @@ async fn a_missing_entry_file_fails_registration() -> Result<(), BoxError> {
     let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/")).await?;
     assert_eq!(status, StatusCode::OK);
     assert!(!body.contains("No Entry"));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// `js`-kind: embed composition
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_js_kind_apps_entry_document_composes_within_the_shell() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "task-widget",
+        r#"
+            name = "Task Widget"
+            kind = "js"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<div id=\"app\">Task Widget content</div>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/task-widget/")).await?;
+    assert_eq!(status, StatusCode::OK);
+    // The app's own entry markup is inlined into the shell...
+    assert!(body.contains("Task Widget content"));
+    // ...alongside the shell's own chrome, which the app's raw entry
+    // document (just a bare <div>, no shell markup of its own) does not
+    // itself contain -- proving composition happened rather than a raw
+    // passthrough of the fetched document.
+    assert!(body.contains("shell-body"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_js_kind_apps_composed_entry_is_exempt_from_the_shells_prose_width_cap() -> Result<(), BoxError> {
+    // `.content > *{max-width:72ch}` (`contextos-web.css`) caps a prose
+    // reading width onto every direct child of the shell's content region,
+    // for ordinary vault-note markdown. A composed `kind = "js"` app is not
+    // prose -- it is arbitrary application UI (a kanban board, a form) that
+    // needs the full content width, exactly like the shell's own
+    // `card-grid`/`base-view`/`apps-list` content types are already
+    // exempted from this cap. Without an equivalent exemption, an app's
+    // wide layout (e.g. multiple flex/grid columns) is squeezed into ~72
+    // characters and its overflow is left to whatever the app's own CSS
+    // happens to do with it, which most naive app layouts render as
+    // visually truncated content rather than a usable scroll area.
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "wide-widget",
+        r#"
+            name = "Wide Widget"
+            kind = "js"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<div id=\"app\">Wide Widget content</div>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/wide-widget/")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains("<div class=\"app-embed\"><div id=\"app\">Wide Widget content</div></div>"),
+        "composed entry document must be wrapped in the width-cap-exempt app-embed container: {body}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_js_kind_apps_own_non_html_asset_still_passes_through_raw() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "task-widget",
+        r#"
+            name = "Task Widget"
+            kind = "js"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<div id=\"app\"></div>",
+    )?;
+    write(
+        vault_dir.path(),
+        "registry/apps/task-widget/app.js",
+        "console.log('task widget');",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/task-widget/app.js")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "console.log('task widget');");
+    // Not composed into the shell: a raw JS asset carries none of the
+    // shell's own chrome.
+    assert!(!body.contains("shell-body"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_js_kind_apps_unmatched_sub_path_404s_instead_of_falling_back_to_its_entry() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "task-widget",
+        r#"
+            name = "Task Widget"
+            kind = "js"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<div id=\"app\">Task Widget content</div>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, _body) = get(&router, &format!("/{VAULT_NAME}/apps/task-widget/no/such/path")).await?;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// `target` field removed from the schema
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_manifest_declaring_the_removed_target_field_fails_registration_without_blocking_other_apps()
+-> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "old-schema",
+        r#"
+            name = "Old Schema App"
+            kind = "js"
+            entry = "index.html"
+            target = "_blank"
+        "#,
+        "index.html",
+        "<html></html>",
+    )?;
+    write_app(
+        vault_dir.path(),
+        "healthy",
+        r#"
+            name = "Healthy App"
+            kind = "js"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<html><body>Healthy</body></html>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Healthy App"));
+    assert!(!body.contains("Old Schema App"));
     Ok(())
 }
 
@@ -316,7 +502,6 @@ async fn an_htmx_kind_app_is_listed_not_yet_supported_and_returns_a_distinct_404
             name = "Live Widget"
             kind = "htmx"
             entry = "widget.html"
-            target = "embed"
         "#,
         "widget.html",
         "<div>widget</div>",
@@ -385,7 +570,6 @@ async fn two_vaults_registering_the_same_slug_serve_independently() -> Result<()
             name = "Widget A"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
         "#,
         "index.html",
         "<html><body>Widget from vault A</body></html>",
@@ -397,7 +581,6 @@ async fn two_vaults_registering_the_same_slug_serve_independently() -> Result<()
             name = "Widget B"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
         "#,
         "index.html",
         "<html><body>Widget from vault B</body></html>",
@@ -416,7 +599,7 @@ async fn two_vaults_registering_the_same_slug_serve_independently() -> Result<()
 }
 
 // ---------------------------------------------------------------------
-// Rescan (`web-apps.md` §4's answered open question)
+// Rescan
 // ---------------------------------------------------------------------
 
 #[tokio::test]
@@ -437,7 +620,6 @@ async fn rescan_discovers_an_app_added_after_the_first_request() -> Result<(), B
             name = "Freshly Added"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
         "#,
         "index.html",
         "<html></html>",
@@ -449,5 +631,113 @@ async fn rescan_discovers_an_app_added_after_the_first_request() -> Result<(), B
     let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/")).await?;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Freshly Added"));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Favouriting
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn toggling_favourite_marks_the_list_cards_star_pressed() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "task-register",
+        r#"
+            name = "Task Register Dashboard"
+            kind = "spa"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<html></html>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (_status, body) = get(&router, &format!("/{VAULT_NAME}/apps/")).await?;
+    assert!(body.contains("aria-pressed=\"false\""));
+
+    let (status, body) = patch_favourite(&router, &format!("/{VAULT_NAME}/apps/task-register"), true).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("aria-pressed=\"true\""));
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("aria-pressed=\"true\""));
+    Ok(())
+}
+
+#[tokio::test]
+async fn setting_favourite_false_after_true_returns_to_unfavourited() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "task-register",
+        r#"
+            name = "Task Register Dashboard"
+            kind = "spa"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<html></html>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    patch_favourite(&router, &format!("/{VAULT_NAME}/apps/task-register"), true).await?;
+    patch_favourite(&router, &format!("/{VAULT_NAME}/apps/task-register"), false).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/apps/")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("aria-pressed=\"false\""));
+    Ok(())
+}
+
+#[tokio::test]
+async fn setting_favourite_for_an_unregistered_slug_404s() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, _body) = patch_favourite(&router, &format!("/{VAULT_NAME}/apps/no-such-app"), true).await?;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_favourited_app_is_linked_from_the_sidebars_apps_group_on_every_page() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write_app(
+        vault_dir.path(),
+        "task-register",
+        r#"
+            name = "Task Register Dashboard"
+            kind = "spa"
+            entry = "index.html"
+        "#,
+        "index.html",
+        "<html></html>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (_status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
+    assert!(
+        !body.contains("Task Register Dashboard"),
+        "an unfavourited app must not appear in the sidebar"
+    );
+
+    let (status, _body) = patch_favourite(&router, &format!("/{VAULT_NAME}/apps/task-register"), true).await?;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Task Register Dashboard"));
+    assert!(body.contains(&format!("/{VAULT_NAME}/apps/task-register/\" target=\"_blank\"")));
     Ok(())
 }

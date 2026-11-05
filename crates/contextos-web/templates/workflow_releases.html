@@ -1,0 +1,31 @@
+<section class="panel workflow-releases" id="workflow-releases">
+  <header class="panel-header"><h2>Releases</h2></header>
+{% if let Some(reason) = unavailable %}  <p class="hint" role="alert">{{ reason }}</p>
+{% else if releases.is_empty() %}  <p class="hint">This workflow has no installed releases.</p>
+{% else %}{% for release in releases %}  <article class="release release-{{ release.kind }}">
+    <h3>{{ release.summary }}</h3>
+{% if release.nothing_running %}    <p><span class="badge attention">Current, nothing running on it</span></p>
+{% endif %}{% if !release.problems.is_empty() %}    <div role="alert">
+      <p><span class="badge attention">{{ release.problem_kind }}</span> This release cannot be relied on, and scheduled runs on it are refused.</p>
+      <ul>
+{% for problem in release.problems %}        <li>{{ problem }}</li>
+{% endfor %}      </ul>
+    </div>
+{% endif %}{% if !release.missing_templates.is_empty() %}    <p role="alert"><span class="badge attention">Missing templates</span> {{ release.missing_templates.join(", ") }}</p>
+{% endif %}{% if !release.needs_successor.is_empty() %}    <p role="alert"><span class="badge attention">Needs a successor</span> These jobs keep running on a release that is no longer current:
+{% for job in release.needs_successor %}<a href="{{ job.href }}">{{ job.name }}</a>{% if !loop.last %}, {% endif %}{% endfor %}</p>
+{% endif %}{% if release.stages.is_empty() %}    <p class="hint">No jobs.</p>
+{% else %}    <dl class="job-properties">
+{% for stage in release.stages %}      <div><dt>{{ stage.stage }}</dt><dd>{% for job in stage.jobs %}<a href="{{ job.href }}">{{ job.name }}</a>{% if !loop.last %}, {% endif %}{% endfor %}</dd></div>
+{% endfor %}    </dl>
+{% endif %}    <details>
+      <summary>Details</summary>
+      <dl class="job-properties">
+        <div><dt>Version</dt><dd>{{ release.version }}</dd></div>
+{% if let Some(origin) = release.origin %}        <div><dt>Installed from</dt><dd>{{ origin }}</dd></div>
+{% endif %}{% if let Some(retired) = release.retired %}        <div><dt>Retired</dt><dd>{{ retired }}</dd></div>
+{% endif %}        <div><dt>Libraries</dt><dd>{% if release.no_lock_yet %}No lock yet{% else if release.lock.is_empty() %}None{% else %}{{ release.lock.join(", ") }}{% endif %}</dd></div>
+      </dl>
+    </details>
+  </article>
+{% endfor %}{% endif %}</section>

@@ -10,7 +10,8 @@ tags:
 
 ## Housing Corrosion
 
-Salt air corrosion of the enclosure seal is the leading cause of past field failures; two units already needed early housing replacement.
+Salt air corrosion of the enclosure seal is the leading cause of past
+field failures; two units already needed early housing replacement.
 
 ## Firmware Regression
 

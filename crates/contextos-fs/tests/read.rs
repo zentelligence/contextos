@@ -1,10 +1,12 @@
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use contextos_core::{VaultPath, VaultPathInput, VaultRoot, VaultRootInput, VaultSet};
 use contextos_fs::{
-    Filesystem, FilesystemConfig, FsError, FsLimits, LineRange, ReadLimit, ReadManyRequest, ReadTextRequest,
-    default_hidden_patterns,
+    AttachmentRequest, Filesystem, FilesystemConfig, FsError, FsLimits, LineRange, ReadLimit, ReadManyRequest,
+    ReadTextRequest, default_hidden_patterns,
 };
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 fn fixture(
@@ -271,5 +273,71 @@ fn rejects_a_validated_path_from_another_vault_set() -> Result<(), Box<dyn std::
     });
 
     assert!(matches!(result, Err(FsError::OutsideRoot { .. })));
+    Ok(())
+}
+
+#[test]
+fn an_attachment_reports_the_hash_of_exactly_the_bytes_it_returns() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    std::fs::write(vault.path().join("note.md"), "one\ntwo\nthree\n")?;
+    let binary_bytes = [0_u8, 1, 2, 3, 255];
+    std::fs::write(vault.path().join("image.png"), binary_bytes)?;
+    let (filesystem, roots) = fixture(vault.path().to_path_buf(), 1024, 50)?;
+
+    let text = filesystem.read_attachment(&AttachmentRequest {
+        path: vault_path(&roots, "note.md")?,
+    })?;
+    let binary = filesystem.read_attachment(&AttachmentRequest {
+        path: vault_path(&roots, "image.png")?,
+    })?;
+
+    // The same file read as text reports the same hash, so a hash from either read authorises an overwrite.
+    let as_text = filesystem.read_text(&ReadTextRequest {
+        path: vault_path(&roots, "note.md")?,
+        limit: None,
+    })?;
+    assert_eq!(text.content_hash, as_text.content_hash);
+    let expected_binary = Sha256::digest(binary_bytes)
+        .iter()
+        .try_fold(String::new(), |mut hex, byte| write!(hex, "{byte:02x}").map(|()| hex))?;
+    assert_eq!(<&str>::from(&binary.content_hash), expected_binary);
+    Ok(())
+}
+
+#[test]
+fn a_text_read_reports_the_files_size_and_times_from_the_same_inspection() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::write(vault.path().join("note.md"), "one\ntwo\n")?;
+    let (filesystem, roots) = fixture(vault.path().to_path_buf(), 1024, 50)?;
+    let on_disk = std::fs::metadata(vault.path().join("note.md"))?;
+
+    let result = filesystem.read_text(&ReadTextRequest {
+        path: vault_path(&roots, "note.md")?,
+        limit: None,
+    })?;
+
+    assert_eq!(result.size, 8);
+    assert_eq!(result.modified, Some(time::OffsetDateTime::from(on_disk.modified()?)));
+    assert_eq!(result.created, on_disk.created().ok().map(time::OffsetDateTime::from));
+    Ok(())
+}
+
+#[test]
+fn reading_a_missing_file_or_a_directory_is_refused_as_such() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::create_dir(vault.path().join("folder"))?;
+    let (filesystem, roots) = fixture(vault.path().to_path_buf(), 1024, 50)?;
+
+    let missing = filesystem.read_text(&ReadTextRequest {
+        path: vault_path(&roots, "absent.md")?,
+        limit: None,
+    });
+    let directory = filesystem.read_text(&ReadTextRequest {
+        path: vault_path(&roots, "folder")?,
+        limit: None,
+    });
+
+    assert!(matches!(missing, Err(FsError::NotFound { .. })), "{missing:?}");
+    assert!(matches!(directory, Err(FsError::NotFile { .. })), "{directory:?}");
     Ok(())
 }

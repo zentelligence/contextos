@@ -1,0 +1,24 @@
+<section id="job-runs" class="panel job-runs"{% if beside_another %} hx-swap-oob="outerHTML"{% endif %}{% if self.polling() %} hx-get="{{ base_path }}/runs" hx-trigger="every 3s" hx-target="this" hx-swap="outerHTML"{% endif %}>
+  <header class="panel-header"><h2>Run log</h2><span class="hint">Most recent first · Up to 20 runs</span></header>
+{% if let Some(message) = message %}  <p class="job-message" role="{% if message.ok %}status{% else %}alert{% endif %}">{{ message.text }}</p>
+{% endif %}{% if let Some(active) = active %}  <p class="job-active-run" role="status">Run <strong>{{ active.label }}</strong> is running, since <time>{{ active.since }}</time>.
+    <button type="button" class="btn small" hx-put="{{ base_path }}/runs/{{ active.label }}/execute/cancel" hx-target="#job-runs" hx-swap="outerHTML">Cancel run</button></p>
+{% else if starting %}  <p class="job-active-run" role="status">A run is starting.</p>
+{% endif %}{% if dry_runs_in_progress > 0 %}  <p class="job-active-run" role="status">A dry run is in progress.</p>
+{% endif %}{% if let Some(last) = last_page_run %}  <p class="job-message" role="{% if last.ok %}status{% else %}alert{% endif %}">Last run started here, a {{ last.kind }} run, ended <time>{{ last.at }}</time>: {{ last.text }}</p>
+{% endif %}  <div class="job-actions">
+{% if self.run_now() %}    <button type="button" class="btn small primary" hx-post="{{ base_path }}/runs" hx-target="#job-runs" hx-swap="outerHTML">Run now</button>
+{% else if self.run_blocked() %}    <button type="button" class="btn small primary" disabled>Run now</button><span class="hint"> An active run in progress: wait for it to end, or cancel it.</span>
+{% endif %}{% if offered.dry_run() %}    <button type="button" class="btn small" hx-ext="json-enc" hx-post="{{ base_path }}/runs" hx-vals='{"dry_run": true}' hx-target="#job-runs" hx-swap="outerHTML">Dry run</button>
+{% endif %}  </div>
+{% if let Some(runs) = runs %}{% if chain_unread %}  <p class="job-message" role="alert">The jobs this one succeeded or was succeeded by could not be read, so only this job's runs are shown.</p>
+{% endif %}{% if runs.is_empty() %}  <p class="hint">No runs recorded yet.</p>
+{% else %}  <ol class="job-run-log">
+{% for run in runs %}    <li>
+      <div class="job-run-heading"><strong>{{ run.run_id }}</strong><span class="badge {{ run.state() }}">{{ run.status }}</span>{% if run.dry_run %}<span class="badge">dry run</span>{% endif %}<span class="hint">{{ run.trigger }}</span><span class="hint job-run-mark">{{ run.job }}{% if !run.release.is_empty() %} · {{ run.release }}{% endif %}</span></div>
+      <div class="job-run-times"><span>Started: <time>{{ run.started }}</time></span>{% if !run.completed.is_empty() %}<span>Completed: <time>{{ run.completed }}</time></span>{% endif %}</div>
+{% if !run.error.is_empty() %}      <p class="job-run-error">{{ run.error }}</p>
+{% endif %}    </li>
+{% endfor %}  </ol>
+{% endif %}{% else %}  <p role="alert">Run history is unavailable. Check the connection and the run records, then reload.</p>
+{% endif %}</section>

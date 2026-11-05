@@ -1,0 +1,215 @@
+{% import "vm_paths.html" as vm_paths %}
+{# The Decisions register: decisions and questions in one tree, told apart by each record's `type` (or, without one,
+   its id prefix). The list filters by type and status. A record reads its fields beside its rendered body by default;
+   Edit turns both into one form with one Save, and a save writes only what changed. #}
+{% macro field_value(field) %}
+{% if field.values.is_empty() %}<span class="hint">&mdash;</span>
+{% else if let Some(href) = field.link_href %}<a href="{{ href }}" hx-get="{{ href }}" hx-target="closest .vault-settings" hx-swap="outerHTML" hx-push-url="true">{{ field.value }}</a>
+{% else %}{% for value in field.values %}<span class="vm-property-value">{{ value }}</span>{% endfor %}
+{% endif %}
+{% endmacro %}
+{% macro field_input(field) %}
+{% match field.input %}
+{% when Input::Text %}<input id="vm-field-{{ field.key }}" type="text" name="{{ field.key }}" value="{{ field.value }}"{% if field.required %} required{% endif %}>
+{% when Input::Date %}<input id="vm-field-{{ field.key }}" type="date" name="{{ field.key }}" value="{{ field.value }}">
+{% when Input::Lines %}<textarea id="vm-field-{{ field.key }}" name="{{ field.key }}" rows="3" spellcheck="false" aria-describedby="vm-field-{{ field.key }}-hint">
+{{ field.value }}</textarea><span class="hint" id="vm-field-{{ field.key }}-hint">One per line.</span>
+{% when Input::Select with (choices) %}<select id="vm-field-{{ field.key }}" name="{{ field.key }}"{% if field.required %} required{% endif %}>
+{% for choice in choices %}<option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>
+{% endfor %}</select>
+{% endmatch %}
+{% endmacro %}
+<section class="settings-panel vm-panel" aria-labelledby="vm-heading">
+  <header class="vm-header">
+    <h2 id="vm-heading"><span class="ic ic-{{ icon }}" aria-hidden="true"></span> Decisions</h2>
+    <p class="hint">Decisions about how this vault works, and the questions that could not be closed when they were found, in one register.</p>
+  </header>
+{% if let Some(problem) = problem %}
+  <p class="hint error" role="alert">{{ problem }}</p>
+{% endif %}
+{% match main %}
+{% when MainView::List with (list) %}
+  {% call vm_paths::paths(paths) %}{% endcall %}
+  <div class="vm-register-toolbar">
+    <nav class="vm-filters" aria-label="Filter by type">
+{% for filter in list.type_filters %}
+  <a
+    class="vm-filter{% if filter.active %} active{% endif %}"
+    href="{{ filter.href }}"
+    hx-get="{{ filter.href }}"
+    hx-target="closest .vault-settings"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+    {% if filter.active %}aria-current="true"{% endif %}
+  >{{ filter.label }} <span class="vm-tab-count">{{ filter.count }}</span></a>
+{% endfor %}
+</nav>
+  {% if provisioned %}
+    <span class="header-actions">
+    {% for link in list.new_links %}
+      <a
+        class="btn small{% if loop.first %} primary{% endif %}"
+        href="{{ link.href }}"
+        hx-get="{{ link.href }}"
+        hx-target="closest .vault-settings"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+      ><span class="ic ic-square-pen" aria-hidden="true"></span> {{ link.label }}</a>
+    {% endfor %}
+    </span>
+  {% endif %}
+  </div>
+  <nav class="vm-filters" aria-label="Filter by status">
+{% for filter in list.status_filters %}
+  <a
+    class="vm-filter{% if filter.active %} active{% endif %}"
+    href="{{ filter.href }}"
+    hx-get="{{ filter.href }}"
+    hx-target="closest .vault-settings"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+    {% if filter.active %}aria-current="true"{% endif %}
+  >{{ filter.label }} <span class="vm-tab-count">{{ filter.count }}</span></a>
+{% endfor %}
+</nav>
+{% if list.rows.is_empty() %}
+  <div class="vm-empty">
+  {% if list.filtered_out %}
+    <p>No record matches these filters.</p>
+  {% else %}
+    <p>No decisions registered yet</p>
+    {% if !provisioned %}<p class="hint">The folder above does not exist in this vault yet. Point it at an existing folder, or create it first.</p>{% endif %}
+  {% endif %}
+  </div>
+{% else %}
+  <table class="vm-table">
+    <thead>
+      <tr><th scope="col">ID</th><th scope="col">Type</th><th scope="col">Title</th><th scope="col">Updated</th><th scope="col">Status</th><th scope="col">Related</th></tr>
+    </thead>
+    <tbody>
+    {% for row in list.rows %}
+      <tr>
+        <td class="mono">{{ row.id }}</td>
+        <td>{{ row.type_label }}</td>
+        <td><a href="{{ row.href }}" hx-get="{{ row.href }}" hx-target="closest .vault-settings" hx-swap="outerHTML" hx-push-url="true">{{ row.title }}</a></td>
+        <td class="mono">{{ row.updated }}</td>
+        <td>{% if !row.status.is_empty() %}<span class="badge {{ row.tone }}">{{ row.status }}</span>{% endif %}</td>
+        <td class="mono">{% if let Some(href) = row.related_href %}<a href="{{ href }}" hx-get="{{ href }}" hx-target="closest .vault-settings" hx-swap="outerHTML" hx-push-url="true">{{ row.related }}</a>{% else %}{{ row.related }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% when MainView::Record with (record) %}
+  <div class="vm-record">
+    <div class="vm-main-header">
+      <div>
+        <h3><span class="mono">{{ record.id }}</span> {{ record.title }} {% if !record.status.is_empty() %}<span class="badge {{ record.tone }}">{{ record.status }}</span>{% endif %}</h3>
+        <p class="hint mono">{{ record.type_label }} &middot; {{ record.path }}</p>
+      </div>
+      <div class="header-actions">
+        <a class="btn small" href="{{ record.edit_href }}" hx-get="{{ record.edit_href }}" hx-target="closest .vault-settings" hx-swap="outerHTML" hx-push-url="true"><span class="ic ic-square-pen" aria-hidden="true"></span> Edit</a>
+        <a class="btn small" href="{{ record.list_href }}" hx-get="{{ record.list_href }}" hx-target="closest .vault-settings" hx-swap="outerHTML" hx-push-url="true">All records</a>
+      </div>
+    </div>
+    <div class="vm-record-layout">
+      <div class="wiki-rendered vm-record-body">{{ record.body_html|safe }}</div>
+      <dl class="vm-properties vm-record-fields">
+      {% for field in record.fields %}
+        <div><dt>{{ field.label }}</dt><dd>{% call field_value(field) %}{% endcall %}</dd></div>
+      {% endfor %}
+        {% for fact in record.facts %}<div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>{% endfor %}
+      </dl>
+    </div>
+  </div>
+{% when MainView::Edit with (record) %}
+  <form
+    class="vm-record vm-editor"
+    hx-patch="{{ record.self_href }}"
+    hx-target="closest .vault-settings"
+    hx-swap="outerHTML"
+  >
+    <div class="vm-main-header">
+      <div>
+        <h3>Editing <span class="mono">{{ record.id }}</span> {{ record.title }}</h3>
+        <p class="hint mono">{{ record.type_label }} &middot; {{ record.path }}</p>
+      </div>
+      <div class="save-bar save-bar-top">
+        <button type="submit" class="btn primary small">Save</button>
+        <a class="btn small" href="{{ record.self_href }}" hx-get="{{ record.self_href }}" hx-target="closest .vault-settings" hx-swap="outerHTML" hx-push-url="true">Cancel</a>
+      </div>
+    </div>
+  {% if let Some(error) = record.error %}
+    <p class="hint error" role="alert">{{ error }}</p>
+  {% endif %}
+    <input type="hidden" name="expected_hash" value="{{ record.expected_hash }}">
+    <div class="vm-record-layout">
+      <div class="vm-record-body">
+        <label class="visually-hidden" for="vm-record-body">Body</label>
+        <textarea id="vm-record-body" name="body" class="vm-source-editor" spellcheck="true">
+{{ record.body }}</textarea>
+      </div>
+      <div class="vm-record-fields">
+      {% for field in record.fields %}
+        <div class="field-row">
+          <label for="vm-field-{{ field.key }}">{{ field.label }}</label>
+          {% call field_input(field) %}{% endcall %}
+        </div>
+      {% endfor %}
+        <dl class="vm-properties">
+          {% for fact in record.facts %}<div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>{% endfor %}
+        </dl>
+      </div>
+    </div>
+    <div class="save-bar">
+      <button type="submit" class="btn primary small">Save</button>
+    </div>
+  </form>
+{% when MainView::New with (new) %}
+  <form
+    class="vm-record vm-editor"
+    hx-post="{{ new.create_href }}"
+    hx-target="closest .vault-settings"
+    hx-swap="outerHTML"
+  >
+    <input type="hidden" name="type" value="{{ new.record_type }}">
+    <div class="vm-main-header">
+      <div>
+        <h3>New {{ new.type_label|lower }}</h3>
+        <p class="hint">Its id is assigned from the {{ new.type_label|lower }} series when it is created.</p>
+      </div>
+      <div class="save-bar save-bar-top">
+        <button type="submit" class="btn primary small">Create</button>
+        <a class="btn small" href="{{ new.list_href }}" hx-get="{{ new.list_href }}" hx-target="closest .vault-settings" hx-swap="outerHTML" hx-push-url="true">Cancel</a>
+      </div>
+    </div>
+  {% if let Some(error) = new.error %}
+    <p class="hint error" role="alert">{{ error }}</p>
+  {% endif %}
+  {% if let Some(notice) = new.notice %}
+    <p class="hint">{{ notice }}</p>
+  {% endif %}
+    <div class="vm-record-layout">
+      <div class="vm-record-body">
+        <label class="visually-hidden" for="vm-record-body">Body</label>
+        <textarea id="vm-record-body" name="body" class="vm-source-editor" spellcheck="true">
+{{ new.body }}</textarea>
+      {% if let Some(guidance) = new.guidance %}
+        <details class="vm-guidance"><summary>Template guidance</summary><pre>{{ guidance }}</pre></details>
+      {% endif %}
+      </div>
+      <div class="vm-record-fields">
+      {% for field in new.fields %}
+        <div class="field-row">
+          <label for="vm-field-{{ field.key }}">{{ field.label }}</label>
+          {% call field_input(field) %}{% endcall %}
+        </div>
+      {% endfor %}
+      </div>
+    </div>
+    <div class="save-bar">
+      <button type="submit" class="btn primary small">Create</button>
+    </div>
+  </form>
+{% endmatch %}
+</section>

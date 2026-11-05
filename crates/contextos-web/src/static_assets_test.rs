@@ -39,7 +39,7 @@ async fn a_traversal_attempt_never_escapes_a_configured_static_directory() -> Re
     Ok(())
 }
 
-/// `FR-250`: the crate's own bundled assets ship embedded in the binary, so
+/// The crate's own bundled assets ship embedded in the binary, so
 /// they are servable with no `static_dir` configured at all, matching the
 /// v0.20.2 Windows install failure this behaviour fixes (a `cargo install`
 /// layout never carries a `static/` directory next to the binary).
@@ -62,16 +62,38 @@ async fn serves_a_bundled_asset_with_no_static_dir_configured() -> Result<(), Bo
     Ok(())
 }
 
-/// The shell header (`page_shell.html`) references `/static/logo.png` and
-/// `/static/favicon.ico` unconditionally, with no operator configuration
-/// required: both must ship in the bundled set so a fresh install renders a
-/// working header and browser-tab icon rather than a broken image and a
-/// `404`.
+/// Every asset a rendered page references unconditionally (the favicon, the
+/// stylesheet and its imported token layer, the self-hosted Inter faces and
+/// the Lucide icons the stylesheet pulls, their licences, and the default
+/// header logo mark) must ship in the bundled set so a fresh install
+/// renders a working page rather than broken glyphs and `404`s.
 #[tokio::test]
-async fn the_bundled_logo_and_favicon_the_header_references_are_servable() -> Result<(), Box<dyn std::error::Error>> {
+async fn every_unconditionally_referenced_bundled_asset_is_servable() -> Result<(), Box<dyn std::error::Error>> {
     let router = Router::new().nest_service("/static", service(None));
 
-    for path in ["/static/logo.png", "/static/favicon.ico"] {
+    let paths = [
+        "/static/favicon.ico",
+        "/static/contextos-web.css",
+        "/static/contextos-shell.css",
+        "/static/contextos-vault-management.css",
+        "/static/contextos-tokens.css",
+        "/static/htmx.min.js",
+        "/static/htmx.min.js.LICENSE",
+        "/static/htmx-ext-sse.js",
+        "/static/htmx-ext-sse.js.LICENSE",
+        "/static/fonts/inter-latin-400-normal.woff2",
+        "/static/fonts/inter-latin-600-normal.woff2",
+        "/static/fonts/OFL.txt",
+        "/static/icons/folder.svg",
+        "/static/icons/settings.svg",
+        "/static/icons/LICENSE",
+        // The header's default logo mark (`config::DEFAULT_LOGO_FILENAME`):
+        // an operator overrides it by adding a differently named file to a
+        // configured `static_dir` and pointing `[server.ui] logo` at it,
+        // the same pattern every other static-folder override follows.
+        "/static/logo.png",
+    ];
+    for path in paths {
         let response = router
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty())?)
@@ -82,6 +104,45 @@ async fn the_bundled_logo_and_favicon_the_header_references_are_servable() -> Re
             "{path} should be servable from the bundled set"
         );
     }
+    Ok(())
+}
+
+/// A served `woff2` face carries the `font/woff2` content type and an
+/// `ETag`, and revalidates to `304`, the same cache contract every bundled
+/// asset already carries.
+#[tokio::test]
+async fn a_bundled_font_serves_as_woff2_and_revalidates() -> Result<(), Box<dyn std::error::Error>> {
+    let router = Router::new().nest_service("/static", service(None));
+    let path = "/static/fonts/inter-latin-400-normal.woff2";
+
+    let first = router
+        .clone()
+        .oneshot(Request::builder().uri(path).body(Body::empty())?)
+        .await?;
+    assert_eq!(first.status(), StatusCode::OK);
+    let content_type = first
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(content_type.contains("woff2"), "content type was {content_type}");
+    let etag = first
+        .headers()
+        .get(axum::http::header::ETAG)
+        .ok_or("a served woff2 must carry an ETag")?
+        .clone();
+
+    let second = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .header(axum::http::header::IF_NONE_MATCH, etag)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
     Ok(())
 }
 
@@ -185,4 +246,17 @@ async fn a_configured_static_dir_falls_back_to_a_bundled_asset_it_does_not_conta
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     assert_eq!(body.as_ref(), expected.as_slice());
     Ok(())
+}
+
+#[test]
+fn the_offered_icon_names_are_exactly_those_the_stylesheet_renders() {
+    let names = crate::static_assets::icon_names();
+    for expected in ["inbox", "loader", "check", "scale", "history"] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "{expected} missing from {names:?}"
+        );
+    }
+    assert!(names.windows(2).all(|pair| pair[0] < pair[1]), "sorted and unique");
+    assert!(names.iter().all(|name| !name.contains(['{', ' ', '.'])));
 }

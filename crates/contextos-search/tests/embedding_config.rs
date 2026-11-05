@@ -3,7 +3,9 @@
 //! `contextos-mcp`'s configuration will eventually drive (a later stage);
 //! these tests prove the swap needs no code change, only a different enum
 //! variant.
-use contextos_search::{EmbeddingProviderConfig, EmbedsText};
+mod support;
+
+use contextos_search::{ApiKeySource, EmbeddingProviderConfig, EmbedsText};
 
 #[test]
 fn openai_compatible_variant_selects_that_provider_and_surfaces_its_errors() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,9 +17,9 @@ fn openai_compatible_variant_selects_that_provider_and_surfaces_its_errors() -> 
 
     let provider: Result<Box<dyn EmbedsText>, _> =
         Box::<dyn EmbedsText>::try_from(EmbeddingProviderConfig::OpenAiCompatible {
-            endpoint: "http://127.0.0.1:1/v1/embeddings".to_owned(),
+            endpoint: format!("{}/v1/embeddings", support::unreachable_loopback_url()?),
             model: "test-model".to_owned(),
-            api_key_env: variable.to_owned(),
+            api_key: ApiKeySource::Environment(variable.to_owned()),
         });
 
     let Err(error) = provider else {

@@ -4,7 +4,8 @@
 //! `tool_contract.rs` to keep both files under the project's file-size
 //! limit rather than growing that already-oversized file further.
 
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use serde_json::{Map, json};
@@ -15,7 +16,7 @@ async fn hard_delete_requires_configuration_and_preserves_the_file_when_denied()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("protected.md"), "protected")?;
-    let denied_server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let denied_server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let denied = call_tool(
         denied_server,
         "fs_delete_file",
@@ -33,7 +34,7 @@ async fn hard_delete_requires_configuration_and_preserves_the_file_when_denied()
     );
     assert!(vault.path().join("protected.md").exists());
 
-    let mut enabled_config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut enabled_config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     enabled_config.vaults[0].git.destructive_delete = true;
     let enabled = call_tool(
         ContextOsServer::try_from(enabled_config)?,
@@ -57,7 +58,7 @@ async fn hard_delete_requires_configuration_and_preserves_the_file_when_denied()
 async fn directory_delete_succeeds_when_only_content_is_managed_index_md()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
 
     call_tool(
@@ -68,7 +69,7 @@ async fn directory_delete_succeeds_when_only_content_is_managed_index_md()
     .await?;
     assert!(vault.path().join("notes/index.md").exists());
 
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
     let deleted_file = call_tool(
         server,
@@ -82,7 +83,7 @@ async fn directory_delete_succeeds_when_only_content_is_managed_index_md()
     assert!(vault.path().join("notes/index.md").exists());
     assert_eq!(std::fs::read_dir(vault.path().join("notes"))?.count(), 1);
 
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
     let deleted_directory = call_tool(
         server,
@@ -117,7 +118,7 @@ async fn directory_delete_still_requires_real_emptiness_outside_index_management
     std::fs::create_dir(vault.path().join("archive"))?;
     std::fs::write(vault.path().join("archive/index.md"), "operator content\n")?;
 
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].index_md.exclude = vec!["archive".to_owned()];
     let server = ContextOsServer::try_from(config)?;
 
@@ -150,7 +151,7 @@ async fn paths_deletes_multiple_targets_and_isolates_per_item_failures()
     let outside = tempdir()?;
     std::fs::write(vault.path().join("first.md"), "first")?;
     std::fs::write(vault.path().join("second.md"), "second")?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
 
     let result = call_tool(
@@ -202,7 +203,7 @@ async fn pattern_deletes_every_match_and_keeps_the_non_recursive_guard()
     std::fs::write(vault.path().join("draft-two.tmp"), "two")?;
     std::fs::create_dir(vault.path().join("draft-dir.tmp"))?;
     std::fs::write(vault.path().join("draft-dir.tmp/keep.md"), "keep")?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
 
     let result = call_tool(
@@ -241,7 +242,7 @@ async fn pattern_deletes_every_match_and_keeps_the_non_recursive_guard()
 async fn ambiguous_target_selection_is_a_whole_call_error() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("first.md"), "first")?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
 
     let result = call_tool(
@@ -269,7 +270,7 @@ async fn ambiguous_target_selection_is_a_whole_call_error() -> Result<(), Box<dy
 #[tokio::test]
 async fn paths_over_the_batch_cap_is_rejected() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].limits.max_batch_files = 2;
     let server = ContextOsServer::try_from(config)?;
 

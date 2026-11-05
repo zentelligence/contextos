@@ -1,0 +1,21 @@
+<section class="panel library-releases" id="library-releases">
+  <header class="panel-header"><h2>Library releases</h2></header>
+{% if let Some(reason) = unavailable %}  <p class="hint" role="alert">{{ reason }}</p>
+{% else if libraries.is_empty() %}  <p class="hint">No library is installed.</p>
+{% else %}  <ul class="library-release-list">
+{% for library in libraries %}    <li class="library-release" id="{{ library.id }}">
+      <strong>{{ library.library }} {{ library.version }}</strong>{% if library.older_but_locked %} <span class="badge attention">Older than the newest release, and still locked</span>{% endif %}
+{% if !library.checks.is_empty() %}      <dl class="library-checks">
+{% for check in library.checks %}        <dt>{{ check.label }}</dt><dd class="{{ check.class }}">{{ check.word }}{% if !check.lines.is_empty() %}<ul>
+{% for line in check.lines %}          <li>{{ line }}</li>
+{% endfor %}        </ul>{% endif %}</dd>
+{% endfor %}      </dl>
+{% endif %}{% if library.holders.is_empty() %}      <span class="hint">No workflow release is locked to it.</span>
+{% else %}      <span class="hint">Locked by</span>
+      <ul>
+{% for holder in library.holders %}        <li><a href="{{ holder.href }}">{{ holder.label }}</a></li>
+{% endfor %}      </ul>
+{% endif %}      {{ library.dependents|safe }}
+    </li>
+{% endfor %}  </ul>
+{% endif %}</section>

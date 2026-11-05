@@ -1,0 +1,15 @@
+<article class="panel job-card" style="--job-accent:var(--entity-{{ job.accent }})">
+  <header class="panel-header">
+    <span class="job-avatar"><span class="ic ic-jobs" aria-hidden="true"></span></span>
+    <h3><a href="{{ job.href }}">{{ job.name }}</a></h3>
+    {{ job.favourite_toggle_html|safe }}
+  </header>
+  <p class="job-status"><span class="status-dot {{ job.state }}" aria-hidden="true"></span>{{ job.state }}</p>
+  <p class="job-lifecycle">{{ job.lifecycle_label }}{% if job.attention %} <span class="badge attention">Needs attention</span>{% endif %}{% if !job.registers %} <span class="hint">does not register</span>{% endif %}</p>
+  <p class="job-schedule"><span class="ic ic-clock" aria-hidden="true"></span> {{ job.schedule_label }}</p>
+  <div class="job-card-meta"><span class="badge"><span class="ic ic-{{ job.owner_icon }}" aria-hidden="true"></span>{{ job.owner_name }}</span><span class="hint">Last run: {{ job.last_run }}</span></div>
+  <div class="row-card-actions">
+    <a class="btn small" href="{{ job.href }}">Open</a>
+{% if job.can_run %}    <form method="post" action="{{ job.href }}/runs"><button type="submit" class="btn small primary">Run now</button></form>
+{% endif %}  </div>
+</article>

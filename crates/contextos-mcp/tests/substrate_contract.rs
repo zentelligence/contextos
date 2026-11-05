@@ -5,16 +5,17 @@
 //! `tool_contract.rs` to keep both files under the project's file-size
 //! limit.
 
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use serde_json::{Map, json};
 
 #[tokio::test]
-async fn to_fr_34_git_tools_stage_commit_and_restore_through_substrates()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn git_tools_stage_commit_and_restore_through_substrates() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+{
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let unavailable = call_tool(server.clone(), "git_status", Map::new()).await?;
     assert_eq!(
         unavailable
@@ -100,7 +101,7 @@ async fn root_restore_preserves_the_default_active_exclusion_list()
         std::fs::write(vault.path().join(directory).join("state.md"), "baseline\n")?;
     }
     std::fs::write(vault.path().join("note.md"), "baseline\n")?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let initialised = call_tool(server.clone(), "git_init", Map::new()).await?;
     let baseline = initialised
         .structured_content
@@ -135,7 +136,7 @@ async fn root_restore_preserves_the_default_active_exclusion_list()
 #[tokio::test(start_paused = true)]
 async fn zero_quiet_period_debounces_to_one_automatic_commit() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].git.commit_debounce_s = 0;
     let server = ContextOsServer::try_from(config)?;
     call_tool(server.clone(), "git_init", Map::new()).await?;
@@ -173,7 +174,7 @@ async fn zero_quiet_period_debounces_to_one_automatic_commit() -> Result<(), Box
 async fn graceful_flush_commits_pending_paths_before_shutdown() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     call_tool(server.clone(), "git_init", Map::new()).await?;
     call_tool(
         server.clone(),
@@ -196,11 +197,34 @@ async fn graceful_flush_commits_pending_paths_before_shutdown() -> Result<(), Bo
 }
 
 #[tokio::test]
+async fn a_committed_nested_path_is_reported_with_forward_slashes_on_every_platform()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
+    call_tool(server.clone(), "git_init", Map::new()).await?;
+    call_tool(
+        server.clone(),
+        "fs_write_file",
+        serde_json::from_value(json!({"path": "notes/deep/note.md", "content": "safe\n"}))?,
+    )
+    .await?;
+
+    let result = call_tool(server, "git_commit", Map::new()).await?;
+
+    let structured = result
+        .structured_content
+        .ok_or("git_commit gave no structured content")?;
+    let paths = structured["committed_paths"].as_array().ok_or("no committed_paths")?;
+    assert!(paths.contains(&json!("notes/deep/note.md")), "{paths:?}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn graceful_flush_attempts_every_vault_before_reporting_a_failure()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let first = tempfile::Builder::new().prefix("first").tempdir()?;
     let second = tempfile::Builder::new().prefix("second").tempdir()?;
-    let mut config = Config::try_from(vec![first.path().to_path_buf(), second.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![first.path().to_path_buf(), second.path().to_path_buf()])?;
     config.vaults[0].git.commit_debounce_s = 3600;
     config.vaults[1].git.commit_debounce_s = 3600;
     let server = ContextOsServer::try_from(config)?;
@@ -237,7 +261,7 @@ async fn cross_vault_move_stages_source_and_destination_in_their_own_repositorie
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let first = tempfile::Builder::new().prefix("first").tempdir()?;
     let second = tempfile::Builder::new().prefix("second").tempdir()?;
-    let mut config = Config::try_from(vec![first.path().to_path_buf(), second.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![first.path().to_path_buf(), second.path().to_path_buf()])?;
     config.vaults[0].git.commit_debounce_s = 3600;
     config.vaults[1].git.commit_debounce_s = 3600;
     let server = ContextOsServer::try_from(config)?;
@@ -322,13 +346,12 @@ async fn cross_vault_move_stages_source_and_destination_in_their_own_repositorie
 }
 
 #[tokio::test]
-async fn to_fr_43_note_tools_preserve_defaults_body_order_and_links()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn note_tools_preserve_defaults_body_order_and_links() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("Plan.md"), "# Plan\n")?;
     std::fs::write(vault.path().join("Source.md"), "# Source\n")?;
     std::fs::write(vault.path().join("image.png"), b"image")?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let created = call_tool(
         server.clone(),
         "note_create",
@@ -354,8 +377,11 @@ async fn to_fr_43_note_tools_preserve_defaults_body_order_and_links()
         .and_then(|value| value.get("frontmatter"))
         .ok_or_else(|| std::io::Error::other("frontmatter_read omitted frontmatter"))?;
     assert_eq!(frontmatter.get("type"), Some(&json!("note")));
-    assert_eq!(frontmatter.get("entity"), Some(&json!("personal")));
+    // The vault has no `.contextos/entities.toml`, so no entity is known and none is guessed.
+    assert_eq!(frontmatter.get("entity"), None);
     assert_eq!(frontmatter.get("status"), Some(&json!("new")));
+    assert_minute_precision_timestamp(frontmatter.get("created"))?;
+    assert_minute_precision_timestamp(frontmatter.get("updated"))?;
 
     let updated = call_tool(
         server.clone(),
@@ -371,6 +397,19 @@ async fn to_fr_43_note_tools_preserve_defaults_body_order_and_links()
     assert!(persisted.contains("priority: 3"));
     assert!(!persisted.contains("status:"));
     assert!(persisted.contains("# References\n\n- [[Source]]: Background\n"));
+
+    let read_after_update = call_tool(
+        server.clone(),
+        "frontmatter_read",
+        serde_json::from_value(json!({"path": "daily-reflection.md"}))?,
+    )
+    .await?;
+    let frontmatter_after_update = read_after_update
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.get("frontmatter"))
+        .ok_or_else(|| std::io::Error::other("frontmatter_read omitted frontmatter"))?;
+    assert_minute_precision_timestamp(frontmatter_after_update.get("updated"))?;
 
     let links = call_tool(
         server,
@@ -390,7 +429,7 @@ async fn to_fr_43_note_tools_preserve_defaults_body_order_and_links()
             .structured_content
             .as_ref()
             .and_then(|value| value.get("unresolved")),
-        Some(&json!(["Missing"]))
+        Some(&json!([{"target": "Missing", "form": "wikilink", "kind": "not-found"}]))
     );
     // `[[Plan]]` is a plain wikilink with no custom display text, heading,
     // or block anchor: `display`/`heading`/`block` must be omitted from the
@@ -414,7 +453,7 @@ async fn to_fr_43_note_tools_preserve_defaults_body_order_and_links()
 async fn base_tools_round_trip_and_reject_a_transaction_that_dangles_a_formula()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let definition = json!({
         "formulas": {
             "quoted": "if(note.status == \"done\", 'it\\'s finished', \">= 10 & < 20\")"
@@ -586,7 +625,7 @@ async fn base_tools_round_trip_and_reject_a_transaction_that_dangles_a_formula()
 async fn canvas_tools_group_nodes_cascade_edges_and_report_dangling_endpoints()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let created = call_tool(
         server.clone(),
         "canvas_create",
@@ -665,7 +704,7 @@ async fn base_and_canvas_read_report_parse_failures_as_diagnostics_and_enforce_e
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("broken.base"), "views: [\n")?;
     std::fs::write(vault.path().join("broken.canvas"), "{\n")?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     for (tool, path, code) in [
         ("base_read", "broken.base", "format/base-schema"),
@@ -700,10 +739,10 @@ async fn base_and_canvas_read_report_parse_failures_as_diagnostics_and_enforce_e
 }
 
 #[tokio::test]
-async fn and_fr_24_mutations_and_manual_entries_share_the_same_daily_log()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn mutations_and_manual_entries_share_the_same_daily_log() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+{
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let written = call_tool(
         server.clone(),
         "fs_write_file",
@@ -746,7 +785,11 @@ async fn and_fr_24_mutations_and_manual_entries_share_the_same_daily_log()
 async fn graceful_shutdown_flush_retries_buffered_operation_log_entries()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    // The log is filed under the day in the server's zone; pinning it to UTC makes that the day computed here, rather
+    // than a day that differs from the host's own whenever the two zones are on different dates.
+    config.server.timezone = Some("UTC".to_owned());
+    let server = ContextOsServer::try_from(config)?;
     let now = time::OffsetDateTime::now_utc();
     let log_path = vault.path().join(format!(
         "memory/log/{:04}/{:02}/{:04}-{:02}-{:02}.md",
@@ -776,13 +819,13 @@ async fn graceful_shutdown_flush_retries_buffered_operation_log_entries()
 }
 
 #[tokio::test]
-async fn to_fr_22_mcp_rebuild_renames_legacy_index_and_covers_every_folder()
+async fn mcp_rebuild_renames_legacy_index_and_covers_every_folder()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::create_dir_all(vault.path().join("projects/nested"))?;
     std::fs::write(vault.path().join("_index.md"), "# Operator Root\n")?;
     std::fs::write(vault.path().join("projects/note.md"), "# Note\n")?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let preview = call_tool(
         server.clone(),
@@ -826,7 +869,7 @@ async fn to_fr_22_mcp_rebuild_renames_legacy_index_and_covers_every_folder()
 async fn directory_creation_automatically_indexes_root_ancestors_and_leaf()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -846,6 +889,31 @@ async fn directory_creation_automatically_indexes_root_ancestors_and_leaf()
             vault.path().join(relative).exists(),
             "automatic reconciliation omitted {relative}"
         );
+    }
+    Ok(())
+}
+
+/// Asserts `value` is an RFC 3339 timestamp truncated to the minute: no fractional-second
+/// component, and a `:00` seconds field - the server's own frontmatter-stamping contract,
+/// not a detail of whichever wall-clock instant a given test happened to run at.
+fn assert_minute_precision_timestamp(
+    value: Option<&serde_json::Value>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let text = value
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| std::io::Error::other("timestamp field missing or not a string"))?;
+    if text.contains('.') {
+        return Err(std::io::Error::other(format!("timestamp has a fractional-second component: {text}")).into());
+    }
+    let time_part = text
+        .split('T')
+        .nth(1)
+        .ok_or_else(|| std::io::Error::other(format!("not an RFC 3339 timestamp: {text}")))?;
+    let seconds = time_part
+        .get(6..8)
+        .ok_or_else(|| std::io::Error::other(format!("not an RFC 3339 timestamp: {text}")))?;
+    if seconds != "00" {
+        return Err(std::io::Error::other(format!("timestamp is not truncated to the minute: {text}")).into());
     }
     Ok(())
 }

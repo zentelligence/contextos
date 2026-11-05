@@ -8,6 +8,7 @@ Use this review for behaviour, schema, architecture, or delivery claims.
 4. Map each acceptance statement and documented error to a test.
 5. Check whether the claimed delivery phase gate is fully satisfied.
 6. Identify unspecified behaviour that became public or persisted accidentally.
+7. Check that the plugin's `mcp-tools` skill still describes the tools as they now behave, and classify any disagreement as drift.
 
 Classify gaps as:
 

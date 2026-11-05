@@ -1,0 +1,17 @@
+<section id="signals-attention" class="panel signals-region" aria-labelledby="signals-attention-heading" hx-get="{{ view.refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-target="this" hx-swap="outerHTML">
+  <div class="panel-header"><h2 id="signals-attention-heading">Needs attention</h2></div>
+{% if view.unreadable %}
+  <p class="hint error">Events could not be read just now.</p>
+{% else if view.lines.is_empty() %}
+  <p class="hint">Nothing needs attention.</p>
+{% else %}
+  <ul class="signals-list">
+{% for line in view.lines %}
+    {% include "signal_event.html" %}
+{% endfor %}
+  </ul>
+{% if view.more > 0 %}
+  <p class="hint">And {{ view.more }} more.</p>
+{% endif %}
+{% endif %}
+</section>

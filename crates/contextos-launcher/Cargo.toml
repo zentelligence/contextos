@@ -1,0 +1,16 @@
+[package]
+name = "contextos-launcher"
+description = "Stable launcher: resolves and runs the active contextos/contextos-web release"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "contextos-launcher"
+path = "src/main.rs"
+
+[dependencies]
+updater-launcher = { workspace = true }

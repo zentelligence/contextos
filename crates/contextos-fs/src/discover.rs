@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use walkdir::WalkDir;
 
+use crate::regular_file::{is_not_regular_file, open_regular_file};
 use crate::{ContentHash, Filesystem, FsError};
 
 /// Filesystem entry kind used by list, tree, and info results.
@@ -80,6 +81,14 @@ pub struct SearchFilesRequest {
     pub pattern: String,
     pub exclude_patterns: Vec<String>,
     pub max_results: usize,
+}
+
+/// Request for every regular file under a directory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListFilesRequest {
+    pub path: VaultPath,
+    /// The most files the listing may hold. A vault with more fails the request; it is never truncated.
+    pub max_files: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,6 +201,53 @@ impl Filesystem {
         search_walk(path, request.max_results, &matcher, &excludes)
     }
 
+    /// Lists every regular file under a directory as a sorted, `/`-separated path relative to it. Directories, symlinks,
+    /// and paths the vault hides are omitted. This walks the whole tree, so it belongs in a scan that is run rarely
+    /// and cached, never once per request.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for an unauthorised, missing, or unreadable directory, or when there are more files than
+    /// `max_files`.
+    pub fn list_files(&self, request: &ListFilesRequest) -> Result<Vec<String>, FsError> {
+        let path = self.authorise(&request.path)?;
+        ensure_directory(path)?;
+        let excludes = exclusion_matcher(path, self.hidden(&request.path)?, &[])?;
+        file_walk(path, request.max_files, &excludes)
+    }
+
+    /// Confirms `path` names an existing directory inside the vault, reading no content and listing nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FsError::NotFound`] for a missing path, [`FsError::NotDirectory`] for one that is not a directory,
+    /// and [`FsError::OutsideRoot`] for one outside the configured roots.
+    pub fn require_directory(&self, path: &VaultPath) -> Result<(), FsError> {
+        ensure_directory(self.authorise(path)?)
+    }
+
+    /// Whether `path` names an existing regular file inside the vault. A directory and a missing path are not files.
+    /// This reads no content and computes no hash, so it is cheap enough to ask
+    /// once per candidate path.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the path's metadata exists but cannot be read.
+    pub fn is_file(&self, path: &VaultPath) -> Result<bool, FsError> {
+        let absolute: &Path = path.into();
+        if !self.roots.authorises(path) {
+            return Ok(false);
+        }
+        match absolute.metadata() {
+            Ok(metadata) => Ok(metadata.is_file()),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(FsError::ReadMetadata {
+                path: absolute.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
     /// Returns metadata and a content hash for bounded regular files.
     ///
     /// # Errors
@@ -212,7 +268,7 @@ impl Filesystem {
             None
         };
         Ok(FileInfo {
-            path: request.path.relative().to_string_lossy().into_owned(),
+            path: request.path.portable_relative(),
             kind,
             size: file_metadata.len(),
             created: file_metadata.created().ok().map(OffsetDateTime::from),
@@ -337,6 +393,36 @@ pub fn default_hidden_patterns() -> Vec<String> {
         .collect()
 }
 
+/// What a vault hides from every enumeration surface, as its `hidden` patterns say. The listing tools and the link
+/// graph's listing of the vault's files decide with this one matcher, so a link never reaches a file every tool hides.
+pub struct HiddenPaths {
+    matcher: Gitignore,
+}
+
+/// The patterns to hide, and the vault root they are relative to.
+pub struct HiddenPathsInput<'a> {
+    pub root: &'a Path,
+    pub patterns: &'a [String],
+}
+
+impl TryFrom<HiddenPathsInput<'_>> for HiddenPaths {
+    type Error = FsError;
+
+    fn try_from(value: HiddenPathsInput<'_>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            matcher: exclusion_matcher(value.root, value.patterns, &[])?,
+        })
+    }
+}
+
+impl HiddenPaths {
+    /// Whether the vault hides `relative`, a forward-slash path from the vault root, or a folder it sits in.
+    #[must_use]
+    pub fn hides(&self, relative: &str, is_directory: bool) -> bool {
+        is_excluded(&self.matcher, Path::new(relative), is_directory)
+    }
+}
+
 fn exclusion_matcher(root: &Path, hidden: &[String], patterns: &[String]) -> Result<Gitignore, FsError> {
     let mut builder = GitignoreBuilder::new(root);
     for fixed in hidden {
@@ -449,10 +535,76 @@ fn search_walk(
     Ok(found_paths)
 }
 
+fn file_walk(root: &Path, maximum: usize, excludes: &Gitignore) -> Result<Vec<String>, FsError> {
+    let mut files = Vec::new();
+    let mut walker = WalkDir::new(root).follow_links(false).into_iter();
+    while let Some(entry) = walker.next() {
+        let entry = match entry {
+            Ok(entry) => entry,
+            // A directory that may not be read, or an entry removed while the walk was under way, is left out of the
+            // listing. It is not a reason to fail the whole vault.
+            Err(source)
+                if source.io_error().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound
+                    )
+                }) =>
+            {
+                continue;
+            }
+            Err(source) => {
+                return Err(FsError::WalkDirectory {
+                    path: root.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        if entry.depth() == 0 {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(root)
+            .map_err(|source| FsError::PrefixMismatch {
+                path: entry.path().to_path_buf(),
+                source,
+            })?;
+        let is_directory = entry.file_type().is_dir();
+        if is_excluded(excludes, relative, is_directory) {
+            if is_directory {
+                walker.skip_current_dir();
+            }
+            continue;
+        }
+        if entry.file_type().is_file() {
+            if files.len() >= maximum {
+                return Err(FsError::TooManyFiles {
+                    path: root.to_path_buf(),
+                    maximum,
+                });
+            }
+            files.push(forward_slash_display(relative));
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 pub(crate) fn hash_file(path: &Path) -> Result<ContentHash, FsError> {
-    let mut file = fs::File::open(path).map_err(|source| FsError::OpenRead {
-        path: path.to_path_buf(),
-        source,
+    // The path may name a pipe or device, whether a caller saw a regular file there earlier or never looked (the
+    // conflict check before a write does not); reading one would wait on it or never end.
+    let (mut file, _) = open_regular_file(path, fs::OpenOptions::new().read(true)).map_err(|source| {
+        if is_not_regular_file(&source) {
+            FsError::NotFile {
+                path: path.to_path_buf(),
+            }
+        } else {
+            FsError::OpenRead {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
     })?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; 64 * 1024];
@@ -468,3 +620,7 @@ pub(crate) fn hash_file(path: &Path) -> Result<ContentHash, FsError> {
     }
     Ok(ContentHash::from(<[u8; 32]>::from(hasher.finalize())))
 }
+
+#[cfg(test)]
+#[path = "discover_test.rs"]
+mod tests;

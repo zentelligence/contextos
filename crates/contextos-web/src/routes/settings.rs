@@ -1,7 +1,14 @@
-//! `/settings/` (`web-routes.md` §5): a `web.toml`-scoped configuration
+//! `/settings/`: a `web.toml`-scoped configuration
 //! UI. `GET` renders the current effective configuration; `POST` adds an
 //! `[[mcp_server]]` entry; `PATCH` partially updates an entry or
-//! `[server.ui]`; `PUT` fully replaces an entry; `DELETE` removes one.
+//! `[server.ui]`; `PUT` fully replaces an entry; `DELETE
+//! /settings/mcp-servers/{name}` removes one, the `[[mcp_server]]` name
+//! carried as the URL path segment `docs/http-routing-response-contract.md`
+//! requires for an identified sub-entity, rather than a JSON body field (a
+//! body htmx's own `methodsThatUseUrlParams` default never actually sends
+//! for a `DELETE`, which made the previous single-`/settings/`-endpoint
+//! `DELETE` a silent no-op from the real browser UI: the request left with
+//! an empty body, `web.toml` untouched).
 //! Every writing method validates the resulting document
 //! ([`crate::config_writer::WebConfigDocument`]) and checks that no
 //! currently-registered app's manifest still names a server the edit would
@@ -9,6 +16,14 @@
 //! byte-for-byte unchanged. No method here ever opens `config.toml`: the
 //! vault list it holds is exclusively a `contextos-mcp` CLI or hand-edit
 //! concern.
+//!
+//! Once a write does succeed, [`apply_edit_and_persist`] additionally garbage-collects any
+//! `credential_ref`/`client_secret_ref` that no longer names anything in the resulting
+//! `[[mcp_server]]` array at all (a `DELETE`, or a `PUT` that replaces an entry with a different
+//! reference or drops `auth` entirely). This uplift's own credential store lives entirely under a
+//! `credentials/` directory sibling to `web.toml`; the reaffirmation above still holds precisely
+//! because of this: neither this garbage collection nor anything else this module or
+//! `routes::settings_oauth` does ever reads or writes `config.toml`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,44 +31,101 @@ use std::sync::Arc;
 
 use askama::Template;
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use time::format_description::well_known::Rfc3339;
 
-use crate::apps::{self, RegisteredApp};
 use crate::atomic_write::write_atomically;
-use crate::config::{McpServerConfig, WebConfig, WebServerConfig, current_appearance};
+use crate::config::{
+    DEFAULT_SYSTEM_NAME, McpServerAuth, McpServerConfig, WebConfig, WebServerConfig, current_appearance,
+};
 use crate::config_writer::{WebConfigDocument, WebConfigWriterError};
+use crate::credential_store::{CredentialRecord, FsCredentialStore};
+use crate::logging::{Clock, SystemClock};
 use crate::mcp_client::{McpCallError, McpClient, McpClientSet};
+use crate::mcp_readiness::ServerReadiness;
+use crate::oauth::PendingOauthConnections;
 use crate::rendering::page;
 use crate::rendering::shell::{self, ActiveScreen};
+use crate::routes::settings_connections::{ConnectionView, ServerSegment};
+use crate::routes::settings_credentials::{
+    DetectedAuth, McpServerAuthView, SettingsQuery, credential_references_in, credential_snapshot,
+    extract_pasted_secrets_from_patch, garbage_collect_credentials, mcp_server_auth_view, persist_pasted_secrets,
+    settings_banner,
+};
+use crate::routes::settings_dependents::{DependencyCheckError, dependent_apps};
+use crate::routes::settings_secrets::Revealed;
 
 /// Shared state the settings route needs: the connected MCP sessions (to
 /// run the registered-app-dependency check required before removing an
 /// `[[mcp_server]]` entry), the `[[mcp_server]]` name every such check is
 /// issued against, and the on-disk path of the `web.toml` this route reads
 /// and writes.
+///
+/// `credential_store`/`pending_oauth` back the `OAuth2` connect/callback/disconnect routes
+/// (`routes::settings_oauth`), a sibling module over this identical state type rather than a
+/// second, separately wired one: the credential store is rooted at a `credentials/` directory
+/// sibling to `web_config_path`, derived here rather than taken as a
+/// separate constructor parameter, and `pending_oauth` starts empty on every process start (an
+/// in-flight connect does not survive a restart, which is fine: this is
+/// single-operator, loopback-only, in-memory state).
 #[derive(Clone)]
 pub struct SettingsRoutesState {
     clients: Arc<McpClientSet>,
-    primary_server: String,
     web_config_path: Arc<PathBuf>,
+    credential_store: Arc<FsCredentialStore>,
+    pending_oauth: PendingOauthConnections,
+    /// Held while `web.toml` is read and applied to the sessions, so two applies never interleave and the last one
+    /// always reflects the file as it now is.
+    connections_sync: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SettingsRoutesState {
     #[must_use]
-    pub fn new(clients: Arc<McpClientSet>, primary_server: String, web_config_path: PathBuf) -> Self {
+    pub fn new(clients: Arc<McpClientSet>, web_config_path: PathBuf) -> Self {
+        let credentials_dir = crate::credential_store::credentials_directory(&web_config_path);
         Self {
             clients,
-            primary_server,
             web_config_path: Arc::new(web_config_path),
+            credential_store: Arc::new(FsCredentialStore::new(credentials_dir)),
+            pending_oauth: PendingOauthConnections::new(),
+            connections_sync: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
-    fn client(&self) -> Option<&Arc<McpClient>> {
-        self.clients.get(&self.primary_server)
+    fn client(&self) -> Option<Arc<McpClient>> {
+        self.clients.primary()
+    }
+
+    /// The connected MCP sessions, for
+    /// [`routes::settings_oauth::disconnect`](crate::routes::settings_oauth::disconnect)'s
+    /// post-disconnect status probe.
+    pub(crate) fn clients(&self) -> &Arc<McpClientSet> {
+        &self.clients
+    }
+
+    /// `web.toml`'s own path, for a sibling route module to read the current configuration the
+    /// same way this module does.
+    pub(crate) fn web_config_path(&self) -> Arc<PathBuf> {
+        Arc::clone(&self.web_config_path)
+    }
+
+    /// The credential store backing the `OAuth2` connect/callback/disconnect routes.
+    pub(crate) fn credential_store(&self) -> &Arc<FsCredentialStore> {
+        &self.credential_store
+    }
+
+    /// Serialises applying `web.toml` to the sessions ([`crate::routes::settings_connections::sync_connections`]).
+    pub(crate) fn connections_sync(&self) -> &tokio::sync::Mutex<()> {
+        &self.connections_sync
+    }
+
+    /// The in-flight `OAuth2` connect attempts awaiting their callback.
+    pub(crate) fn pending_oauth(&self) -> &PendingOauthConnections {
+        &self.pending_oauth
     }
 }
 
@@ -128,8 +200,19 @@ fn unreachable() -> Response {
     error(StatusCode::BAD_GATEWAY, "mcp/unreachable")
 }
 
-fn server_not_configured() -> Response {
-    error(StatusCode::INTERNAL_SERVER_ERROR, "mcp/server-not-configured")
+/// The refusal when the primary server's vault list could not be read, so which vaults depend on a server is not known.
+/// It is a bad gateway like [`unreachable`], under its own code, and carries the reason the check could not be made.
+fn vault_list_unreadable(detail: String) -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(ErrorBody {
+            error: "mcp/vault-list-unreadable",
+            detail: Some(detail),
+            server: None,
+            used_by: Vec::new(),
+        }),
+    )
+        .into_response()
 }
 
 fn read_failure(source: &std::io::Error) -> Response {
@@ -148,28 +231,32 @@ fn read_failure(source: &std::io::Error) -> Response {
 /// deliberately deferred, HTTP surface auth).
 struct McpServerRow {
     name: String,
+    /// [`crate::inbox_outbox::encode_query_value`]'s percent-encoding of
+    /// `name`, for safe embedding as the `{name}` path segment of this
+    /// row's own `DELETE /settings/mcp-servers/{name}` link.
+    name_encoded: String,
     transport: &'static str,
     detail: String,
     command: Option<String>,
     args: Option<String>,
     endpoint: Option<String>,
-    token_env: Option<String>,
-    status_icon: &'static str,
-    status_label: &'static str,
+    /// The entry's connection panel: readiness, cause, remedy, and Reconnect.
+    connection: ConnectionView,
+    /// The `[mcp_server.auth]`/`[mcp_server.headers]` view. Always present,
+    /// with meaningless defaults never rendered, on a stdio entry too: this field is never itself
+    /// `Option`, matching this struct's own sibling fields' (`command`/`args`/`endpoint`) "always
+    /// present, blank when not applicable" convention, rather than forcing the template to bind an
+    /// owned value out of a shared reference with an `if let`.
+    auth: McpServerAuthView,
 }
 
-/// Classifies one `[[mcp_server]]` entry's live status against `statuses`
-/// (an [`crate::mcp_client::McpClientSet::probe_status`] result): a name
-/// absent from the map was never connected this process at all (added to
-/// `web.toml` since the last restart, and only takes effect on the next
-/// one), distinct from a name present but no longer responding (its process
-/// or connection died after a successful startup handshake).
-fn mcp_server_status(name: &str, statuses: &HashMap<String, bool>) -> (&'static str, &'static str) {
-    match statuses.get(name) {
-        Some(true) => ("🟢", "Connected"),
-        Some(false) => ("🔴", "Unreachable"),
-        None => ("⚪", "Not connected (restart required)"),
-    }
+/// `entry`'s connection panel from `readiness`. An entry missing from it was added to `web.toml` by hand since the set
+/// last read it; Reconnect reads `web.toml` again and connects it.
+fn connection_view(name: &str, readiness: &[ServerReadiness]) -> ConnectionView {
+    readiness
+        .iter()
+        .find(|server| server.name == name)
+        .map_or_else(|| ConnectionView::unknown_to_set(name), ConnectionView::from)
 }
 
 #[derive(Template)]
@@ -182,7 +269,54 @@ struct SettingsTemplate {
     log_rotation: String,
     log_retention: String,
     ui: Vec<(String, String)>,
+    system_name: String,
+    theme_options: Vec<AppearanceOption>,
+    size_options: Vec<AppearanceOption>,
+    font_options: Vec<AppearanceOption>,
     mcp_servers: Vec<McpServerRow>,
+    /// A transient, query-parameter-driven success notice (`?oauth_connected={server}`), never
+    /// persisted: absent on every render this query parameter did not itself drive.
+    notice: Option<String>,
+    /// The same notice's failure counterpart (`?oauth_error={reason}&server={server}`).
+    error: Option<String>,
+}
+
+/// One selectable choice on an Appearance picker (Theme, Font size, or
+/// Font): `value` is the exact `[server.ui]` string this option's control
+/// submits, `label` is its operator-facing text (also the string the
+/// Font-size/Font pickers render live, at the candidate size or in the
+/// candidate typeface, as their own preview), `selected` marks the option
+/// matching the axis's currently effective value.
+struct AppearanceOption {
+    value: &'static str,
+    label: &'static str,
+    selected: bool,
+}
+
+/// Resolves one Appearance axis's picker options: `current` is the raw
+/// `[server.ui]` string value for that axis, if any; an unrecognised or
+/// absent value both resolve to `default`, matching the stylesheet's own
+/// "no matching rule leaves the axis at its default" fallback. `default`
+/// is independent of `choices`'s own display order (`size`'s options read
+/// small-to-large for display, `"normal"`, not the first entry, is the
+/// real default).
+fn appearance_options(
+    current: Option<&str>,
+    choices: &[(&'static str, &'static str)],
+    default: &'static str,
+) -> Vec<AppearanceOption> {
+    let effective = choices
+        .iter()
+        .find(|(value, _)| Some(*value) == current)
+        .map_or(default, |(value, _)| *value);
+    choices
+        .iter()
+        .map(|&(value, label)| AppearanceOption {
+            value,
+            label,
+            selected: value == effective,
+        })
+        .collect()
 }
 
 /// A human-readable summary of `server`'s rotation triggers, for the
@@ -224,51 +358,121 @@ fn log_retention_display(server: &WebServerConfig) -> String {
     }
 }
 
-fn render(config: &WebConfig, statuses: &HashMap<String, bool>) -> String {
+/// `pub(crate)`: `routes::settings_oauth::disconnect` re-renders the identical fragment after
+/// clearing a stored token, rather than duplicating this rendering logic. `credentials` is
+/// [`credential_snapshot`]'s own gathered map; `notice`/`error` are the transient banner text this
+/// call's own caller resolved from `?oauth_connected=`/`?oauth_error=`, or `None` for every render
+/// no such query parameter drove.
+/// Builds one [`McpServerRow`] for `render`'s own `mcp_servers` list: split out purely to keep
+/// `render` itself under this repository's `clippy::too_many_lines` bound, not because this piece
+/// is independently reusable.
+fn mcp_server_row(
+    entry: &McpServerConfig,
+    readiness: &[ServerReadiness],
+    credentials: &HashMap<String, CredentialRecord>,
+    detected: Option<&DetectedAuth<'_>>,
+) -> McpServerRow {
+    let connection = connection_view(entry.name(), readiness);
+    match entry {
+        McpServerConfig::Stdio { name, command, args } => McpServerRow {
+            name: name.clone(),
+            name_encoded: ServerSegment::from(name.as_str()).to_string(),
+            transport: "stdio",
+            detail: format!("{command} {}", args.join(" ")),
+            command: Some(command.clone()),
+            args: Some(args.join(" ")),
+            endpoint: None,
+            connection: connection.clone(),
+            auth: mcp_server_auth_view(
+                name,
+                None,
+                None,
+                &std::collections::BTreeMap::new(),
+                credentials,
+                detected,
+            ),
+        },
+        McpServerConfig::Http {
+            name,
+            endpoint,
+            token_env,
+            auth,
+            headers,
+        } => McpServerRow {
+            name: name.clone(),
+            name_encoded: ServerSegment::from(name.as_str()).to_string(),
+            transport: "http",
+            detail: match (auth, token_env) {
+                (
+                    Some(McpServerAuth::Bearer {
+                        token_env: Some(variable),
+                        ..
+                    }),
+                    _,
+                )
+                | (None, Some(variable)) => {
+                    format!("{endpoint} (token via ${variable})")
+                }
+                (Some(McpServerAuth::Bearer { .. }), _) => format!("{endpoint} (pasted token)"),
+                _ => endpoint.clone(),
+            },
+            command: None,
+            args: None,
+            endpoint: Some(endpoint.clone()),
+            connection: connection.clone(),
+            auth: mcp_server_auth_view(
+                name,
+                auth.as_ref(),
+                token_env.as_deref(),
+                headers,
+                credentials,
+                detected,
+            ),
+        },
+    }
+}
+
+pub(crate) fn render(
+    config: &WebConfig,
+    readiness: &[ServerReadiness],
+    credentials: &HashMap<String, CredentialRecord>,
+    notice: Option<String>,
+    error: Option<String>,
+    detected: Option<&DetectedAuth<'_>>,
+) -> String {
     let mcp_servers = config
         .mcp_servers
         .iter()
-        .map(|entry| {
-            let (status_icon, status_label) = mcp_server_status(entry.name(), statuses);
-            match entry {
-                McpServerConfig::Stdio { name, command, args } => McpServerRow {
-                    name: name.clone(),
-                    transport: "stdio",
-                    detail: format!("{command} {}", args.join(" ")),
-                    command: Some(command.clone()),
-                    args: Some(args.join(" ")),
-                    endpoint: None,
-                    token_env: None,
-                    status_icon,
-                    status_label,
-                },
-                McpServerConfig::Http {
-                    name,
-                    endpoint,
-                    token_env,
-                } => McpServerRow {
-                    name: name.clone(),
-                    transport: "http",
-                    detail: token_env.as_ref().map_or_else(
-                        || endpoint.clone(),
-                        |variable| format!("{endpoint} (token via ${variable})"),
-                    ),
-                    command: None,
-                    args: None,
-                    endpoint: Some(endpoint.clone()),
-                    token_env: token_env.clone(),
-                    status_icon,
-                    status_label,
-                },
-            }
-        })
+        .map(|entry| mcp_server_row(entry, readiness, credentials, detected))
         .collect();
+    // `theme`/`font`/`size` each get a dedicated picker, `system_name` its
+    // own dedicated field (both below); every other `[server.ui]` key
+    // (`logo`, and any other unenumerated key an operator has set) keeps the
+    // free-form editor, so that capability is never silently lost.
     let ui = config
         .server
         .ui
         .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "theme" | "font" | "size" | "system_name"))
         .map(|(key, value)| (key.clone(), ui_value_display(value)))
         .collect();
+    let string_value = |key: &str| config.server.ui.get(key).and_then(toml::Value::as_str);
+    let system_name = string_value("system_name").map_or_else(|| DEFAULT_SYSTEM_NAME.to_owned(), ToOwned::to_owned);
+    let theme_options = appearance_options(
+        string_value("theme"),
+        &[("blueprint", "Blueprint"), ("dark", "Dark"), ("light", "Light")],
+        "blueprint",
+    );
+    let size_options = appearance_options(
+        string_value("size"),
+        &[("small", "Smaller"), ("normal", "Normal"), ("large", "Larger")],
+        "normal",
+    );
+    let font_options = appearance_options(
+        string_value("font"),
+        &[("sans", "Sans"), ("serif", "Serif"), ("monospace", "Monospace")],
+        "sans",
+    );
     let template = SettingsTemplate {
         bind: config.server.bind.clone(),
         static_dir: config.server.static_dir.as_ref().map_or_else(
@@ -280,7 +484,13 @@ fn render(config: &WebConfig, statuses: &HashMap<String, bool>) -> String {
         log_rotation: log_rotation_display(&config.server),
         log_retention: log_retention_display(&config.server),
         ui,
+        system_name,
+        theme_options,
+        size_options,
+        font_options,
         mcp_servers,
+        notice,
+        error,
     };
     template
         .render()
@@ -301,35 +511,87 @@ fn ui_value_display(value: &toml::Value) -> String {
     }
 }
 
-fn html_response(html: String) -> Response {
+/// `pub(crate)`: `routes::settings_oauth::disconnect` returns the identical content type this
+/// module's own successful writes do.
+pub(crate) fn html_response(html: String) -> Response {
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
+/// Adds htmx's `HX-Refresh: true` response header, which tells the client
+/// to discard this response body and do a full browser reload instead of
+/// swapping it in. Used only when a save changed one of
+/// [`CHROME_AFFECTING_UI_KEYS`]: those five keys render inside
+/// `page_shell.html` (the `<html data-theme>` attribute, the header title,
+/// the header logo), all outside the `.settings` element the Appearance
+/// pane's own `hx-swap="outerHTML"` targets, so swapping that fragment
+/// alone leaves the new skin, title, or logo invisible until the next
+/// unrelated navigation reloads the shell around it.
+fn html_response_with_refresh(html: String) -> Response {
+    (
+        StatusCode::OK,
+        [("content-type", "text/html; charset=utf-8"), ("HX-Refresh", "true")],
+        html,
+    )
+        .into_response()
+}
+
+/// The `[server.ui]` keys `page_shell.html` renders outside `.settings`
+/// (`Appearance`'s own field list, `config.rs`): a save that touches any of
+/// these needs [`html_response_with_refresh`] rather than a bare fragment
+/// swap. Every other `[server.ui]` key is "persisted but inert" (renders
+/// nowhere yet), so a save that only touches those needs no refresh.
+const CHROME_AFFECTING_UI_KEYS: [&str; 5] = ["theme", "font", "size", "system_name", "logo"];
+
+/// Whether `edit` changed a `[server.ui]` key the nav shell renders outside
+/// `.settings`, per [`CHROME_AFFECTING_UI_KEYS`].
+fn touches_shell_chrome(edit: &Edit) -> bool {
+    match edit {
+        Edit::PatchUi(patch) => patch.keys().any(|key| CHROME_AFFECTING_UI_KEYS.contains(&key.as_str())),
+        Edit::AddMcpServer(_)
+        | Edit::PatchMcpServer { .. }
+        | Edit::ReplaceMcpServer { .. }
+        | Edit::RemoveMcpServer(_) => false,
+    }
+}
+
 /// `GET /settings/`: renders the current effective `web.toml`. Follows
-/// `standards/http-routing-response-contract-standard.md`'s `HX-Request`
-/// convention (`web-architecture.md` §6): a plain browser navigation (no
+/// `docs/http-routing-response-contract.md`'s `HX-Request`
+/// convention: a plain browser navigation (no
 /// `HX-Request` header) gets the full page, chrome and all; an
-/// HTMX-driven request gets the bare fragment it will swap in.
-pub async fn get(State(state): State<SettingsRoutesState>, headers: HeaderMap) -> Response {
+/// HTMX-driven request gets the bare fragment it will swap in. The `?oauth_connected=`/
+/// `?oauth_error=` banner (`settings_banner`) renders on both branches, for the same reason: a
+/// real browser redirect from `routes::settings_oauth::callback` never carries an `HX-Request`
+/// header, but rendering the banner unconditionally keeps the two branches' own notice-handling
+/// identical rather than one silently dropping it.
+pub async fn get(
+    State(state): State<SettingsRoutesState>,
+    headers: HeaderMap,
+    Query(query): Query<SettingsQuery>,
+) -> Response {
+    let (notice, error) = settings_banner(&query);
     let is_hx_request = headers.contains_key("hx-request");
     if is_hx_request {
-        let (config, statuses) = tokio::join!(
+        let (config, readiness) = tokio::join!(
             read_current_blocking(Arc::clone(&state.web_config_path)),
-            state.clients.probe_status(),
+            state.clients.readiness(),
         );
         return match config {
-            Ok(config) => html_response(render(&config, &statuses)),
+            Ok(config) => {
+                let credentials = credential_snapshot(state.credential_store(), &config).await;
+                html_response(render(&config, &readiness, &credentials, notice, error, None))
+            }
             Err(response) => *response,
         };
     }
     // `web.toml`'s own read (for the page itself), the nav shell, the
-    // appearance read, and the live MCP server status probe are four
-    // independent operations: none depends on another's result, so all four
-    // run concurrently rather than paying their costs (two of them blocking
-    // filesystem reads, moved onto `spawn_blocking` rather than the async
-    // executor thread) one after another.
+    // appearance read, and the live MCP server status probes (the
+    // per-server detail this page's own pane needs, and the footer's own
+    // aggregate) are five independent operations: none depends on another's
+    // result, so all five run concurrently rather than paying their costs
+    // (two of them blocking filesystem reads, moved onto `spawn_blocking`
+    // rather than the async executor thread) one after another.
     let appearance_path = Arc::clone(&state.web_config_path);
-    let (config, mut nav, appearance, statuses) = tokio::join!(
+    let (config, mut nav, appearance, readiness, mcp_status) = tokio::join!(
         read_current_blocking(Arc::clone(&state.web_config_path)),
         Box::pin(settings_nav(&state)),
         async move {
@@ -337,12 +599,16 @@ pub async fn get(State(state): State<SettingsRoutesState>, headers: HeaderMap) -
                 .await
                 .unwrap_or_default()
         },
-        state.clients.probe_status(),
+        state.clients.readiness(),
+        crate::rendering::shell::mcp_status(&state.clients),
     );
     match config {
         Ok(config) => {
-            let fragment = render(&config, &statuses);
+            let credentials = credential_snapshot(state.credential_store(), &config).await;
+            let fragment = render(&config, &readiness, &credentials, notice, error, None);
             nav.appearance = appearance;
+            nav.sidebar_wide = crate::routes::sidebar_wide_from_headers(&headers);
+            nav.mcp_status = mcp_status;
             html_response(page::render_page(&nav, "Settings", &fragment))
         }
         Err(response) => *response,
@@ -353,7 +619,9 @@ pub async fn get(State(state): State<SettingsRoutesState>, headers: HeaderMap) -
 /// `spawn_blocking` rather than the async executor thread. The `JoinError`
 /// arm is unreachable in practice, since [`read_current`] never panics, but
 /// still must be handled rather than unwrapped.
-async fn read_current_blocking(path: Arc<PathBuf>) -> Result<WebConfig, Box<Response>> {
+///
+/// `pub(crate)`: `routes::settings_oauth` reuses this rather than a second `web.toml` reader.
+pub(crate) async fn read_current_blocking(path: Arc<PathBuf>) -> Result<WebConfig, Box<Response>> {
     match tokio::task::spawn_blocking(move || read_current(&path)).await {
         Ok(result) => result,
         Err(_join_error) => Err(Box::new(error(
@@ -364,28 +632,41 @@ async fn read_current_blocking(path: Arc<PathBuf>) -> Result<WebConfig, Box<Resp
 }
 
 /// Builds the nav shell's data for `/settings/`: vault-independent
-/// (`shell::build_nav`'s `vault_name: None` path, so no tree section
-/// renders), degrading to an empty vault switcher rather than failing the
-/// whole page when the primary MCP session is unavailable, since the
-/// switcher is a convenience the settings page itself does not depend on.
+/// (`shell::build_nav`'s `vault_name: None` path), degrading to an empty
+/// vault switcher rather than failing the whole page when the primary MCP
+/// session is unavailable, since the switcher is a convenience the settings
+/// page itself does not depend on.
 async fn settings_nav(state: &SettingsRoutesState) -> page::NavData {
     match state.client() {
-        Some(client) => shell::build_nav(client, ActiveScreen::Settings, None, None, None).await,
+        Some(client) => shell::build_nav(&client, ActiveScreen::Settings, None, None, None, None, &[]).await,
         None => page::NavData {
             vaults: Vec::new(),
             current_vault: None,
             nav_target_vault: None,
-            directory_breadcrumb: None,
-            entries: Vec::new(),
             breadcrumb: vec![page::BreadcrumbSegment {
                 label: "settings".to_owned(),
                 href: None,
             }],
             active_vault_screen: false,
+            active_agents_screen: false,
             active_apps_screen: false,
+            active_jobs_screen: false,
             active_settings_screen: true,
-            rescan_href: None,
+            current_vault_entity: None,
+            entities: Vec::new(),
+            current_entity: None,
+            current_entity_accent: None,
+            entity_base_path: None,
             appearance: crate::config::Appearance::default(),
+            sidebar_groups: Vec::new(),
+            sidebar_wide: true,
+            mcp_status: page::McpStatus::default(),
+            note_href: None,
+            profile_href: None,
+            vault_settings_href: None,
+            page_title: None,
+            events_stream_href: None,
+            favourites: None,
         },
     }
 }
@@ -408,12 +689,6 @@ enum PatchBody {
     Ui { patch: Map<String, Value> },
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DeleteBody {
-    name: String,
-}
-
 enum Edit {
     AddMcpServer(McpServerConfig),
     PatchMcpServer {
@@ -428,17 +703,31 @@ enum Edit {
     RemoveMcpServer(String),
 }
 
-fn parse_edit(method: &Method, body: &[u8]) -> Result<Edit, Box<Response>> {
+/// A parsed edit, and the pasted secrets stripped from it on their way to the credential store.
+type ParsedEdit = (Edit, Vec<(String, CredentialRecord)>);
+
+fn parse_edit(method: &Method, body: &[u8], now: &str) -> Result<ParsedEdit, Box<Response>> {
     match *method {
         Method::POST => {
-            let entry: McpServerConfig = serde_json::from_slice(body).map_err(|_source| Box::new(malformed_body()))?;
-            Ok(Edit::AddMcpServer(entry))
+            // A pasted token comes out of the submitted entry before it is read as one, since web.toml has no field
+            // for a secret value.
+            let mut map: Map<String, Value> =
+                serde_json::from_slice(body).map_err(|_source| Box::new(malformed_body()))?;
+            let secrets = extract_pasted_secrets_from_patch(&mut map, now)
+                .map_err(|refusal| Box::new(refusal.into_response()))?;
+            let entry: McpServerConfig =
+                serde_json::from_value(Value::Object(map)).map_err(|_source| Box::new(malformed_body()))?;
+            Ok((Edit::AddMcpServer(entry), secrets))
         }
         Method::PATCH => {
             let parsed: PatchBody = serde_json::from_slice(body).map_err(|_source| Box::new(malformed_body()))?;
             Ok(match parsed {
-                PatchBody::McpServer { name, patch } => Edit::PatchMcpServer { name, patch },
-                PatchBody::Ui { patch } => Edit::PatchUi(patch),
+                PatchBody::McpServer { name, mut patch } => {
+                    let secrets = extract_pasted_secrets_from_patch(&mut patch, now)
+                        .map_err(|refusal| Box::new(refusal.into_response()))?;
+                    (Edit::PatchMcpServer { name, patch }, secrets)
+                }
+                PatchBody::Ui { patch } => (Edit::PatchUi(patch), Vec::new()),
             })
         }
         Method::PUT => {
@@ -449,11 +738,7 @@ fn parse_edit(method: &Method, body: &[u8]) -> Result<Edit, Box<Response>> {
             };
             let entry: McpServerConfig =
                 serde_json::from_value(Value::Object(map)).map_err(|_source| Box::new(malformed_body()))?;
-            Ok(Edit::ReplaceMcpServer { current_name, entry })
-        }
-        Method::DELETE => {
-            let parsed: DeleteBody = serde_json::from_slice(body).map_err(|_source| Box::new(malformed_body()))?;
-            Ok(Edit::RemoveMcpServer(parsed.name))
+            Ok((Edit::ReplaceMcpServer { current_name, entry }, Vec::new()))
         }
         _ => Err(Box::new(method_not_allowed())),
     }
@@ -493,27 +778,41 @@ fn apply_edit(document: &mut WebConfigDocument, edit: &Edit) -> ApplyOutcome {
     }
 }
 
-/// `POST`/`PATCH`/`PUT`/`DELETE /settings/`.
+/// `POST`/`PATCH`/`PUT /settings/`.
 pub async fn mutate(State(state): State<SettingsRoutesState>, method: Method, body: axum::body::Bytes) -> Response {
-    let edit = match parse_edit(&method, &body) {
-        Ok(edit) => edit,
+    let now = SystemClock.now().format(&Rfc3339).unwrap_or_default();
+    let (edit, pending_secret_writes) = match parse_edit(&method, &body, &now) {
+        Ok(parsed) => parsed,
         Err(response) => return *response,
     };
+    apply_edit_and_persist(&state, edit, pending_secret_writes).await
+}
 
-    let read_path = state.web_config_path.as_path().to_owned();
-    let source = match tokio::task::spawn_blocking(move || std::fs::read_to_string(read_path)).await {
-        Ok(Ok(source)) => source,
-        Ok(Err(source)) => return read_failure(&source),
-        Err(_join_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, "settings/blocking-task-failed"),
-    };
-    let mut document = match WebConfigDocument::parse(&source) {
+/// `DELETE /settings/mcp-servers/{name}`: `name` is the URL path segment
+/// itself (`docs/http-routing-response-contract.md`'s sub-entity form),
+/// never a request body field. htmx's own default
+/// `methodsThatUseUrlParams` list includes `delete`, so any `hx-vals` on a
+/// `hx-delete` button lands in the query string, not the body; a body-only
+/// `DeleteBody` here would silently see an empty body on every real browser
+/// request and reject it, which is exactly the no-op this route replaces.
+pub async fn delete_mcp_server(State(state): State<SettingsRoutesState>, AxumPath(name): AxumPath<String>) -> Response {
+    apply_edit_and_persist(&state, Edit::RemoveMcpServer(name), Vec::new()).await
+}
+
+/// Applies `edit` to `web.toml`, then writes `pending_secret_writes` to the credential store. A pasted secret value
+/// never reaches `WebConfigDocument`'s JSON-to-TOML bridge, which has no schema notion of it: [`parse_edit`] has
+/// already stripped it out, and it is written only once `web.toml`'s own write has succeeded.
+async fn apply_edit_and_persist(
+    state: &SettingsRoutesState,
+    edit: Edit,
+    pending_secret_writes: Vec<(String, CredentialRecord)>,
+) -> Response {
+    let mut document = match load_document(state).await {
         Ok(document) => document,
-        Err(WebConfigWriterError::Toml { source }) => {
-            return invalid_configuration(format!("web.toml is invalid: {source}"));
-        }
-        Err(other) => return invalid_configuration(other),
+        Err(response) => return *response,
     };
     let before_names = document.mcp_server_names();
+    let before_credential_refs = credential_references_in(&document.mcp_server_entries());
 
     match apply_edit(&mut document, &edit) {
         ApplyOutcome::Ok => {}
@@ -522,112 +821,144 @@ pub async fn mutate(State(state): State<SettingsRoutesState>, method: Method, bo
     }
 
     let after_names = document.mcp_server_names();
+    let after_credential_refs = credential_references_in(&document.mcp_server_entries());
     let removed: Vec<String> = before_names
         .iter()
         .filter(|name| !after_names.contains(name))
         .cloned()
         .collect();
-
-    if !removed.is_empty() {
-        let Some(client) = state.client() else {
-            return server_not_configured();
-        };
-        match dependent_apps(client, &before_names, &removed).await {
-            Ok(conflicts) if conflicts.is_empty() => {}
-            Ok(conflicts) => {
-                let server = removed
-                    .iter()
-                    .find(|name| conflicts.iter().any(|c| &c.server == *name))
-                    .cloned()
-                    .unwrap_or_else(|| removed[0].clone());
-                let used_by = conflicts
-                    .into_iter()
-                    .filter(|c| c.server == server)
-                    .map(|c| AppReference {
-                        vault: c.vault,
-                        slug: c.slug,
-                    })
-                    .collect();
-                return mcp_server_in_use(&server, used_by);
-            }
-            Err(McpCallError::Unreachable { .. }) => return unreachable(),
-        }
+    if let Some(refusal) = refuse_removal_in_use(state, &before_names, &removed).await {
+        return refusal;
+    }
+    if let Some(failure) = write_document(state, &document).await {
+        return failure;
     }
 
+    // Only now, after `web.toml`'s own write has already succeeded, is it safe to touch the
+    // credential store at all: an edit this function rejected earlier (an unknown name, an
+    // invalid resulting document, an in-use dependency) must never have written or deleted
+    // anything there, and it never did, since every return above this point happens before a byte
+    // of `web.toml` changes.
+    let pasted_secret = !pending_secret_writes.is_empty();
+    let unstored_secret = persist_pasted_secrets(state.credential_store(), pending_secret_writes).await;
+    let removed_credential_refs: Vec<String> = before_credential_refs
+        .difference(&after_credential_refs)
+        .cloned()
+        .collect();
+    garbage_collect_credentials(state.credential_store(), removed_credential_refs).await;
+    reconnect_after(state, &edit, pasted_secret).await;
+    render_after(state, &edit, unstored_secret).await
+}
+
+/// Reads and parses `web.toml`.
+async fn load_document(state: &SettingsRoutesState) -> Result<WebConfigDocument, Box<Response>> {
+    let read_path = state.web_config_path.as_path().to_owned();
+    let source = match tokio::task::spawn_blocking(move || std::fs::read_to_string(read_path)).await {
+        Ok(Ok(source)) => source,
+        Ok(Err(source)) => return Err(Box::new(read_failure(&source))),
+        Err(_join_error) => {
+            return Err(Box::new(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "settings/blocking-task-failed",
+            )));
+        }
+    };
+    WebConfigDocument::parse(&source).map_err(|failure| {
+        Box::new(match failure {
+            WebConfigWriterError::Toml { source } => invalid_configuration(format!("web.toml is invalid: {source}")),
+            other => invalid_configuration(other),
+        })
+    })
+}
+
+/// The refusal for removing a server some registered app still names, or that the check cannot be made for; `None`
+/// when nothing is removed or no app depends on what is.
+async fn refuse_removal_in_use(
+    state: &SettingsRoutesState,
+    before_names: &[String],
+    removed: &[String],
+) -> Option<Response> {
+    if removed.is_empty() {
+        return None;
+    }
+    // Which apps still name a server is read through the primary server; while it is not connected that cannot
+    // be checked, so the removal is refused as unreachable rather than allowed unchecked. Correcting the
+    // primary's entry, which needs no check, is how to recover.
+    let Some(client) = state.client() else {
+        return Some(unreachable());
+    };
+    match dependent_apps(&client, before_names, removed).await {
+        Ok(conflicts) if conflicts.is_empty() => None,
+        Ok(conflicts) => {
+            let server = removed
+                .iter()
+                .find(|name| conflicts.iter().any(|c| &c.server == *name))
+                .cloned()
+                .unwrap_or_else(|| removed[0].clone());
+            let used_by = conflicts
+                .into_iter()
+                .filter(|c| c.server == server)
+                .map(|c| AppReference {
+                    vault: c.vault,
+                    slug: c.slug,
+                })
+                .collect();
+            Some(mcp_server_in_use(&server, used_by))
+        }
+        Err(DependencyCheckError::Call(McpCallError::Unreachable { .. } | McpCallError::Refused { .. })) => {
+            Some(unreachable())
+        }
+        Err(error @ DependencyCheckError::VaultListUnreadable) => Some(vault_list_unreadable(error.to_string())),
+    }
+}
+
+/// Writes `document` to `web.toml` atomically; the failure response when it could not be.
+async fn write_document(state: &SettingsRoutesState, document: &WebConfigDocument) -> Option<Response> {
     let write_path = state.web_config_path.as_path().to_owned();
     let rendered = document.render().into_bytes();
     match tokio::task::spawn_blocking(move || write_atomically(&write_path, &rendered)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(source)) => return read_failure(&source),
-        Err(_join_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, "settings/blocking-task-failed"),
+        Ok(Ok(())) => None,
+        Ok(Err(source)) => Some(read_failure(&source)),
+        Err(_join_error) => Some(error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "settings/blocking-task-failed",
+        )),
     }
+}
 
-    let (config, statuses) = tokio::join!(
+/// Makes the sessions follow the entries just written: a new one connects, a changed one reconnects, a removed one
+/// closes.
+async fn reconnect_after(state: &SettingsRoutesState, edit: &Edit, pasted_secret: bool) {
+    let connecting = crate::routes::settings_connections::sync_connections(state).await;
+    // A pasted token is stored under the same reference, so the entry itself is unchanged and the sync above leaves
+    // its session alone: connect it again so the new token is used.
+    if let (true, Edit::PatchMcpServer { name, .. }) = (pasted_secret, edit)
+        && !connecting.contains(name)
+        && state.clients.request_reconnect(name).is_err()
+    {
+        tracing::warn!(server = %name, "a token was pasted for a server the sessions do not know of");
+    }
+}
+
+/// The settings fragment as the written configuration now reads, refreshing the shell when the edit changes it.
+async fn render_after(state: &SettingsRoutesState, edit: &Edit, unstored_secret: Option<String>) -> Response {
+    let refresh = touches_shell_chrome(edit);
+    let (config, readiness) = tokio::join!(
         read_current_blocking(Arc::clone(&state.web_config_path)),
-        state.clients.probe_status(),
+        state.clients.readiness(),
     );
     match config {
-        Ok(config) => html_response(render(&config, &statuses)),
-        Err(response) => *response,
-    }
-}
-
-struct DependencyConflict {
-    vault: String,
-    slug: String,
-    server: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct VaultInfoEntry {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct VaultInfoResult {
-    vaults: Vec<VaultInfoEntry>,
-}
-
-/// Lists every configured vault's `name` via `vault_info`, the same MCP
-/// tool call an operator would use, rather than `contextos-web` maintaining
-/// a second, locally pre-loaded vault registry (the same established
-/// precedent the vault content routes already follow, extended here to
-/// this check).
-async fn configured_vault_names(client: &McpClient) -> Result<Vec<String>, McpCallError> {
-    let result = client.call_tool("vault_info".to_owned(), Map::new()).await?;
-    let Ok(parsed) = result.into_typed::<VaultInfoResult>() else {
-        return Ok(Vec::new());
-    };
-    Ok(parsed.vaults.into_iter().map(|entry| entry.name).collect())
-}
-
-/// For every configured vault, discovers its registered apps (using
-/// `known_before`, the server list as it stood *before* this edit, so a
-/// currently-valid app's registration is not spuriously invalidated by the
-/// very edit under validation) and reports every `(vault, app, server)`
-/// triple where the app's manifest names one of `removed`.
-async fn dependent_apps(
-    client: &McpClient,
-    known_before: &[String],
-    removed: &[String],
-) -> Result<Vec<DependencyConflict>, McpCallError> {
-    let vault_names = configured_vault_names(client).await?;
-    let mut conflicts = Vec::new();
-    for vault_name in vault_names {
-        let apps: Vec<RegisteredApp> = apps::discover_apps(client, &vault_name, known_before).await?;
-        for app in apps {
-            for server in &app.mcp_servers {
-                if removed.iter().any(|name| name == server) {
-                    conflicts.push(DependencyConflict {
-                        vault: vault_name.clone(),
-                        slug: app.slug.clone(),
-                        server: server.clone(),
-                    });
-                }
+        Ok(config) => {
+            let credentials = credential_snapshot(state.credential_store(), &config).await;
+            let fragment = render(&config, &readiness, &credentials, None, unstored_secret, None);
+            if refresh {
+                html_response_with_refresh(fragment)
+            } else {
+                html_response(fragment)
             }
         }
+        Err(response) => *response,
     }
-    Ok(conflicts)
 }
 
 fn unknown_mcp_server(name: &str) -> Response {

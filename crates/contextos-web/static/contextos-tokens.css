@@ -1,0 +1,186 @@
+/* contextos-web: the Command Centre design system token layer.
+   Traces to web-styling.md sections 2 and 3: dark is the native skin with
+   light derived from it, and Inter is self-hosted rather than CDN-loaded.
+
+   Token names and dark-skin values track the design kit's own
+   `tokens/*.css`; the derived light skin lives beside them under
+   the same names, not in a forked stylesheet. Any `contextos-web`-only
+   token carries a "local extension" comment. Values a change to the kit
+   would need reconciled all live in this one file. */
+
+/* ---------- fonts: self-hosted Inter, no CDN ---------- */
+@font-face{font-family:"Inter";font-style:normal;font-weight:300;font-display:swap;src:url("/static/fonts/inter-latin-300-normal.woff2") format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+@font-face{font-family:"Inter";font-style:normal;font-weight:300;font-display:swap;src:url("/static/fonts/inter-latin-ext-300-normal.woff2") format("woff2");unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+@font-face{font-family:"Inter";font-style:normal;font-weight:400;font-display:swap;src:url("/static/fonts/inter-latin-400-normal.woff2") format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+@font-face{font-family:"Inter";font-style:normal;font-weight:400;font-display:swap;src:url("/static/fonts/inter-latin-ext-400-normal.woff2") format("woff2");unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+@font-face{font-family:"Inter";font-style:normal;font-weight:500;font-display:swap;src:url("/static/fonts/inter-latin-500-normal.woff2") format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+@font-face{font-family:"Inter";font-style:normal;font-weight:500;font-display:swap;src:url("/static/fonts/inter-latin-ext-500-normal.woff2") format("woff2");unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+@font-face{font-family:"Inter";font-style:normal;font-weight:600;font-display:swap;src:url("/static/fonts/inter-latin-600-normal.woff2") format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+@font-face{font-family:"Inter";font-style:normal;font-weight:600;font-display:swap;src:url("/static/fonts/inter-latin-ext-600-normal.woff2") format("woff2");unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+
+/* ---------- dark skin: the native skin (bare :root) ---------- */
+:root{
+  color-scheme:dark;
+
+  /* surfaces */
+  --bg:#080B14; --bg-deep:#060810; --bg-panel:#0F1420; --bg-panel-raised:#151B2C;
+  /* borders */
+  --border:#1E2536; --border-strong:#2A3348; --border-glow:rgba(96,165,250,0.35);
+  /* ink */
+  --fg:#E8EBF4; --fg-muted:#9AA1B6; --fg-faint:#868EA4;
+  /* domain accents (colour = coding system, applied narrowly) */
+  --accent-primary:#6E9BF2; --accent-analytics:#5FE393; --accent-relational:#B49CFB;
+  --accent-warning:#F5B44D; --accent-surface:#43D9C6;
+  /* entity accents (one per configured vault) */
+  --entity-1:#6E9BF2; --entity-2:#5FE393; --entity-3:#F5B44D;
+  --entity-4:#B49CFB; --entity-5:#43D9C6; --entity-6:#F782BA;
+  /* status */
+  --status-blocked:#F4586B; --status-ok:var(--accent-analytics);
+  --status-attention:var(--accent-warning); --status-idle:var(--fg-faint);
+  /* accent tints (behind a badge or an active control ground only) */
+  --tint-primary:rgba(110,155,242,0.16); --tint-analytics:rgba(95,227,147,0.15);
+  --tint-relational:rgba(180,156,251,0.16); --tint-warning:rgba(245,180,77,0.15);
+  --tint-surface:rgba(67,217,198,0.15); --tint-blocked:rgba(244,88,107,0.16);
+
+  /* callout type colours: local extensions, mapped onto the domain accents
+     so no seventh hue enters the system. */
+  --co-note:var(--accent-primary);      --co-note-bg:var(--tint-primary);
+  --co-abstract:var(--accent-surface);  --co-abstract-bg:var(--tint-surface);
+  --co-tip:var(--accent-surface);       --co-tip-bg:var(--tint-surface);
+  --co-success:var(--accent-analytics); --co-success-bg:var(--tint-analytics);
+  --co-question:var(--accent-warning);  --co-question-bg:var(--tint-warning);
+  --co-warning:var(--accent-warning);   --co-warning-bg:var(--tint-warning);
+  --co-danger:var(--status-blocked);    --co-danger-bg:var(--tint-blocked);
+  --co-example:var(--accent-relational);--co-example-bg:var(--tint-relational);
+  --co-quote:var(--fg-muted);           --co-quote-bg:var(--bg-panel-raised);
+
+  /* legacy aliases: the class rules and the rendering pipeline emit these
+     names; keep them pointing at the tokens above rather than rewriting
+     every rule. The design kit uses the same alias pattern. */
+  --panel:var(--bg-panel); --text:var(--fg); --text-dim:var(--fg-muted);
+  --text-faint:var(--fg-faint); --accent:var(--accent-primary);
+  --accent-strong:var(--accent-primary); --accent-bg:var(--tint-primary);
+  --warn:var(--accent-warning); --warn-bg:var(--tint-warning);
+  --danger:var(--status-blocked); --danger-bg:var(--tint-blocked);
+  --link:var(--accent-primary); --code-bg:var(--bg-panel-raised);
+  --abstract:var(--co-abstract); --abstract-bg:var(--co-abstract-bg);
+  --tip:var(--co-tip); --tip-bg:var(--co-tip-bg);
+  --success:var(--co-success); --success-bg:var(--co-success-bg);
+  --question:var(--co-question); --question-bg:var(--co-question-bg);
+  --example:var(--co-example); --example-bg:var(--co-example-bg);
+  --quote:var(--co-quote); --quote-bg:var(--co-quote-bg);
+
+  /* spacing: 4px unit */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:20px; --space-6:24px; --space-8:32px;
+  --panel-padding:16px; --panel-padding-sm:12px; --panel-gap:12px; --grid-gap:12px;
+  --rail-width:56px; --sidebar-width:248px; --header-height:52px;
+  --shell-w:var(--sidebar-width); --header-h:var(--header-height);
+
+  /* radii */
+  --radius-panel:10px; --radius-nested:8px; --radius-control:8px;
+  --radius-badge:4px; --radius-pill:999px;
+
+  /* type */
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --serif:Georgia,"Iowan Old Style","Palatino Linotype",Palatino,serif;
+  --font-ui:var(--sans); --font-mono:var(--mono);
+  --font-family:var(--sans);
+  --font-size-base:14px;
+  --label-tracking:0.06em;
+  --fw-light:300; --fw-regular:400; --fw-medium:500; --fw-semibold:600;
+
+  /* effects: ambient glow, not hard drop-shadows */
+  --inset-top:inset 0 1px 0 rgba(255,255,255,0.03);
+  --glow-active:0 0 0 1px var(--border-glow), 0 0 18px -6px rgba(110,155,242,0.35);
+  --shadow-overlay:0 24px 60px -20px rgba(0,0,0,0.75);
+  --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px rgba(110,155,242,0.55);
+  --ease-out:cubic-bezier(0.2,0.8,0.3,1);
+  --ease-in-out:cubic-bezier(0.4,0,0.2,1);
+  --dur-fast:120ms; --dur-base:180ms; --dur-slow:320ms; --dur-pulse:1400ms;
+}
+
+/* ---------- derived light skin: same token names ---------- */
+/* Accent hues are darkened for the light skin so text meets 4.5:1 and thin
+   2px indicators / icon outlines meet 3:1 on a near-white ground; checked
+   on these values in tests/styling.rs, not assumed to carry from dark. */
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="blueprint"]):not([data-theme="dark"]){
+    color-scheme:light;
+    --bg:#F4F6FB; --bg-deep:#E7EBF5; --bg-panel:#FFFFFF; --bg-panel-raised:#EEF2FA;
+    --border:#DCE2EF; --border-strong:#C1CADD; --border-glow:rgba(47,99,196,0.40);
+    --fg:#111621; --fg-muted:#4F5A73; --fg-faint:#67718B;
+    --accent-primary:#2F63C4; --accent-analytics:#1E7A44; --accent-relational:#6A45CE;
+    --accent-warning:#8A5A00; --accent-surface:#0F7A70;
+    --entity-1:#2F63C4; --entity-2:#1E7A44; --entity-3:#8A5A00;
+    --entity-4:#6A45CE; --entity-5:#0F7A70; --entity-6:#B23083;
+    --status-blocked:#C2334A;
+    --tint-primary:rgba(47,99,196,0.12); --tint-analytics:rgba(30,122,68,0.12);
+    --tint-relational:rgba(106,69,206,0.12); --tint-warning:rgba(138,90,0,0.12);
+    --tint-surface:rgba(15,122,112,0.12); --tint-blocked:rgba(194,51,74,0.12);
+    --co-quote-bg:#EEF2FA;
+    --inset-top:inset 0 1px 0 rgba(255,255,255,0.6);
+    --glow-active:0 0 0 1px var(--border-glow), 0 0 16px -6px rgba(47,99,196,0.30);
+    --shadow-overlay:0 24px 60px -20px rgba(20,30,60,0.35);
+    --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px rgba(47,99,196,0.50);
+  }
+}
+
+/* Explicit [server.ui].theme choices: the chosen skin wins over
+   the reader's prefers-color-scheme in both directions. Named `blueprint`/
+   `dark`/`light` throughout (renamed from `blue`/`grey`/`white` outright -
+   the application is still unreleased, so no back-compat alias is kept). */
+:root[data-theme="blueprint"]{color-scheme:dark;}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#F4F6FB; --bg-deep:#E7EBF5; --bg-panel:#FFFFFF; --bg-panel-raised:#EEF2FA;
+  --border:#DCE2EF; --border-strong:#C1CADD; --border-glow:rgba(47,99,196,0.40);
+  --fg:#111621; --fg-muted:#4F5A73; --fg-faint:#67718B;
+  --accent-primary:#2F63C4; --accent-analytics:#1E7A44; --accent-relational:#6A45CE;
+  --accent-warning:#8A5A00; --accent-surface:#0F7A70;
+  --entity-1:#2F63C4; --entity-2:#1E7A44; --entity-3:#8A5A00;
+  --entity-4:#6A45CE; --entity-5:#0F7A70; --entity-6:#B23083;
+  --status-blocked:#C2334A;
+  --tint-primary:rgba(47,99,196,0.12); --tint-analytics:rgba(30,122,68,0.12);
+  --tint-relational:rgba(106,69,206,0.12); --tint-warning:rgba(138,90,0,0.12);
+  --tint-surface:rgba(15,122,112,0.12); --tint-blocked:rgba(194,51,74,0.12);
+  --co-quote-bg:#EEF2FA;
+  --inset-top:inset 0 1px 0 rgba(255,255,255,0.6);
+  --glow-active:0 0 0 1px var(--border-glow), 0 0 16px -6px rgba(47,99,196,0.30);
+  --shadow-overlay:0 24px 60px -20px rgba(20,30,60,0.35);
+  --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px rgba(47,99,196,0.50);
+}
+
+/* `dark`: a neutral, desaturated dark skin - every domain/entity accent,
+   tint, and effect token stays identical to `blueprint`'s own dark-skin
+   values (verified against tests/styling.rs's own contrast formula:
+   accent-primary 6.3:1, the four indicator accents 7.5-10.7:1, both
+   comfortably clearing their floors against the --bg-panel below), only the
+   neutral surface/border/ink axis is redefined, desaturating `blueprint`'s
+   blue-tinted greys to true neutral (R=G=B) at matching lightness steps. */
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#101010; --bg-deep:#0A0A0A; --bg-panel:#1B1B1B; --bg-panel-raised:#242424;
+  --border:#2E2E2E; --border-strong:#3D3D3D;
+  --fg:#EDEDED; --fg-muted:#A3A3A3; --fg-faint:#8C8C8C;
+  /* Not an override - identical to `blueprint`'s own values, restated here
+     (rather than left to inherit from the bare `:root` block) only so
+     `tests/styling.rs`'s per-skin contrast check, which reads literal
+     values out of each skin's own CSS block rather than resolving the
+     cascade, can verify them against this skin's own --bg-panel too. */
+  --accent-primary:#6E9BF2; --accent-analytics:#5FE393; --accent-relational:#B49CFB;
+  --accent-warning:#F5B44D; --accent-surface:#43D9C6;
+}
+
+/* [server.ui].font / .size: shift family and base size within the type
+   tokens, never a page restyle. An unrecognised value leaves the axis at
+   its default: there is simply no matching rule. */
+:root[data-font="serif"]{--font-family:var(--serif);}
+:root[data-font="monospace"]{--font-family:var(--mono);}
+:root[data-size="small"]{--font-size-base:12.5px;}
+:root[data-size="large"]{--font-size-base:15.5px;}
+
+@media (prefers-contrast: more){
+  :root{--border:var(--border-strong); --fg-faint:var(--fg-muted);}
+}

@@ -2,20 +2,29 @@
 members = [
     "crates/contextos-core",
     "crates/contextos-ephemeris",
+    "crates/contextos-events",
     "crates/contextos-fs",
     "crates/contextos-git",
+    "crates/contextos-host",
     "crates/contextos-index",
+    "crates/contextos-workflows",
+    "crates/contextos-launcher",
+    "crates/contextos-logging",
+    "crates/contextos-markdown",
     "crates/contextos-mcp",
     "crates/contextos-mermaid",
     "crates/contextos-obsidian",
     "crates/contextos-oplog",
+    "crates/contextos-packages",
+    "crates/contextos-projection",
     "crates/contextos-search",
+    "crates/contextos-service",
     "crates/contextos-web",
 ]
 resolver = "3"
 
 [workspace.package]
-version = "0.21.0"
+version = "0.23.6"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Zentelligence Pty Ltd"]
@@ -26,9 +35,17 @@ publish = false
 askama = { version = "0.16.0", default-features = false, features = ["std", "derive"] }
 astro = "2.0.0"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 camino = { version = "1.2", features = ["serde1"] }
 clap = { version = "4.6.2", features = ["derive"] }
+# `contextos-workflows` only: the headless-job scheduler's own cron-expression
+# parser and next-fire computation.
+# Pure Rust, no `unsafe`, actively maintained; `default-features = false`
+# plus the lean `chrono` feature (no `chrono/clock`, since every timestamp
+# `contextos-workflows` evaluates a pattern against is supplied by its own
+# injected `Clock`, never read from the system clock inside this
+# dependency itself).
+croner = { version = "4.0.0", default-features = false, features = ["chrono"] }
 directories = "6.0.0"
 dunce = "1.0"
 fastembed = { version = "5.17.3", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
@@ -36,56 +53,115 @@ fastembed = { version = "5.17.3", default-features = false, features = ["ort-dow
 # own a persisted on-disk format (see the sqlite-vec/rusqlite note below):
 # the link-graph cache is exactly that kind of surface.
 fjall = "=3.1.8"
+# `contextos-web` only: gzip decompression for an uploaded workflow package
+# bundle (`package_bundle.rs`), paired with `tar` below. Pure Rust by
+# default (the `rust_backend` feature, on by default), no system zlib
+# dependency, actively maintained.
+flate2 = "1.1.5"
 git2 = { version = "0.21.0", default-features = false }
 globset = "0.4"
 # `contextos model download` only: fetches the shared local embedding model
 # directly (never through fastembed's own `hf-hub` feature, which stays off
-# for `contextos-search`'s `semantic-local` provider per
-# phase-5-decision-addendum.md A1). Default features (ureq, native-tls).
+# for `contextos-search`'s `semantic-local` provider). Default features (ureq, native-tls).
 hf-hub = "0.5"
+# `contextos-core` only: the operator's IANA time zone (`local_time.rs`), so every time written into a vault is
+# local and takes the offset its zone had at that instant, daylight saving included. Default features: the host's
+# own zone (`tz-system`) and the zone database, read from the platform's where it has one and bundled where it
+# does not (Windows), so zones resolve the same on every platform.
+jiff = "0.2.37"
 ignore = "0.4"
 infer = "0.22.0"
-# `contextos config` (guided setup) only: interactive terminal wizard for
-# vault/model/host-registration setup. Default features (crossterm terminal
-# backend, fuzzy select, macros) are all genuinely used by the wizard, not
-# bloat.
+# `contextos-web` only: validates a workflow's own `call_mcp` arguments and
+# a dry-run scenario's mocked response against a real MCP tool's own
+# declared `inputSchema`/`outputSchema` (`dry_run_caller.rs`), fetched live
+# via `tools/list`. `default-features = false`: no remote `$ref`
+# resolution is needed (MCP tool schemas are self-contained JSON
+# objects), so the `reqwest`/TLS-pulling defaults stay off.
+jsonschema = { version = "0.60.2", default-features = false }
+# `contextos-fs` only, Unix only: the `O_NONBLOCK` open flag and the `ENXIO` error number, passed through the safe
+# `OpenOptionsExt::custom_flags` and compared with `raw_os_error`, so opening a vault path that names a named pipe
+# returns at once instead of blocking a thread until its other end appears. Only constants are used, never a raw call,
+# so no `unsafe` is needed. Already in the lock file through other crates; `default-features = false` drops `std`.
+libc = { version = "0.2.186", default-features = false }
+# Interactive terminal wizards only: `contextos config` (guided
+# vault/model/host-registration setup) and `contextos-web config` (creates
+# or updates `web.toml`). Default features (crossterm terminal backend,
+# fuzzy select, macros) are all genuinely used, not bloat.
 inquire = "0.9.4"
-# Pinned exactly per requirements.md D-11: pre-1.0 (alpha), parity-focused
-# headless Mermaid parser. mermaid-svg is the documented fallback behind the
-# same ParsesMermaid/RendersMermaid trait boundary if this proves unworkable.
+# Pinned exactly: pre-1.0 (alpha), parity-focused headless Mermaid parser.
+# mermaid-svg is the documented fallback behind the same
+# ParsesMermaid/RendersMermaid trait boundary if this proves unworkable.
 merman-core = "=0.8.0-alpha.3"
 merman-render = "=0.8.0-alpha.3"
+# `contextos-web` only: `join_all`, so a page's embedded notes, diagrams, and base views are fetched together rather
+# than one after another. Already in the tree through the MCP SDK.
+futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
+# `contextos-markdown` only: LaTeX to MathML Core, so `$math$` renders in the browser with no client-side script.
+math-core = { version = "0.9.0", default-features = false, features = ["std"] }
 mime_guess = "2.0.5"
 petgraph = { version = "0.8.3", default-features = false, features = ["stable_graph"] }
-# `contextos-web` only: stage 5 general Markdown-to-HTML conversion (OFM's
-# CommonMark/GFM base, `web-rendering.md` §1) with raw-HTML block passthrough,
-# which the custom OFM-extension stages (frontmatter, triple-colon fences,
-# wikilinks/embeds, callouts, Mermaid) rely on to inject their own rendered
-# HTML ahead of this stage running. `html` for the renderer itself; GFM-style
-# tables/strikethrough/footnotes are enabled via `Options` at call sites, not
-# a Cargo feature.
+# `contextos-web` only: PKCE code-verifier and OAuth2 `state`-parameter generation
+# (`oauth.rs`), a CSPRNG the standard library does not provide.
+rand = "0.10.2"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+# `contextos-markdown`: CommonMark parsing into an event stream (with Obsidian wikilinks, footnotes, tables, and
+# math as events), which the renderer transforms and writes as HTML. `html` for the writer. `contextos-web` reads the
+# entity index's table with it.
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls"] }
-rmcp = { version = "=2.2.0", default-features = false, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
-# Pinned exactly per phase-5-decision-addendum.md A5: pre-1.0, so the
+# `contextos-workflows` only: the embedded scripting engine a job's `entry.rhai`
+# script runs under. Default features give a
+# job script no ambient `std::fs`/`std::net`/process capability at all;
+# every effect it can have is a native function `contextos-workflows` itself
+# registers (its `McpCaller` trait), never anything Rhai exposes on its
+# own. `internals` exposes the parsed syntax tree, so validation can read every `import` a script and its modules
+# make without running either.
+rhai = { version = "1.26.0", features = ["internals"] }
+# The official MCP SDK, pinned exactly: pre-1.0 in all but name, its 2.x to 3.x move changed protocol semantics as
+# well as API. 3.5.1 serves and speaks protocol revision 2026-07-28 (per-request metadata, `server/discover`) alongside
+# the legacy `initialize` revisions, which this workspace supports only as far as rmcp itself does.
+rmcp = { version = "=3.5.1", default-features = false, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
+# rmcp asks for its macros crate with a caret requirement, so an exact rmcp pin alone lets the macros move. Pinned to
+# the same release; `contextos-mcp` names it only to apply this pin.
+rmcp-macros = "=3.5.1"
+# Pinned exactly: pre-1.0, so the
 # on-disk vec0 format may break across bumps; any pin move re-validates the
 # format and rebuilds `.contextos/vectors.db` through the index-rebuild
 # path. `rusqlite`'s `bundled` feature statically links SQLite on every
 # target so no system SQLite is required.
 rusqlite = { version = "=0.40.1", default-features = false, features = ["bundled"] }
+# `contextos-logging` only: whether the file at the log path is still the file a writer holds open (device and inode on
+# Unix, volume serial number and file index on Windows), which std exposes only through unstable APIs on Windows and
+# only through `unsafe` calls anywhere a safe wrapper is absent. No features; already in the lock file transitively.
+same-file = "1.0.6"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
+# Workflow package identity/dependency version requirements
+# (`contextos-workflows::package`): the standard, well-maintained crate for
+# semver parsing/matching; nothing already in the workspace covers it.
+semver = "1.0.27"
 sha2 = "0.11.0"
 similar = "3.1.1"
-# Pinned exactly per phase-5-decision-addendum.md A5 (pre-1.0 upstream).
+# Pinned exactly (pre-1.0 upstream).
 sqlite-vec = "=0.1.9"
+# The `Sse` event type that rmcp's streamable HTTP client trait names in its signatures but does not re-export; pinned
+# to the version rmcp itself uses so no second copy is built.
+sse-stream = { version = "=0.2.4", default-features = false }
 # `contextos config mcp` (host registration) only: cross-platform process
 # listing, used solely to detect a running Claude Desktop before editing its
 # config file. `default-features = false` drops disk/network/component/user
 # monitoring, none of which this repo needs.
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
-tantivy = "0.26.1"
+# `contextos-search` only. The text index uses tantivy's default tokeniser, which neither stems nor drops stop
+# words, so `stemmer` and `stopwords` are left out. `lz4-compression` and `columnar-zstd-compression` stay: an
+# index's segments name the codec they were written with, so dropping either would make existing indexes unreadable.
+tantivy = { version = "0.27.0", default-features = false, features = ["mmap", "lz4-compression", "columnar-zstd-compression"] }
+# `contextos-web` only: reads/writes a workflow package's own `tar.gz`
+# bundle (`package_bundle.rs`) member-by-member, so extraction can validate
+# every entry's path stays within the staging directory before any byte
+# is written, rather than trusting a whole-archive extractor. Paired with
+# `flate2` above for the outer gzip layer.
+tar = "0.4.44"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 time = { version = "0.3.53", features = ["macros", "serde"] }
@@ -97,13 +173,24 @@ toml = "1.1.3"
 # which would discard `docs/config.example.toml`-style hand commentary.
 toml_edit = "0.25.13"
 tower = { version = "0.5", default-features = false, features = ["util"] }
-# `contextos-web` only: `/static/` asset serving (`FR-250`). Provides
+# `contextos-web` only: `/static/` asset serving. Provides
 # `ServeDir`, an already-audited traversal-safe static file service, rather
 # than hand-rolling path-escape checks for a second time in this workspace.
 tower-http = { version = "0.6", default-features = false, features = ["fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 trash = { version = "5.2.6", default-features = false }
+# The self-update client: `contextos-mcp` embeds `update`/`rollback`/
+# `install --version` and `contextos-launcher` resolves the active release.
+# Pinned to a commit of the public `zentelligence/auto-updater` repository, so
+# every machine and CI build the same updater. The release workflow builds
+# `updater-keytool` from the same commit; move both together. To work on the
+# updater alongside this workspace, override these in an untracked
+# `[patch."https://github.com/zentelligence/auto-updater.git"]` table rather
+# than editing them here.
+updater-core = { git = "https://github.com/zentelligence/auto-updater.git", rev = "715093a3259c83945cb667cc56b69fde0823d281" }
+updater-engine = { git = "https://github.com/zentelligence/auto-updater.git", rev = "715093a3259c83945cb667cc56b69fde0823d281" }
+updater-launcher = { git = "https://github.com/zentelligence/auto-updater.git", rev = "715093a3259c83945cb667cc56b69fde0823d281" }
 walkdir = "2.5"
 yaml_serde = "0.10.4"
 
@@ -116,9 +203,15 @@ yaml_serde = "0.10.4"
 # numbers; the dropped type/variable debug info is not something this
 # project's TDD/tracing-based workflow leans on an interactive debugger for.
 debug = "line-tables-only"
+# Incremental compilation's per-crate caches (`target/debug/incremental`) reached 21 GiB on this workspace, on a
+# development disk that cannot spare it; a full rebuild of a changed crate costs less than keeping them. `test`
+# inherits this profile.
+incremental = false
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# A public type a caller cannot name cannot be matched, stored, or implemented against; export it or make it private.
+unnameable_types = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

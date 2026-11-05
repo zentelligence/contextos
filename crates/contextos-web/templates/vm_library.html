@@ -1,0 +1,266 @@
+{% import "vm_paths.html" as vm_paths %}
+{# One managed library of source files (Standards, Templates, or one registry type): the folder tree beside the main
+   area, which reads the selected file rendered by default and edits it as the whole file. Every link and form here
+   swaps the whole `.vault-settings` fragment, so the sidebar's counts always match what was just written, and pushes
+   the resource's own URL. #}
+<section class="settings-panel vm-panel" aria-labelledby="vm-heading">
+  <header class="vm-header">
+    <h2 id="vm-heading"><span class="ic ic-{{ icon }}" aria-hidden="true"></span> {{ heading }}</h2>
+    <p class="hint">{{ description }}</p>
+  </header>
+{% if let Some(problem) = problem %}
+  <p class="hint error" role="alert">{{ problem }}</p>
+{% endif %}
+{% if !tabs.is_empty() %}
+  <nav class="vm-tabs" aria-label="Registry types">
+  {% for tab in tabs %}
+    <a
+      class="vm-tab{% if tab.active %} active{% endif %}{% if !tab.provisioned %} unprovisioned{% endif %}"
+      href="{{ tab.href }}"
+      hx-get="{{ tab.href }}"
+      hx-target="closest .vault-settings"
+      hx-swap="outerHTML"
+      hx-push-url="true"
+      {% if tab.active %}aria-current="page"{% endif %}
+    >{{ tab.label }} <span class="vm-tab-count">{{ tab.count }}</span></a>
+  {% endfor %}
+  </nav>
+  <p class="hint vm-tab-description">{{ type_description }}</p>
+{% endif %}
+{% if let Some(paths) = paths %}
+  {% call vm_paths::paths(paths) %}{% endcall %}
+{% endif %}
+  <div class="vm-library">
+    <aside class="vm-tree" aria-label="Files">
+      <a
+        class="vm-tree-root{% if root_active %} active{% endif %}"
+        href="{{ root_href }}"
+        hx-get="{{ root_href }}"
+        hx-target="closest .vault-settings"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+      ><span class="ic ic-folder" aria-hidden="true"></span> All</a>
+      <div class="tree-nest">
+      {% for event in tree_events %}
+        {% match event %}
+        {% when TreeEvent::OpenFolder with (label, is_open) %}
+        <details class="nav-group" {% if *is_open %}open{% endif %}>
+          <summary class="nav-group-summary">
+            <span class="nav-group-heading-link"><span class="nav-group-label-text">{{ label }}</span></span>
+            <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="tree-nest">
+        {% when TreeEvent::CloseFolder %}
+          </div>
+        </details>
+        {% when TreeEvent::Leaf with (leaf) %}
+        <a
+          class="notes-list-item{% if leaf.active %} active{% endif %}"
+          href="{{ leaf.href }}"
+          hx-get="{{ leaf.href }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+          {% if leaf.active %}aria-current="page"{% endif %}
+        >
+          <span class="ic ic-{% if leaf.is_markdown %}file-text{% else %}code{% endif %}" aria-hidden="true"></span>
+          <span class="notes-list-item-title">{{ leaf.label }}</span>
+        </a>
+        {% endmatch %}
+      {% endfor %}
+      </div>
+    </aside>
+    <div class="vm-main" id="vm-main">
+    {% match main %}
+    {% when MainView::Browse with (browse) %}
+      <div class="vm-main-header">
+        <h3>{{ browse.heading }}</h3>
+        <a
+          class="btn small"
+          href="{{ browse.new_href }}"
+          hx-get="{{ browse.new_href }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+        ><span class="ic ic-square-pen" aria-hidden="true"></span> New {{ singular }}</a>
+      </div>
+    {% if is_empty %}
+      <div class="vm-empty"><p>{{ empty_message }}</p></div>
+    {% else if browse.items.is_empty() %}
+      <div class="vm-empty"><p>This folder is empty.</p></div>
+    {% else %}
+      <ul class="vm-item-list">
+      {% for item in browse.items %}
+        <li>
+          <a
+            href="{{ item.href }}"
+            hx-get="{{ item.href }}"
+            hx-target="closest .vault-settings"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+          >
+            <span class="ic ic-{% if item.is_folder %}folder{% else %}file-text{% endif %}" aria-hidden="true"></span>
+            <span class="vm-item-name">{{ item.label }}</span>
+          </a>
+        {% if !item.description.is_empty() %}
+          <p class="vm-item-description">{{ item.description }}</p>
+        {% endif %}
+        </li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+    {% when MainView::Read with (read) %}
+      <div class="vm-main-header">
+        <div>
+          <h3>{{ read.name }}</h3>
+          <p class="hint mono">{{ read.path }}</p>
+        </div>
+      {% match read.body %}
+      {% when ReadBody::NotText %}
+      {% else %}
+        <a
+          class="btn small"
+          href="{{ read.edit_href }}"
+          hx-get="{{ read.edit_href }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+        ><span class="ic ic-square-pen" aria-hidden="true"></span> Edit</a>
+      {% endmatch %}
+      </div>
+      {% match read.body %}
+      {% when ReadBody::Markdown with { properties, raw_frontmatter, html } %}
+        {% if !properties.is_empty() %}
+        <dl class="vm-properties">
+          {% for property in properties %}
+          <div>
+            <dt>{{ property.key }}</dt>
+            <dd>{% if property.values.is_empty() %}<span class="hint">&mdash;</span>{% else %}{% for value in property.values %}<span class="vm-property-value">{{ value }}</span>{% endfor %}{% endif %}</dd>
+          </div>
+          {% endfor %}
+        </dl>
+        {% endif %}
+        {% if let Some(raw) = raw_frontmatter %}
+        <pre class="vm-raw-frontmatter"><code>{{ raw }}</code></pre>
+        {% endif %}
+        <div class="wiki-rendered">{{ html|safe }}</div>
+      {% when ReadBody::Code with { html, language } %}
+        <p class="hint">{{ language }}</p>
+        <pre class="code-view"><code>{{ html|safe }}</code></pre>
+      {% when ReadBody::NotText %}
+        <div class="vm-empty"><p>This file is not text, so it is not shown here.</p></div>
+      {% endmatch %}
+    {% when MainView::Edit with (edit) %}
+    {% if let Some(locked) = edit.locked %}
+      <div class="vm-editor">
+        <div class="vm-main-header">
+          <div>
+            <h3>{{ edit.name }}</h3>
+            <p class="hint mono">{{ edit.path }}</p>
+          </div>
+          <a
+            class="btn small"
+            href="{{ edit.cancel_href }}"
+            hx-get="{{ edit.cancel_href }}"
+            hx-target="closest .vault-settings"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+          >Back to reading</a>
+        </div>
+        <p class="hint error" role="status">{{ locked }}</p>
+        <label class="visually-hidden" for="vm-editor-content">Content of {{ edit.name }}</label>
+        <textarea id="vm-editor-content" class="vm-source-editor" readonly spellcheck="false">
+{{ edit.content }}</textarea>
+      </div>
+    {% else %}
+      <form
+        class="vm-editor"
+        hx-put="{{ edit.save_href }}"
+        hx-target="closest .vault-settings"
+        hx-swap="outerHTML"
+      >
+        <div class="vm-main-header">
+          <div>
+            <h3>Editing {{ edit.name }}</h3>
+            <p class="hint mono">{{ edit.path }}</p>
+          </div>
+          <div class="save-bar save-bar-top">
+            <button type="submit" class="btn primary small">Save</button>
+            <a
+              class="btn small"
+              href="{{ edit.cancel_href }}"
+              hx-get="{{ edit.cancel_href }}"
+              hx-target="closest .vault-settings"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+            >Cancel</a>
+          </div>
+        </div>
+      {% if let Some(error) = edit.error %}
+        <p class="hint error" role="alert">{{ error }}</p>
+      {% endif %}
+        <input type="hidden" name="expected_hash" value="{{ edit.expected_hash }}">
+      {% if let Some(notice) = edit.notice %}
+        <p class="hint" role="note">{{ notice }}</p>
+      {% endif %}
+        <label class="visually-hidden" for="vm-editor-content">Content of {{ edit.name }}</label>
+        <textarea id="vm-editor-content" name="content" class="vm-source-editor" spellcheck="false" autocapitalize="off" autocomplete="off">
+{{ edit.content }}</textarea>
+        <div class="save-bar">
+          <button type="submit" class="btn primary small">Save</button>
+        </div>
+      </form>
+    {% endif %}
+    {% when MainView::New with (new) %}
+      <form
+        class="vm-editor"
+        hx-post="{{ new.create_href }}"
+        hx-target="closest .vault-settings"
+        hx-swap="outerHTML"
+      >
+        <div class="vm-main-header">
+          <div>
+            <h3>New {{ singular }}</h3>
+            <p class="hint mono">In {{ new.folder_label }}</p>
+          </div>
+          <div class="save-bar save-bar-top">
+            <button type="submit" class="btn primary small">Create</button>
+            <a
+              class="btn small"
+              href="{{ new.cancel_href }}"
+              hx-get="{{ new.cancel_href }}"
+              hx-target="closest .vault-settings"
+              hx-swap="outerHTML"
+              hx-push-url="true"
+            >Cancel</a>
+          </div>
+        </div>
+      {% if let Some(error) = new.error %}
+        <p class="hint error" role="alert">{{ error }}</p>
+      {% endif %}
+      {% if let Some(notice) = new.notice %}
+        <p class="hint">{{ notice }}</p>
+      {% endif %}
+        <div class="field-row">
+          <label for="vm-new-name">Name</label>
+          <input id="vm-new-name" name="name" type="text" value="{{ new.name }}" placeholder="{{ new.name_placeholder }}" required autofocus spellcheck="false" autocomplete="off" aria-describedby="vm-new-name-hint">
+        </div>
+        <p class="hint" id="vm-new-name-hint">{{ new.name_hint }}</p>
+        <label class="visually-hidden" for="vm-editor-content">Content</label>
+        <textarea id="vm-editor-content" name="content" class="vm-source-editor" spellcheck="false" autocapitalize="off" autocomplete="off">
+{{ new.content }}</textarea>
+        <div class="save-bar">
+          <button type="submit" class="btn primary small">Create</button>
+        </div>
+      </form>
+    {% when MainView::Unprovisioned %}
+      <div class="vm-empty">
+        <p>{{ empty_message }}</p>
+        <p class="hint">This folder does not exist in the vault yet. Point the folder above at an existing one, or create it first.</p>
+      </div>
+    {% when MainView::Unreadable %}
+      <div class="vm-empty"><p>This folder could not be listed.</p></div>
+    {% endmatch %}
+    </div>
+  </div>
+</section>

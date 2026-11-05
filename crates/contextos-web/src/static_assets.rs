@@ -1,13 +1,14 @@
 //! `GET /static/{path}`: non-vault server assets.
 //!
-//! The crate's own bundled assets (`static/`: the UI shell's CSS, the
-//! app-manifest JS client library, HTMX, the default header logo, and the
-//! default favicon) are embedded into the binary at
+//! The crate's own bundled assets (`static/`: the Command Centre stylesheet
+//! and its token layer, the self-hosted Inter `woff2` faces and the Lucide
+//! icon set with their licences, the app-manifest JS client library, HTMX,
+//! and the default favicon) are embedded into the binary at
 //! compile time ([`BundledAssets`]), so they are servable with no
 //! configuration at all, on every platform and every install layout: a
 //! `cargo install` into a `PATH` directory carries no sibling `static/`
 //! folder, and the process's current working directory at launch has no
-//! bearing on whether `/static/` works (FR-250).
+//! bearing on whether `/static/` works.
 //!
 //! An operator-configured `static_dir` (`web.toml`'s `[server] static_dir`,
 //! optional) is consulted first when present, so an operator can override
@@ -49,6 +50,32 @@ fn etag_for(hash: [u8; 32]) -> HeaderValue {
 struct BundledAssets;
 
 type BoxedAssetService = BoxCloneSyncService<Request<Body>, Response<Body>, Infallible>;
+
+/// Every icon name the bundled stylesheet can render as `ic ic-{name}`, sorted: the names a configuration form may
+/// offer, since a name with no stylesheet rule would render as nothing.
+#[must_use]
+pub fn icon_names() -> Vec<String> {
+    let Some(file) = BundledAssets::get("contextos-shell.css") else {
+        return Vec::new();
+    };
+    let css = String::from_utf8_lossy(&file.data);
+    let mut names: Vec<String> = css
+        .split(".ic-")
+        .skip(1)
+        .filter_map(|rest| {
+            let name = rest.split('{').next()?;
+            let is_icon_rule = rest[name.len()..].starts_with("{--ic:");
+            let is_plain_name = !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+            (is_icon_rule && is_plain_name).then(|| name.to_owned())
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
 
 /// Builds the `/static/` service. `static_dir`, when present, is tried
 /// first; the embedded [`BundledAssets`] serve every path it does not

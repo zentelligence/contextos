@@ -1,0 +1,55 @@
+{# The configured-settings strip shared by the Decisions register and the registry types. Read as text by default;
+   Edit turns the values into text boxes with an Update button, and Cancel returns to the text without saving. The
+   form carries the version of the settings file it was rendered from, so a save over a newer version is refused. #}
+{% macro paths(view) %}
+<div class="vm-paths{% if view.editing %} editing{% endif %}" id="vm-paths">
+{% if view.editing %}
+  <form
+    class="vm-paths-form"
+    hx-patch="{{ view.resource_href }}"
+    hx-target="closest .vault-settings"
+    hx-swap="outerHTML"
+  >
+  {% if let Some(error) = view.error %}
+    <p class="hint error" role="alert">{{ error }}</p>
+  {% endif %}
+    <input type="hidden" name="expected_hash" value="{{ view.expected_hash }}">
+    <div class="vm-paths-grid">
+    {% for field in view.fields %}
+      <div class="field-row">
+        <label for="vm-paths-{{ field.name }}">{{ field.label }}</label>
+        <input id="vm-paths-{{ field.name }}" name="{{ field.name }}" type="text" value="{{ field.value }}"{% if field.required %} required{% else %} placeholder="{{ field.empty_label }}"{% endif %} spellcheck="false" autocomplete="off">
+      </div>
+    {% endfor %}
+    </div>
+    <p class="hint">{{ view.hint }}</p>
+    <div class="vm-paths-actions">
+      <button type="submit" class="btn primary small">Update</button>
+      <button
+        type="button"
+        class="btn small"
+        hx-get="{{ view.resource_href }}"
+        hx-target="closest .vault-settings"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+      >Cancel</button>
+    </div>
+  </form>
+{% else %}
+  <dl class="vm-paths-list">
+  {% for field in view.fields %}
+    <div><dt>{{ field.label }}</dt><dd>{% if field.value.is_empty() %}<span class="hint">{{ field.empty_label }}</span>{% else %}<code>{{ field.value }}</code>{% endif %}</dd></div>
+  {% endfor %}
+  </dl>
+  <button
+    type="button"
+    class="btn small"
+    hx-get="{{ view.edit_href }}"
+    hx-target="closest .vault-settings"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+    aria-label="Edit settings"
+  ><span class="ic ic-square-pen" aria-hidden="true"></span> Edit</button>
+{% endif %}
+</div>
+{% endmacro %}

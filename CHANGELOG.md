@@ -2,46 +2,121 @@
 
 All notable changes to this project are documented in this file.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html) once a first public release is tagged.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once a first public release is tagged.
 
-The record below starts at the current version - 0.20.1. From this point forward, every user-visible change belongs in `[Unreleased]` until it ships in a tagged release.
+Entries summarise each change; `docs/` holds the detail of current behaviour. The record starts at 0.20.1, and every user-visible change belongs in `[Unreleased]` until it ships in a tagged release.
 
 ## [Unreleased]
+
+## [0.23.6] - 2026-11-05
+
+### Upgrade notes
+
+- **Job requirements:** every job file needs `timeout_secs`, and a vault job needs an `owner` who is a team member, in a vault whose `.contextos/team.toml` names exactly one chief of staff. The first scheduler pass after upgrading suspends enabled jobs that fall short (vault jobs raise a task, shared jobs do not), and a vault with saved jobs and no valid team has its scheduled jobs paused.
+- **Job identity:** a job is now `{package}/{workflow}/{job}` in vaults and on the host, across pages, commands, claims, run records, and state files. Nothing is migrated, and the old paths and keys are not read.
+- **Package commands and API:** `packages install` takes `<vault> <bundle>` or `--shared <bundle>`, the host API moved from `/api/v1/packages` to `/api/v1/shared/packages`, and `?force=true` became `PUT .../execute/remove`. `workflows run --shared --package-version` became `--release`, and a vault `workflows run` now runs the `current` release, with `--source` for the source. The old forms are refused.
+- **Retention:** the host package store no longer keeps every installed release, so installing a newer release can remove an older one that nothing keeps.
+- **Link graph:** `[vault.search] graph_backend` defaults to `sqlite` and nothing is migrated. Run `query_index_rebuild` or `contextos index` to populate it, or set `graph_backend = "fjall"` to keep an existing store. The graph store format also changed, so an existing graph is rebuilt on first open.
+- **Configuration:** `[server] resource_link_threshold_kb = 0` is now refused; set it to at least 1.
+- **Base sidecars:** any `template` now binds, and a single one binds every series. Give a sidecar whose `template` serves series of different kinds a `series_templates` entry for each before upgrading.
+- **Journal and tasks:** the Journal no longer names fixed sections, so a vault relying on Loops and Claude session log sets `task_opened_section`, `task_closed_section`, and `read_only_sections`. `pending` is no longer a shipped task stage, and a task left in it is not counted as open until moved.
+- **Tool results:** `links_read` returns `unresolved` entries as objects, a file given where a folder is needed fails with `path/not-a-directory` in place of `io/filesystem`, and the `base_property` doctor check is replaced by `record_conformance`.
+- **Extension modules:** `ServerModule::handle` returns rmcp's `CallToolResponse`; an existing module returns its `CallToolResult` with `.into()`.
+
+### Added
+
+- **Workflow releases:** `workflows install` and `libraries install` turn a vault's source into versioned releases, each tracked as current, previous, future, or retired. Versions step by interface change, and an install with too small a step is refused. Runs can target a release or the source (`workflows run --release`, `--source`), and run records name the release and libraries they used.
+- **Job chains:** `jobs successor` moves a job to another release through a successor, with one job in use per chain, and a job edited away from its record is held to it.
+- **Package management:** `packages list`, `inspect`, `remove`, and `install` work on vault and host stores with matching API routes, including installing from a plain folder and rebuilding a lost ledger. Automatic retention removes releases nothing keeps.
+- **Web release pages:** workflow, job, and library pages show releases, chains, checks, and dependants, and Vault Health reports damaged releases and store problems.
+- **Run summaries:** every run command ends with one summary, as text or versioned JSON, with a graded exit status.
+- **Workflow scripting:** typed outputs (`set_output`), declared modules and built-in libraries, read-only access to shipped files (`workflow_file`), and `--input` overrides on runs.
+- **Job authoring:** `jobs create`, `show`, `replace`, and `list --shared` author shared job files from the command line, and job files may declare an `entity`.
+- **Job supervision:** the scheduler raises a task when a vault job needs attention and records `job.failed`, `job.suspended`, `job.recovered`, and `job.retired` events. Suspensions are structured records, and `.contextos/team.toml` is validated strictly for jobs.
+- **Agent host projection:** agents, skills, and global instructions in a vault's `registry/` are projected into Claude Code and Codex, configured by `[projection]`, with ownership tracking, confinement checks, and `doctor` reporting and repair.
+- **Link integrity:** `query_graph` reports unresolved links and unlinked notes, `links_read` takes `direction`, `doctor` gains `link_integrity`, and `[vault.links] exclude` scopes the check.
+- **Partial reads:** `fs_read_text_file` reads byte parts by `offset` and `length`, and reads report `size` and `version` so a caller can detect a file changing between parts.
+- **Note and record tools:** `note_update`, `note_create` with `content_from`, `base_query` lookups by `ids` plus `containsAny` and `containsAll`, `base_record_create` with `unique_fields` and series templates, `base_read`'s `records_folder`, and `frontmatter_read` with `expand_links`. `expand_links` also handles canvases and Markdown reference definitions.
+- **Web Signals:** a Signals screen, a live event stream over Server-Sent Events, and task and agent status driven by vault events.
+- **Web vault management:** a Decisions register, Registry, Standards, Templates, and Activity log in Vault Settings, plus task types, priorities, and per-type stages in `.contextos/tasks.toml`.
+- **Web connections:** `/settings/` shows each MCP server's connection with a **Reconnect** action, with no restart needed.
+- **`contextos-markdown`:** a new pure crate rendering notes for `contextos-web`, covering Obsidian syntax, math, Mermaid, fences, and allowlisted HTML.
+- **Doctor checks:** derived store health, record conformance, fence vocabulary, and team configuration. Every auto-fixable finding names a stable `remediation`.
+- **Store recovery:** a damaged derived store is quarantined, recreated, and repopulated automatically.
+- **Time zone:** `[server] timezone` sets the zone for every time written into a vault, reported by `vault_info`.
+- **Logging and service:** `contextos` gains log rotation and retention through the new `contextos-logging` crate, and `contextos-web service` gains `start`, `stop`, and `restart`.
+
+### Changed
+
+- **MCP protocol:** the SDK moves to rmcp 3.5.1. `contextos` serves revision 2026-07-28 over stdio and streamable HTTP, and `contextos-web` opens sessions with `server/discover`, falling back to `initialize` for older servers.
+- **Link resolution:** the link graph resolves links as Obsidian does, with one resolver shared with `expand_links`. Markdown links are graph edges, and a shared name is reported as ambiguous.
+- **Concurrency:** mutations are exclusive across processes through a fair per-vault lock, failing with `io/vault-busy` after 30 seconds. Derived stores are shared between instances, and file locks use the standard library in place of `fs4`.
+- **Stored text:** every time written into a vault is local rather than UTC, cron schedules run on wall-clock time, and every text write is stored with `\n` line endings, warning when it converts them.
+- **Identity scope:** ids are unique within a base's scope, and a record's `base` property resolves like any other link.
+- **Workflow safety:** scripts refuse `eval`, script output goes to the run's log, run messages no longer name absolute host paths or quote rejected `--input` values, and vault runs honour interrupts as shared runs do.
+- **Scheduling:** only the latest of several missed cron ticks runs.
+- **Web rendering:** one pipeline renders every note, each file opens on the screen that owns it, and the wiki, insights, and entity screens drop the `knowledge/` prefix from their URLs.
+- **Web tasks and journal:** each task type has its own lifecycle, colours, and stages, with `review` and a Done today tile added. Journal tabs come from the day's entry, each section edited on its own.
+- **Web resilience:** `contextos-web` starts whether or not its MCP servers connect, and saved `[[mcp_server]]` changes apply at once.
+- **Windows service:** `service install` registers a per-user Startup App needing no Administrator terminal, with `--scheduled-task` as the alternative, and a process record lets `service` commands act on the right process.
+- **HTTP limits:** `max_body_kb` is the one request limit, defaulting to 14 MiB so the largest permitted write fits, and a non-loopback bind serves clients reaching it by network address.
+- **Status reporting:** `query_index_status` and `vault_info` report health for every store and never fail because one store cannot report.
+- **Releases:** `contextos update` defaults to `github.com/zentelligence/contextos`, release archives carry `NOTICE` and `THIRD_PARTY_LICENSES.md`, and `just ci` fails on stale licence attribution.
+
+### Removed
+
+- The `PATCH /{vault}/journal/sections/{section_key}` route, replaced by per-index section routes.
+- The startup diagnostic that wrote every invocation's arguments and environment to `contextos-startup-debug.log`.
+
+### Fixed
+
+- `doctor --resolve` and its `--dry-run` now write only what they report, take the vault write locks, report failed remediations as failed, and survive a vault whose search state cannot open. `doctor` no longer creates stores or misreports a repository with no commits.
+- Named pipes in a vault can no longer hang a server thread on Unix.
+- Installing a package with files in folders no longer fails, on any platform, and `contextos-web service` no longer fails on Windows where nothing is registered yet.
+- OAuth2 tokens now refresh for open sessions and workflow runs.
+- Rebuilds and indexing can no longer overwrite a concurrent write's newer entry.
+- Size limits are corrected: 10 MiB binary writes succeed, and Inbox uploads and the MCP proxy accept their documented limits.
+- `query_index_rebuild` no longer loses its result over streamable HTTP when a request carries a progress token.
+- Notes with a byte order mark, code fences in lists or callouts, or `%%` in frontmatter are read correctly.
+- `[server].log_file` is now used, Journal saves preserve the entry's text and detect newer versions, and task priorities sort in their declared order.
+- `contextos-web` commands close their MCP sessions before exiting, and a server outage no longer counts as an unreadable workflow file.
+
+### Security
+
+- Package names are validated before reaching the package store (`packages/invalid-name`), and bundles holding links, special files, or unsafe paths are refused.
+- Files `contextos-web` serves carry `X-Content-Type-Options: nosniff`, and SVG, HTML, and XML files a sandboxing `Content-Security-Policy`.
+- The text index moves to tantivy 0.27, clearing RUSTSEC-2026-0391, RUSTSEC-2026-0398, RUSTSEC-2026-0403, and RUSTSEC-2026-0253 with no index rebuild.
 
 ## [0.21.0] - 2026-09-05
 
 ### Added
 
-- `contextos-web`, a new crate and second binary in this workspace (Phase 14): an `mcp_client` module that spawns or connects to configured MCP servers (`web.toml`'s `[[mcp_server]]` list) and performs the `initialize` handshake before serving any request; a `POST /mcp/{server_name}/{tool_name}` proxy route giving any HTTP caller deterministic, non-model-mediated MCP tool calls; and `/static/` asset serving. Not yet a browsable web UI: vault content rendering, app registration, and a settings UI are later phases (15 to 17).
-- `contextos-web service install` / `uninstall` / `status`: registers (or removes, or reports on) `contextos-web` as an auto-starting, per-user background service, none of the three needing elevation, via `systemd --user` on Linux, a `launchd` `LaunchAgent` on macOS, or a Scheduled Task on Windows. The release archive for each platform now also includes the `contextos-web` binary alongside `contextos`.
-- `base_query`: `file.inFolder(folder)`, matching Obsidian's own "in folder or subfolder" Bases function. Recognised as a scan-root narrowing hint the same way `file.folder == "..."` already was, so a Base whose filter uses it (rather than the unnarrowable `file.folder == "..." || file.folder.contains(".../")` idiom the lack of a real `inFolder` previously forced) no longer requires a full vault-wide scan.
-- `base_query` display columns: a formula whose body is a bare property reference now resolves to that property's own value, and `file.asLink(display?)` resolves to a link targeting the row's own file (`display` defaulting to the file's basename when omitted or empty). Every other formula (arithmetic, `if()`, date functions, and the rest of Obsidian's formula language) still shows the existing "not evaluated" marker rather than guessing at a value. `contextos-web`'s Base card view renders a resolved link as a real, clickable anchor rather than raw JSON.
+- `contextos-web`, a second binary providing the web interface and an MCP proxy, with `service install`, `uninstall`, and `status` for per-user background running on Linux, macOS, and Windows.
+- `base_query` gains `file.inFolder(folder)`, property formulas, and `file.asLink(display?)`.
 
 ### Changed
 
-- Renamed the `contextos-server` crate to `contextos-mcp` to disambiguate the MCP server from the web server planned for a future release. The installed binary name (`contextos`) and its CLI are unchanged.
-- `contextos-web`'s `--web-config` flag is now `--config` (the binary name already says "web"). `contextos-web`'s own `--help` description is now "ContextOS web UI", dropping "and MCP proxy" as an overstatement of what the CLI itself exposes. Both `contextos` and `contextos-web` now print a lowercase `v`-prefixed version (`v0.20.2`) for `--version`, matching the `vMAJOR.MINOR.PATCH` git tag convention releases already use.
-- `web.toml`'s `[server] static_dir` is now optional (previously always required, defaulting to the relative path `./static`): `contextos-web` embeds its own bundled `/static/` assets (CSS, JS) into the binary at compile time, so they serve with no configuration and no dependency on the process's working directory or install layout. A configured `static_dir` is now an override consulted first, falling back to the embedded copy for any file it does not itself contain, rather than the sole source.
+- The `contextos-server` crate is renamed `contextos-mcp`; the `contextos` binary and CLI are unchanged.
+- `contextos-web`'s `--web-config` flag is now `--config`, and `web.toml`'s `[server] static_dir` is optional because static assets are embedded.
 
 ### Fixed
 
-- `/static/` no longer 404s on every request when `contextos-web` is launched from a directory that has no `static/` subdirectory next to it, such as a plain `cargo install` or a `PATH` binary directory on Windows: `static_dir`'s previous default (the relative path `./static`, resolved against the process's current working directory rather than the binary's own location) silently pointed nowhere in that layout, and startup gave no warning that it had. The crate's bundled assets are now embedded in the binary itself instead.
-- `base_query`'s scan-root narrowing (`scan_root_hint`) could silently narrow a scan, and drop genuine matches, when a `file.path`/`file.folder` equality leaf sat inside an `or` or `not` filter node, or inside a compound `&&`/`||`/`!`/`(...)` filter string its previous whole-string parser did not actually respect. Both are now evaluated with the same `and`/`or`/`not` grammar and safety rules `evaluate_filters` itself uses: narrowing only through a safe `and` conjunct, an `or` only when every operand agrees on the identical hint, never through a `not`.
-- `contextos-web`'s Base card view no longer offers a `formula.*` display column as an editable, patchable field in a row's edit form: saving the form unchanged previously wrote the formula's own name or "not evaluated" marker text back into the note's real frontmatter as a bogus key.
-- `contextos-web` vault content, apps-list, and settings-page rendering issued every independent MCP round trip, and every `web.toml` read (one of them a blocking filesystem read running directly on the async executor thread), strictly sequentially. Independent work (nav-shell assembly, a note's content fetch/render, appearance/config loads) now runs concurrently via `tokio::join!`, and every blocking `web.toml` read or write moved onto `spawn_blocking`.
+- `/static/` no longer 404s when launched away from a `static/` folder.
+- `base_query` no longer drops matches by narrowing a scan through `or` and `not` filters.
+- The Base card view no longer offers formula columns for editing, which wrote bogus frontmatter.
+- `contextos-web` page rendering runs independent MCP calls concurrently and keeps blocking reads off the async executor.
 
 ## [0.20.2] - 2026-09-03
 
 ### Fixed
 
-- `contextos config` now loads an existing `config.toml` before running the guided-setup interview instead of treating every run as a fresh install: a single existing vault is offered back for edit with its current settings prefilled as defaults, and more than one vault asks what to focus on (general server settings, all vaults, or one named vault to edit or remove) before optionally adding more.
-- `Config::validate` now rejects an empty transports list, which previously validated successfully but left the server started with neither stdio nor HTTP.
-- `fs_write_file` no longer reports an omitted `expected_hash` on an existing file with the same conflict error as a genuine write conflict. A missing hash now fails fast with its own accurate message, and a genuine conflict returns the file's current on-disk hash so a caller can retry in one step without a second read; the remediation text no longer names `force` as a peer option to a hash retry.
+- `contextos config` loads an existing `config.toml` rather than treating every run as a fresh install.
+- `Config::validate` rejects an empty transports list.
+- `fs_write_file` separates an omitted `expected_hash` from a genuine conflict, and a conflict returns the current hash.
 
 ### Removed
 
-- The unreleased `embedvec` evaluation prototype (bench target, dev-dependency, and the `embedvec-unreleased-flush-sync` feature on `contextos-search`), which existed only to gate calls into an unmerged local checkout and made a plain `--all-features` build fail against the published crate this workspace actually pins.
+- The unreleased `embedvec` evaluation prototype.
 
 ## [0.20.1] - 2026-08-30
 

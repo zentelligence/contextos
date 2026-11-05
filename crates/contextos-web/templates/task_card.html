@@ -1,0 +1,16 @@
+<article class="task-card" style="border-left-color:var(--entity-{{ card.entity_accent }})">
+  <div class="task-card-top">
+    <span class="mono">{{ card.id }}</span>
+    {% if let Some(severity) = card.attention %}<span class="status-dot {{ severity }} task-attention" role="img" aria-label="Needs attention: {{ severity }}" title="Needs attention: {{ severity }}"></span>{% endif %}
+    <span class="status-chip colour-{{ card.state_colour }}">{{ card.state_label }}</span>
+  </div>
+  <a class="task-card-title" href="{{ card.href }}">{{ card.title }}</a>
+  <div class="task-card-meta">
+  {% if !card.assignee.is_empty() %}
+    <span class="task-card-meta-item"><span class="ic ic-user-round" aria-hidden="true"></span>{{ card.assignee }}</span>
+  {% endif %}
+  {% if !card.due.is_empty() %}
+    <span class="task-card-meta-item task-card-due"><span class="ic ic-clock" aria-hidden="true"></span>{{ card.due }}</span>
+  {% endif %}
+  </div>
+</article>

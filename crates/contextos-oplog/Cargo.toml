@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 contextos-core = { path = "../contextos-core" }
 thiserror.workspace = true
+tracing.workspace = true
 time.workspace = true
 
 [dev-dependencies]

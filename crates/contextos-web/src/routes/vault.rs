@@ -1,9 +1,8 @@
-//! Vault content routes (`web-routes.md` §2):
+//! Vault content routes:
 //! `GET /{{vault_name}}/{{relative-path}}` and its directory form, plus the
 //! `POST`/`PATCH`/`PUT`/`DELETE` mutation dispatch in
 //! [`mutate`](super::vault_mutations). Also the bare HTTP server root's own
-//! [`get_server_root`], a `contextos-web`-only convenience `web-routes.md`
-//! does not itself name a page for.
+//! [`get_server_root`], a `contextos-web`-only convenience.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,7 +17,8 @@ use serde_json::{Map, Value};
 use crate::config;
 use crate::mcp_client::{McpCallError, McpClient, McpClientSet};
 use crate::rendering::shell::{self, ActiveScreen};
-use crate::rendering::{base, canvas, markdown, page};
+use crate::rendering::{base, page};
+use crate::screen_routes::{load_link_routes, route_for_note};
 
 /// Shared state a vault content route needs: the connected MCP sessions,
 /// the name of the `[[mcp_server]]` entry every vault operation is issued
@@ -29,15 +29,24 @@ use crate::rendering::{base, canvas, markdown, page};
 #[derive(Clone)]
 pub struct VaultRoutesState {
     pub clients: Arc<McpClientSet>,
-    pub primary_server: String,
     pub web_config_path: Arc<PathBuf>,
+    /// The operator's local date, for the Overview's Done today tile.
+    pub vault_time: Arc<crate::vault_time::VaultTime>,
+}
+
+impl From<super::CommonRoutesState> for VaultRoutesState {
+    fn from(value: super::CommonRoutesState) -> Self {
+        Self {
+            clients: value.clients,
+            web_config_path: value.web_config_path,
+            vault_time: value.vault_time,
+        }
+    }
 }
 
 impl VaultRoutesState {
-    fn client(&self) -> Result<&Arc<McpClient>, Box<Response>> {
-        self.clients
-            .get(&self.primary_server)
-            .ok_or_else(|| Box::new(server_not_configured()))
+    fn client(&self) -> Result<Arc<McpClient>, Box<Response>> {
+        crate::routes::primary_session(&self.clients)
     }
 }
 
@@ -67,6 +76,10 @@ pub struct VaultQuery {
     pub raw: Option<String>,
     #[serde(default)]
     pub view: Option<String>,
+    /// The Command Centre entity switcher's own selection: absent means
+    /// "All entities", the always-available default.
+    #[serde(default)]
+    pub entity: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,7 +101,7 @@ async fn resolve_kind(client: &McpClient, vault_name: &str, trimmed: &str) -> Re
     let mut args = Map::new();
     args.insert("path".to_owned(), Value::String(target));
     match client.call_tool("fs_get_file_info".to_owned(), args).await {
-        Err(McpCallError::Unreachable { .. }) => Err(Box::new(unreachable())),
+        Err(McpCallError::Unreachable { .. } | McpCallError::Refused { .. }) => Err(Box::new(unreachable())),
         Ok(result) if result.is_error == Some(true) => Err(Box::new(not_found())),
         Ok(result) => match result.into_typed::<FileInfoResult>() {
             Ok(info) if info.kind == "dir" => Ok(Kind::Dir),
@@ -98,80 +111,42 @@ async fn resolve_kind(client: &McpClient, vault_name: &str, trimmed: &str) -> Re
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct ReadTextResult {
-    content: String,
-    #[serde(default)]
-    truncated: bool,
-}
-
-/// Re-reads `vault_path` via `fs_attach_file` (full content for a file of
-/// any size, unlike `fs_read_text_file`'s 5 KiB cap): the completeness
-/// retry [`read_text`] takes when its own read comes back
-/// [`ReadTextResult::truncated`]. `None` for a non-text attachment (should
-/// not happen for a path that just read as truncated text, but fails
-/// closed rather than misinterpreting binary content as a string) or a
-/// target that no longer exists.
-async fn fetch_full_text(client: &McpClient, vault_path: String) -> Result<Option<String>, McpCallError> {
-    let mut args = Map::new();
-    args.insert("path".to_owned(), Value::String(vault_path));
-    let result = client.call_tool("fs_attach_file".to_owned(), args).await?;
-    if result.is_error == Some(true) {
-        return Ok(None);
-    }
-    for block in &result.content {
-        let rmcp::model::ContentBlock::Resource(embedded) = block else {
-            continue;
-        };
-        if let rmcp::model::ResourceContents::TextResourceContents { text, .. } = &embedded.resource {
-            return Ok(Some(text.clone()));
-        }
-    }
-    Ok(None)
-}
-
-async fn read_text(client: &McpClient, path: String) -> Result<String, Box<Response>> {
-    let mut args = Map::new();
-    args.insert("path".to_owned(), Value::String(path.clone()));
-    match client.call_tool("fs_read_text_file".to_owned(), args).await {
-        Err(McpCallError::Unreachable { .. }) => Err(Box::new(unreachable())),
-        Ok(result) if result.is_error == Some(true) => Err(Box::new(not_found())),
-        Ok(result) => {
-            let read = result
-                .into_typed::<ReadTextResult>()
-                .map_err(|_| Box::new(not_found()))?;
-            if !read.truncated {
-                return Ok(read.content);
-            }
-            // A retry failure falls back to the truncated content already
-            // in hand rather than failing the whole page over a
-            // best-effort completeness upgrade.
-            Ok(fetch_full_text(client, path)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or(read.content))
-        }
-    }
-}
-
-/// The outcome of fetching a file's content via `fs_attach_file` and
-/// converting the returned MCP resource block into an HTTP response body
-/// with its MCP-resolved content type.
+/// The outcome of fetching a file's content via `fs_attach_file`: either
+/// its MCP-resolved content type and body, still unconverted to a
+/// [`Response`] so a caller can inspect the content type first (the
+/// app-serving route's embed composition, `routes::apps`, needs to know
+/// whether a fetched app entry is `text/html` before deciding how to
+/// respond), or [`NotFound`](Attached::NotFound).
 pub(crate) enum Attached {
-    Found(Response),
+    Found { content_type: String, body: AttachedBody },
     NotFound,
 }
 
-/// Calls `fs_attach_file` on `vault_path` and converts the result into an
-/// HTTP response with the MCP-resolved content type, reusing
-/// `fs_attach_file`'s existing binary/text detection rather than this
-/// crate inventing a second one. Shared by [`render_other_file`] (the
-/// vault content route's "anything else" dispatch) and the app-serving
-/// route (`routes::apps`), which fetches a registered app's own bundle
-/// files the identical way, since both are "serve this vault file's bytes
-/// with its real content type" (still an MCP tool call, never a direct
-/// filesystem read).
+/// A fetched file's body, still typed as text or bytes per
+/// `fs_attach_file`'s own detection, before either is turned into a
+/// response body.
+pub(crate) enum AttachedBody {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+/// Builds the standard passthrough response for a fetched file: its
+/// resolved content type and body, verbatim. The one response shape every
+/// caller that does not need to inspect the content first already wants.
+pub(crate) fn attached_response(content_type: String, body: AttachedBody) -> Response {
+    match body {
+        AttachedBody::Text(text) => (StatusCode::OK, [("content-type", content_type)], text).into_response(),
+        AttachedBody::Bytes(bytes) => (StatusCode::OK, [("content-type", content_type)], bytes).into_response(),
+    }
+}
+
+/// Calls `fs_attach_file` on `vault_path` and converts the result into its
+/// MCP-resolved content type and body, reusing `fs_attach_file`'s existing
+/// binary/text detection rather than this crate inventing a second one.
+/// Shared by `routes::file_response` (a file answered as it is stored) and the app-serving route (`routes::apps`), which
+/// fetches a registered app's own bundle files the identical way, since
+/// both are "serve this vault file's bytes with its real content type"
+/// (still an MCP tool call, never a direct filesystem read).
 ///
 /// # Errors
 ///
@@ -193,9 +168,10 @@ pub(crate) async fn fetch_attached(client: &McpClient, vault_path: String) -> Re
                 let content_type = mime_type
                     .clone()
                     .unwrap_or_else(|| "text/plain; charset=utf-8".to_owned());
-                return Ok(Attached::Found(
-                    (StatusCode::OK, [("content-type", content_type)], text.clone()).into_response(),
-                ));
+                return Ok(Attached::Found {
+                    content_type,
+                    body: AttachedBody::Text(text.clone()),
+                });
             }
             rmcp::model::ResourceContents::BlobResourceContents { mime_type, blob, .. } => {
                 use base64::Engine;
@@ -203,9 +179,10 @@ pub(crate) async fn fetch_attached(client: &McpClient, vault_path: String) -> Re
                     let content_type = mime_type
                         .clone()
                         .unwrap_or_else(|| "application/octet-stream".to_owned());
-                    return Ok(Attached::Found(
-                        (StatusCode::OK, [("content-type", content_type)], bytes).into_response(),
-                    ));
+                    return Ok(Attached::Found {
+                        content_type,
+                        body: AttachedBody::Bytes(bytes),
+                    });
                 }
             }
             // `ResourceContents` is `#[non_exhaustive]`: `fs_attach_file`
@@ -230,12 +207,58 @@ pub(crate) fn html_response(html: String) -> Response {
     (StatusCode::OK, [("content-type", "text/html; charset=utf-8")], html).into_response()
 }
 
-fn raw_response(content: String) -> Response {
-    (StatusCode::OK, [("content-type", "text/plain; charset=utf-8")], content).into_response()
+/// The content types a browser can run script from when one is opened directly.
+fn can_run_script(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+    // HTML, and every XML document type (`*/xml`, any `+xml` suffix, and the XSL types), which a browser renders as
+    // XML and so runs XHTML-namespaced script in.
+    essence == "text/html"
+        || essence.ends_with("/xml")
+        || essence.ends_with("+xml")
+        || matches!(essence.as_str(), "text/xsl" | "application/xsl")
 }
 
-/// `GET /` (the bare HTTP server root): `web-routes.md` names no page at
-/// this literal path, since every vault-content and app route always
+/// A vault file's bytes, served so that nothing in the file can act in the interface's origin: the browser never
+/// guesses another type for it, and a type that can run script (SVG, HTML, XML) is sandboxed with no script and no
+/// network. A vault file opened directly can come from anywhere (a clipping, a synced folder, an agent), and the
+/// interface's origin can call every MCP tool. Apps are served by their own routes and are not affected.
+pub(crate) fn asset_response(content_type: String, body: AttachedBody) -> Response {
+    let sandboxed = can_run_script(&content_type);
+    let mut response = attached_response(content_type, body);
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    if sandboxed {
+        headers.insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:",
+            ),
+        );
+    }
+    response
+}
+
+/// A full-navigation `Redirect` for a plain browser `GET`, or the HTMX-native `HX-Redirect` header on a `200` for
+/// an `hx-request`, matching `routes::journal`'s and `routes::entity_docs`'s own identical local helpers (this
+/// crate's own per-module convention rather than one shared function).
+fn redirect_response(target: &str, is_hx_request: bool) -> Response {
+    if is_hx_request {
+        (StatusCode::OK, [("HX-Redirect", target.to_owned())], String::new()).into_response()
+    } else {
+        Redirect::to(target).into_response()
+    }
+}
+
+/// `GET /` (the bare HTTP server root): there is no page at this literal
+/// path, since every vault-content and app route always
 /// carries `vault_name` as its own first segment, so this redirects to
 /// somewhere that does resolve, mirroring the nav shell's own "no page-
 /// specific vault yet, fall back to the first configured one" behaviour
@@ -246,12 +269,15 @@ pub async fn get_server_root(State(state): State<VaultRoutesState>) -> Response 
     let Ok(client) = state.client() else {
         return Redirect::to("/settings/").into_response();
     };
-    let target = shell::configured_vault_names(client)
+    let target = shell::configured_vault_names(&client)
         .await
         .unwrap_or_default()
         .into_iter()
         .next()
-        .map_or_else(|| "/settings/".to_owned(), |name| format!("/{name}/"));
+        .map_or_else(
+            || "/settings/".to_owned(),
+            |name| crate::urls::VaultUrls::from(&*name).root(),
+        );
     Redirect::to(&target).into_response()
 }
 
@@ -259,9 +285,10 @@ pub async fn get_server_root(State(state): State<VaultRoutesState>) -> Response 
 pub async fn get_root(
     State(state): State<VaultRoutesState>,
     Path(vault_name): Path<String>,
+    Query(query): Query<VaultQuery>,
     headers: HeaderMap,
 ) -> Response {
-    get_dispatch(state, vault_name, String::new(), VaultQuery::default(), headers).await
+    Box::pin(get_dispatch(state, vault_name, String::new(), query, headers)).await
 }
 
 /// `GET /{{vault_name}}/{{relative-path}}`.
@@ -271,7 +298,21 @@ pub async fn get_path(
     Query(query): Query<VaultQuery>,
     headers: HeaderMap,
 ) -> Response {
-    get_dispatch(state, vault_name, relative_path, query, headers).await
+    Box::pin(get_dispatch(state, vault_name, relative_path, query, headers)).await
+}
+
+/// Everything a rendered vault page's own shell assembly needs, bundled so
+/// the render functions below stay within a reasonable argument count as
+/// the shell grows more per-page chrome (appearance, the sidebar's own
+/// wide/narrow state, the footer's MCP-servers status) beyond the original
+/// `client`/`vault_name` pair.
+struct ShellContext<'a> {
+    client: &'a McpClient,
+    clients: &'a McpClientSet,
+    vault_name: &'a str,
+    appearance: &'a config::Appearance,
+    sidebar_wide: bool,
+    vault_time: &'a crate::vault_time::VaultTime,
 }
 
 async fn get_dispatch(
@@ -298,211 +339,122 @@ async fn get_dispatch(
                 .await
                 .unwrap_or_default()
         },
-        Box::pin(resolve_kind(client, &vault_name, trimmed)),
+        Box::pin(resolve_kind(&client, &vault_name, trimmed)),
     );
     let kind = match kind {
         Ok(kind) => kind,
         Err(response) => return *response,
     };
+    let ctx = ShellContext {
+        client: &client,
+        clients: &state.clients,
+        vault_name: &vault_name,
+        appearance: &appearance,
+        sidebar_wide: crate::routes::sidebar_wide_from_headers(&headers),
+        vault_time: &state.vault_time,
+    };
+    let is_hx_request = headers.contains_key("hx-request");
     match kind {
-        Kind::Dir => render_directory(client, &vault_name, trimmed, &appearance).await,
-        Kind::File => {
-            render_file(
-                client,
-                &vault_name,
-                trimmed,
-                &query,
-                headers.contains_key("hx-request"),
-                &appearance,
-            )
-            .await
+        Kind::Dir if trimmed.is_empty() => render_directory(&ctx, query.entity.as_deref()).await,
+        // A folder is never a page of its own here: the section that owns it shows it.
+        Kind::Dir => {
+            let routes = load_link_routes(&client, &vault_name).await;
+            match routes.folder_route(trimmed) {
+                Some(target) => redirect_response(&with_entity(target, query.entity.as_deref()), is_hx_request),
+                None => missed(&vault_name, trimmed, &headers),
+            }
         }
+        Kind::File => render_file(&ctx, trimmed, &query, &headers).await,
     }
 }
 
-async fn render_directory(
-    client: &McpClient,
-    vault_name: &str,
-    trimmed: &str,
-    appearance: &config::Appearance,
-) -> Response {
-    let index_path = if trimmed.is_empty() {
-        format!("{vault_name}://index.md")
-    } else {
-        format!("{vault_name}://{trimmed}/index.md")
-    };
-    // The index note's own content (read, then rendered) and the nav shell
-    // (vault switcher plus this directory's own entries) are independent:
-    // the nav shell needs only `vault_name`/`trimmed`, never the note's
-    // content, so the two chains run concurrently rather than paying the
-    // content chain's MCP round trips before the nav shell's own begin.
-    let content = async {
-        let raw = read_text(client, index_path).await?;
-        Ok::<_, Box<Response>>(markdown::render(client, vault_name, &raw, 0).await)
-    };
+/// `target` carrying the request's `?entity=` selection, when it had one.
+fn with_entity(mut target: String, entity: Option<&str>) -> String {
+    if let Some(entity) = entity {
+        target.push_str(if target.contains('?') { "&entity=" } else { "?entity=" });
+        target.push_str(&crate::inbox_outbox::encode_query_value(entity));
+    }
+    target
+}
+
+/// A note or folder that reached this route although no section shows it: every link the interface builds goes
+/// through the route table, so this means a link was missed somewhere. Logged, with the page it came from, so the
+/// missed link can be found, and answered as not found rather than shown outside every section.
+fn missed(vault_name: &str, path: &str, headers: &HeaderMap) -> Response {
+    let referer = headers
+        .get(axum::http::header::REFERER)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("none");
+    tracing::warn!(
+        vault = vault_name,
+        path,
+        referer,
+        "a page or folder no section shows was requested through the generic vault route; a link was missed"
+    );
+    not_found()
+}
+
+/// The current directory page's own path, carrying no `?entity=` query
+/// parameter, for the entity switcher's own href composition
+/// ([`shell::build_nav`]'s `entity_base_path`): always trailing-slashed,
+/// matching every other directory link this crate builds (`shell.rs`'s own
+/// `directory_entries`).
+fn directory_entity_base_path(vault_name: &str, trimmed: &str) -> String {
+    crate::urls::VaultUrls::from(vault_name).folder(trimmed)
+}
+
+/// The vault root: the Command Centre Overview dashboard. No other folder is rendered here.
+async fn render_directory(ctx: &ShellContext<'_>, entity: Option<&str>) -> Response {
+    let vault_name = ctx.vault_name;
+    let trimmed = "";
+    let entity_base_path = directory_entity_base_path(vault_name, trimmed);
+    let known_mcp_servers = ctx.clients.names();
     let nav = shell::build_nav(
-        client,
+        ctx.client,
         ActiveScreen::Vault,
         Some(vault_name),
         Some(trimmed),
-        Some(trimmed),
+        entity,
+        Some(&entity_base_path),
+        &known_mcp_servers,
     );
-    let (rendered, mut nav) = tokio::join!(Box::pin(content), Box::pin(nav));
-    let rendered = match rendered {
-        Ok(rendered) => rendered,
-        Err(response) => return *response,
-    };
-    nav.appearance = appearance.clone();
-    html_response(page::render_page(&nav, trimmed, &rendered.html))
+    // The vault root's own discrete Overview dashboard (`crate::routes::overview::render_html`'s own doc comment).
+    let overview = super::overview::render_html(ctx.client, vault_name, entity, ctx.vault_time);
+    let (mut nav, mcp_status, overview_html) =
+        tokio::join!(Box::pin(nav), shell::mcp_status(ctx.clients), Box::pin(overview));
+    nav.appearance = ctx.appearance.clone();
+    nav.sidebar_wide = ctx.sidebar_wide;
+    nav.mcp_status = mcp_status;
+    html_response(page::render_page(&nav, trimmed, &overview_html))
 }
 
-async fn render_file(
-    client: &McpClient,
-    vault_name: &str,
-    relative_path: &str,
-    query: &VaultQuery,
-    is_hx_request: bool,
-    appearance: &config::Appearance,
-) -> Response {
+async fn render_file(ctx: &ShellContext<'_>, relative_path: &str, query: &VaultQuery, headers: &HeaderMap) -> Response {
+    let is_hx_request = headers.contains_key("hx-request");
+    let vault_name = ctx.vault_name;
     let extension = extension_of(relative_path).to_ascii_lowercase();
-    let vault_path = format!("{vault_name}://{relative_path}");
-
-    if query.raw.as_deref() == Some("1") {
-        return match read_text(client, vault_path).await {
-            Ok(content) => raw_response(content),
-            Err(response) => *response,
-        };
+    let Ok(raw) = super::file_response::Raw::try_from(query.raw.as_deref()) else {
+        return super::file_response::malformed_query();
+    };
+    if raw.0 {
+        return super::file_response::stored(ctx.client, vault_name, relative_path, raw).await;
     }
 
     match extension.as_str() {
-        "md" => {
-            // The note's own content (read, then rendered) and the nav
-            // shell are independent: the nav shell needs only
-            // `vault_name`/`relative_path`, never the note's content, so
-            // the two chains run concurrently rather than paying the
-            // content chain's MCP round trips before the nav shell's own
-            // begin.
-            let content = async {
-                let raw = read_text(client, vault_path).await?;
-                Ok::<_, Box<Response>>(markdown::render(client, vault_name, &raw, 0).await)
-            };
-            let nav = file_nav(client, vault_name, relative_path, appearance);
-            let (rendered, nav) = tokio::join!(Box::pin(content), Box::pin(nav));
-            match rendered {
-                Ok(rendered) => html_response(page::render_page(&nav, relative_path, &rendered.html)),
-                Err(response) => *response,
-            }
-        }
+        // A base's view tabs switch it in place, wherever the base is shown: an htmx request gets the view alone.
         "base" if is_hx_request => {
-            match base::render_view(client, vault_name, relative_path, query.view.as_deref()).await {
+            match base::render_view(ctx.client, vault_name, relative_path, query.view.as_deref()).await {
                 Ok(fragment) => html_response(fragment),
-                Err(McpCallError::Unreachable { .. }) => unreachable(),
+                Err(McpCallError::Unreachable { .. } | McpCallError::Refused { .. }) => unreachable(),
             }
         }
-        "base" => {
-            let (fragment, nav) = tokio::join!(
-                Box::pin(base::render_view(
-                    client,
-                    vault_name,
-                    relative_path,
-                    query.view.as_deref()
-                )),
-                Box::pin(file_nav(client, vault_name, relative_path, appearance)),
-            );
-            match fragment {
-                Ok(fragment) => html_response(page::render_page(&nav, relative_path, &fragment)),
-                Err(McpCallError::Unreachable { .. }) => unreachable(),
-            }
-        }
-        "canvas" => render_canvas(client, vault_name, relative_path, appearance).await,
-        "mermaid" => render_standalone_mermaid(client, vault_name, relative_path, appearance).await,
-        _ => render_other_file(client, vault_name, relative_path).await,
+        // A page (a note, a base, a canvas, a diagram) is never shown here: the section that owns it shows it, and a
+        // page no section owns, a folder's managed `index.md` included, means a link was missed somewhere.
+        "md" | "base" | "canvas" | "mermaid" => match route_for_note(ctx.client, vault_name, relative_path).await {
+            Some(target) => redirect_response(&with_entity(target, query.entity.as_deref()), is_hx_request),
+            None => missed(vault_name, relative_path, headers),
+        },
+        _ => super::file_response::stored(ctx.client, vault_name, relative_path, raw).await,
     }
-}
-
-/// Builds the nav shell's [`shell::NavData`](crate::rendering::page::NavData)
-/// for a rendered file: the nav tree section is scoped to the file's own
-/// containing directory ([`shell::directory_scope`]), never the file
-/// itself.
-async fn file_nav(
-    client: &McpClient,
-    vault_name: &str,
-    relative_path: &str,
-    appearance: &config::Appearance,
-) -> crate::rendering::page::NavData {
-    let directory = shell::directory_scope(relative_path, false);
-    let mut nav = shell::build_nav(
-        client,
-        ActiveScreen::Vault,
-        Some(vault_name),
-        Some(relative_path),
-        Some(&directory),
-    )
-    .await;
-    nav.appearance = appearance.clone();
-    nav
-}
-
-/// Any extension not otherwise dispatched (`web-routes.md` §2's dispatch
-/// table, "anything else"): served as the MCP-resolved MIME type, reusing
-/// `fs_attach_file`'s existing detection, never a 404 for a real file that
-/// simply has no dedicated rendering pipeline.
-async fn render_other_file(client: &McpClient, vault_name: &str, relative_path: &str) -> Response {
-    match fetch_attached(client, format!("{vault_name}://{relative_path}")).await {
-        Ok(Attached::Found(response)) => response,
-        Ok(Attached::NotFound) => not_found(),
-        Err(McpCallError::Unreachable { .. }) => unreachable(),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct CanvasReadResult {
-    nodes: Vec<canvas::CanvasNode>,
-    edges: Vec<canvas::CanvasEdge>,
-    #[serde(default)]
-    diagnostics: Vec<crate::rendering::Diagnostic>,
-}
-
-async fn render_canvas(
-    client: &McpClient,
-    vault_name: &str,
-    relative_path: &str,
-    appearance: &config::Appearance,
-) -> Response {
-    let mut args = Map::new();
-    args.insert(
-        "path".to_owned(),
-        Value::String(format!("{vault_name}://{relative_path}")),
-    );
-    let result = match client.call_tool("canvas_read".to_owned(), args).await {
-        Ok(result) => result,
-        Err(McpCallError::Unreachable { .. }) => return unreachable(),
-    };
-    let Ok(parsed) = result.into_typed::<CanvasReadResult>() else {
-        return not_found();
-    };
-    let body = if parsed.diagnostics.is_empty() {
-        canvas::render_svg(&parsed.nodes, &parsed.edges, vault_name)
-    } else {
-        crate::rendering::diagnostics::render_diagnostic_panel(&parsed.diagnostics)
-    };
-    let nav = file_nav(client, vault_name, relative_path, appearance).await;
-    html_response(page::render_page(&nav, relative_path, &body))
-}
-
-async fn render_standalone_mermaid(
-    client: &McpClient,
-    vault_name: &str,
-    relative_path: &str,
-    appearance: &config::Appearance,
-) -> Response {
-    let raw = match read_text(client, format!("{vault_name}://{relative_path}")).await {
-        Ok(raw) => raw,
-        Err(response) => return *response,
-    };
-    let body = markdown::render_mermaid_source(client, &raw).await;
-    let nav = file_nav(client, vault_name, relative_path, appearance).await;
-    html_response(page::render_page(&nav, relative_path, &body))
 }
 
 #[cfg(test)]

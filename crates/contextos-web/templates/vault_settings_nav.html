@@ -1,0 +1,38 @@
+{# The Vault Settings sidebar, shared by the configuration page and every vault management page.
+
+   Configuration panes all render inside the one configuration page and switch client-side, so on that page each is a
+   `data-pane` button. Every vault management category is its own addressable page: a real link, loaded with htmx and
+   pushed to the address bar so a category, a file, or a record can be bookmarked and reached with back and forward.
+   On a management page the configuration panes become links back to the configuration page, naming the pane in the
+   fragment so it opens on the one chosen. #}
+{% macro nav(nav) %}
+<nav class="settings-nav" id="vault-settings-nav" aria-label="Vault settings">
+  <div class="settings-nav-heading">Configuration</div>
+{% for pane in nav.config_panes %}
+  {% if nav.on_configuration_page %}
+  <button type="button"{% if loop.first %} class="active"{% endif %} data-pane="{{ pane.name }}"><span class="ic ic-{{ pane.icon }}" aria-hidden="true"></span> {{ pane.label }}</button>
+  {% else %}
+  <a class="settings-nav-link" href="/{{ nav.vault_name }}/settings/#{{ pane.name }}"><span class="ic ic-{{ pane.icon }}" aria-hidden="true"></span> {{ pane.label }}</a>
+  {% endif %}
+{% endfor %}
+{% if !nav.management.is_empty() %}
+  <div class="settings-nav-heading">Vault management</div>
+  {% for link in nav.management %}
+  <a
+    class="settings-nav-link{% if link.active %} active{% endif %}"
+    href="/{{ nav.vault_name }}/settings/{{ link.slug }}/"
+    hx-get="/{{ nav.vault_name }}/settings/{{ link.slug }}/"
+    hx-target="closest .vault-settings"
+    hx-swap="outerHTML"
+    hx-push-url="true"
+    {% if link.active %}aria-current="page"{% endif %}
+  ><span class="ic ic-{{ link.icon }}" aria-hidden="true"></span><span class="settings-nav-label">{{ link.label }}</span><span class="settings-nav-count">{{ link.count }}</span><span class="visually-hidden"> {{ link.count_noun }}</span></a>
+  {% endfor %}
+{% endif %}
+{% if nav.on_configuration_page %}
+  <button type="button" data-pane="health" class="settings-nav-apart"><span class="ic ic-heart-pulse" aria-hidden="true"></span> Vault health</button>
+{% else %}
+  <a class="settings-nav-link settings-nav-apart" href="/{{ nav.vault_name }}/settings/#health"><span class="ic ic-heart-pulse" aria-hidden="true"></span> Vault health</a>
+{% endif %}
+</nav>
+{% endmacro %}

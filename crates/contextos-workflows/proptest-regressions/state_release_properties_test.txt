@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 032731a070522310ef7d9104f8bb85253bb2cc00c97f1156df9e3cfffc9a07ff # shrinks to ops = [AddJob { slot: 0, release: 1 }, Enable { slot: 0, schedule: true }, Install(0), AddJob { slot: 2, release: 2 }, Enable { slot: 2, schedule: true }]
+cc 3de926593876090b2c8b9c285bd4eaccbb0ba2f869afa2aea106d00724e77939 # shrinks to ops = [Install(1), Install(3), AddJob { slot: 2, release: 1 }, Reactivate(0), Enable { slot: 0, schedule: true, busy: false }, AddJob { slot: 3, release: 1 }, AddSuccessor { slot: 0, of: 2, release: 1 }, EditPredecessor { slot: 3, to: 0 }, Enable { slot: 3, schedule: true, busy: false }]
+cc 711faf8876f94e2cce2727d8876b1d4fb504e6444c9b5ef6104b25fb9fc03cdc # shrinks to ops = [Install(0), AddJob { slot: 1, release: 0 }, Install(2), AddJob { slot: 4, release: 2 }, AddJob { slot: 2, release: 0 }, Enable { slot: 0, schedule: true, busy: false }, Enable { slot: 2, schedule: true, busy: false }, ReturnAll, Install(1), Install(0), Install(0), Install(0), Install(0), ReturnAll]
+cc 9293b1cfdd18b653cb3629619a53d8e93238cf1697032b4f3d8c1b44396e2759 # shrinks to ops = [Retire(2), Install(4), Install(2), AddJob { slot: 0, release: 4 }, AddJob { slot: 3, release: 2 }, Enable { slot: 2, schedule: true, busy: false }, Enable { slot: 2, schedule: true, busy: false }, ReturnAll, Install(3), ReturnAll]
+cc 02a621e747a47769c74f2905a2790bde5fd67948082b8c13781208f5467545d8 # shrinks to ops = [Install(3), Install(4), AddJob { slot: 0, release: 3 }, Enable { slot: 0, schedule: true, busy: false }, AddSuccessor { slot: 1, of: 0, release: 4 }, EditPredecessor { slot: 0, to: 3 }, EditVersion { slot: 0, release: 3 }]

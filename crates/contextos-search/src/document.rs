@@ -39,7 +39,7 @@ impl From<DocumentSource<'_>> for IndexedDocument {
         let title = derive_title(&frontmatter, &headings, value.path);
         let tags = extract_tags(&frontmatter, &body);
         Self {
-            path: relative_display(value.path),
+            path: value.path.portable_relative(),
             title,
             headings,
             body,
@@ -99,15 +99,6 @@ impl IndexedDocument {
     pub const fn content_hash(&self) -> &ContentHash {
         &self.content_hash
     }
-}
-
-pub(crate) fn relative_display(path: &VaultPath) -> String {
-    let components: Vec<String> = path
-        .relative()
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    components.join("/")
 }
 
 fn extract_headings(body: &str) -> Vec<String> {

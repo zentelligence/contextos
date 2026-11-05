@@ -1,0 +1,46 @@
+<section id="signals-feed" class="panel signals-region" aria-labelledby="signals-feed-heading" hx-get="{{ view.refresh_href }}" hx-trigger="sse:reload" hx-target="this" hx-swap="outerHTML">
+  <div class="panel-header">
+    <h2 id="signals-feed-heading">Feed</h2>
+    <form class="signals-filters" method="get" action="{{ view.urls.signals() }}" hx-get="{{ view.urls.signals_region("feed", "") }}" hx-trigger="change" hx-target="#signals-feed" hx-swap="outerHTML">
+{% if let Some(entity) = view.entity %}
+      <input type="hidden" name="entity" value="{{ entity }}">
+{% endif %}
+      <label>Kind
+        <select name="kind">
+          <option value=""{% if view.selected_kind.is_empty() %} selected{% endif %}>All kinds</option>
+{% for kind in view.kinds %}
+          <option value="{{ kind }}"{% if view.selected_kind == *kind %} selected{% endif %}>{{ kind }}</option>
+{% endfor %}
+        </select>
+      </label>
+      <label>Severity
+        <select name="severity">
+          <option value=""{% if view.selected_severity.is_empty() %} selected{% endif %}>All severities</option>
+          <option value="info"{% if view.selected_severity == "info" %} selected{% endif %}>Information</option>
+          <option value="warning"{% if view.selected_severity == "warning" %} selected{% endif %}>Warning</option>
+          <option value="error"{% if view.selected_severity == "error" %} selected{% endif %}>Error</option>
+        </select>
+      </label>
+      <noscript><button class="btn small" type="submit">Filter</button></noscript>
+    </form>
+  </div>
+  <ul class="signals-list"{% if view.page == 1 %} sse-swap="signal" hx-swap="afterbegin" data-filter-kind="{{ view.selected_kind }}" data-filter-severity="{{ view.selected_severity }}" data-filter-entity="{% if let Some(entity) = view.entity %}{{ entity }}{% endif %}" hx-on:htmx:sse-before-message="const t=document.createElement('template');t.innerHTML=event.detail.data;const li=t.content.firstElementChild;const d=this.dataset;if(!li||(d.filterKind?li.dataset.kind!==d.filterKind:false)||(d.filterSeverity?li.dataset.severity!==d.filterSeverity:false)||(d.filterEntity?li.dataset.entity!==d.filterEntity:false)||(li.id?document.getElementById(li.id)!==null:false))event.preventDefault()" hx-on::after-swap="const e=this.querySelectorAll('li.signal-event');for(let i=e.length-1;i>=100;i--)e[i].remove()"{% endif %}>
+{% for line in view.lines %}
+    {% include "signal_event.html" %}
+{% endfor %}
+    <li class="signals-empty hint">No events{% if view.filtered %} match these filters{% endif %}.</li>
+  </ul>
+{% if view.has_older || view.page > 1 %}
+  <p class="signals-paging">
+{% if view.page > 1 %}
+    <a class="btn small" href="{{ view.urls.signals_with(view.newer_query) }}" hx-get="{{ view.urls.signals_region("feed", view.newer_query) }}" hx-target="#signals-feed" hx-swap="outerHTML">Newer</a>
+{% endif %}
+{% if view.has_older %}
+    <a class="btn small" href="{{ view.urls.signals_with(view.older_query) }}" hx-get="{{ view.urls.signals_region("feed", view.older_query) }}" hx-target="#signals-feed" hx-swap="outerHTML">Older</a>
+{% endif %}
+  </p>
+{% endif %}
+{% if view.skipped > 0 %}
+  <p class="hint signals-skipped">{{ view.skipped }} event note{% if view.skipped != 1 %}s{% endif %} could not be read and {% if view.skipped != 1 %}were{% else %}was{% endif %} left out.</p>
+{% endif %}
+</section>

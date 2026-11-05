@@ -6,7 +6,8 @@
 //! from `tool_contract.rs` to keep both files under the project's
 //! file-size limit.
 
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use serde_json::{Map, json};
@@ -36,6 +37,27 @@ fn catalogue_exposes_every_built_in_tool_this_binary_ships() {
     ]);
     expected.sort_unstable();
     assert_eq!(names, expected);
+}
+
+/// Package and workflow management belongs to `contextos-web`, which writes the vault's package store itself. The MCP
+/// server advertises no tool for it, so no client can reach the store through the catalogue.
+#[test]
+fn no_advertised_tool_is_a_package_or_workflow_tool() {
+    let advertised = ContextOsServer::catalogue()
+        .list_all()
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+
+    assert!(!advertised.is_empty(), "the catalogue advertised nothing to check");
+    let offending = advertised
+        .iter()
+        .filter(|name| name.starts_with("packages") || name.starts_with("workflows"))
+        .collect::<Vec<_>>();
+    assert!(
+        offending.is_empty(),
+        "package or workflow tools are advertised: {offending:?}"
+    );
 }
 
 /// Every advertised schema (input and output) across every tool this
@@ -168,7 +190,7 @@ fn scan_value(tool: &str, which: &str, value: &serde_json::Value, path: &mut Vec
 fn effective_catalogue_omits_ephemeris_tools_unless_astro_is_enabled()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
 
     let disabled_names: Vec<String> = ContextOsServer::try_from(config.clone())?
         .effective_catalogue()
@@ -203,17 +225,22 @@ fn effective_catalogue_omits_ephemeris_tools_unless_astro_is_enabled()
     Ok(())
 }
 
+/// Changing this list changes the public tool surface. The `ContextOS` plugin's `mcp-tools` skill must change in the same
+/// delivery; `.claude/scripts/check-plugin-skill.sh` fails until it names every tool here.
 fn core_catalogue_tool_names() -> Vec<&'static str> {
     vec![
+        "agent_state_change",
         "base_apply",
         "base_create",
         "base_query",
         "base_read",
+        "base_record_create",
         "canvas_apply",
         "canvas_create",
         "canvas_read",
         "doctor",
         "doctor_resolve",
+        "frontmatter_link",
         "frontmatter_read",
         "frontmatter_update",
         "fs_attach_file",
@@ -239,6 +266,8 @@ fn core_catalogue_tool_names() -> Vec<&'static str> {
         "mermaid_render",
         "mermaid_validate",
         "note_create",
+        "note_update",
+        "query_blended",
         "query_graph",
         "query_index_rebuild",
         "query_index_status",
@@ -257,7 +286,7 @@ async fn attach_file_embeds_text_and_base64_binary_resources() -> Result<(), Box
     std::fs::write(vault.path().join("image.png"), [0_u8, 1, 2, 3])?;
     let oversized = std::fs::File::create(vault.path().join("oversized.bin"))?;
     oversized.set_len(10 * 1024 * 1024 + 1)?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let text = call_tool(
         server.clone(),
@@ -315,15 +344,34 @@ async fn attach_file_embeds_text_and_base64_binary_resources() -> Result<(), Box
     Ok(())
 }
 
+/// Hosts such as Cowork accept only flat object schemas, and rmcp no longer
+/// refuses an output schema whose root is not an object, so the catalogue
+/// itself must hold every advertised output schema to an object root.
 #[test]
 fn every_delivered_tool_has_an_object_schema_and_description() {
+    let mut output_schemas = 0;
     for tool in ContextOsServer::catalogue().list_all() {
         assert_eq!(
             tool.input_schema.get("type").and_then(|value| value.as_str()),
-            Some("object")
+            Some("object"),
+            "{} input schema",
+            tool.name
         );
+        if let Some(output_schema) = &tool.output_schema {
+            output_schemas += 1;
+            assert_eq!(
+                output_schema.get("type").and_then(|value| value.as_str()),
+                Some("object"),
+                "{} output schema",
+                tool.name
+            );
+        }
         assert!(tool.description.is_some());
     }
+    assert!(
+        output_schemas > 0,
+        "the catalogue advertised no output schemas to check"
+    );
 }
 
 /// Regression for a Cowork failure observed against `fs_search_files`:

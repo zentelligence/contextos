@@ -6,6 +6,7 @@
 //! `tool_contract.rs` to keep both files under the project's file-size
 //! limit.
 
+mod support;
 use contextos_mcp::{Config, ContextOsServer, Transport};
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
@@ -15,7 +16,7 @@ use serde_json::{Map, json};
 async fn vault_info_reports_effective_health_without_exposing_secrets()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.server.transports = vec![Transport::Stdio, Transport::Http];
     config.server.http.token = "must-not-appear".to_owned();
     let server = ContextOsServer::try_from(config)?;
@@ -33,10 +34,6 @@ async fn vault_info_reports_effective_health_without_exposing_secrets()
 
     assert_eq!(result.is_error, Some(false));
     assert_eq!(content.get("version"), Some(&json!(env!("CARGO_PKG_VERSION"))));
-    assert_eq!(
-        content.get("protocol_version"),
-        Some(&json!(rmcp::model::ProtocolVersion::LATEST.as_str()))
-    );
     assert_eq!(content.get("transports"), Some(&json!(["stdio", "http"])));
     assert_eq!(reported_vault.get("path"), Some(&json!(vault.path())));
     assert_eq!(reported_vault.get("managed"), Some(&json!(true)));
@@ -80,6 +77,7 @@ async fn vault_info_reports_effective_health_without_exposing_secrets()
         indexes.get("semantic"),
         Some(&json!({
             "enabled": false,
+            "health": "disabled",
             "documents": 0,
             "chunks": 0,
             "stale_estimate": 0,
@@ -87,6 +85,68 @@ async fn vault_info_reports_effective_health_without_exposing_secrets()
     );
     assert_config_summary_fields(reported_vault);
     assert!(!serde_json::to_string(content)?.contains("must-not-appear"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn vault_info_reports_an_embedding_key_written_in_the_file_as_redacted()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].search.embedding.api_key = "sk-embedding-must-not-appear".to_owned();
+    let server = ContextOsServer::try_from(config)?;
+
+    let result = call_tool(server, "vault_info", Map::new()).await?;
+    let content = result
+        .structured_content
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("vault_info omitted structured content"))?;
+    let embedding = content
+        .pointer("/vaults/0/config_summary/search/embedding")
+        .ok_or_else(|| std::io::Error::other("vault_info omitted the embedding summary"))?;
+
+    assert_eq!(embedding.get("api_key"), Some(&json!("<redacted>")));
+    assert_eq!(embedding.get("api_key_env"), Some(&json!("")));
+    assert!(!serde_json::to_string(content)?.contains("sk-embedding-must-not-appear"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn vault_info_reports_a_configured_link_exclusion_list_in_place_of_the_default()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].links.exclude = vec!["scratch".to_owned(), "memory/drafts".to_owned()];
+    let server = ContextOsServer::try_from(config)?;
+
+    let result = call_tool(server, "vault_info", Map::new()).await?;
+    let content = result
+        .structured_content
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("vault_info omitted structured content"))?;
+
+    assert_eq!(
+        content.pointer("/vaults/0/config_summary/links/exclude"),
+        Some(&json!(["scratch", "memory/drafts"]))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn vault_info_omits_the_embedding_key_when_none_is_written_in_the_file()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    let server = ContextOsServer::try_from(config)?;
+
+    let result = call_tool(server, "vault_info", Map::new()).await?;
+    let embedding = result
+        .structured_content
+        .as_ref()
+        .and_then(|content| content.pointer("/vaults/0/config_summary/search/embedding"))
+        .ok_or_else(|| std::io::Error::other("vault_info omitted the embedding summary"))?;
+
+    assert_eq!(embedding.get("api_key"), None);
     Ok(())
 }
 
@@ -100,7 +160,13 @@ fn assert_config_summary_fields(reported_vault: &serde_json::Value) {
             .get("config_summary")
             .and_then(|summary| summary.get("git"))
             .and_then(|git| git.get("restore_exclude")),
-        Some(&json!(["memory/log", "memory/sessions", "memory/coding"]))
+        Some(&json!([
+            "memory/log",
+            "memory/sessions",
+            "memory/coding",
+            "memory/jobs",
+            "memory/events"
+        ]))
     );
     assert_eq!(
         reported_vault
@@ -112,8 +178,14 @@ fn assert_config_summary_fields(reported_vault: &serde_json::Value) {
             ".git",
             ".obsidian",
             "memory/log",
-            "memory/sessions"
+            "memory/sessions",
+            "memory/jobs",
+            "memory/events"
         ]))
+    );
+    assert_eq!(
+        reported_vault.pointer("/config_summary/links/exclude"),
+        Some(&json!(["templates", "memory/events", "memory/jobs", ".contextos"]))
     );
     assert_eq!(
         reported_vault
@@ -129,7 +201,7 @@ fn assert_config_summary_fields(reported_vault: &serde_json::Value) {
             .get("config_summary")
             .and_then(|summary| summary.get("search"))
             .and_then(|search| search.get("graph_backend")),
-        Some(&json!("fjall"))
+        Some(&json!("sqlite"))
     );
 }
 
@@ -141,7 +213,7 @@ async fn vault_info_reports_resource_link_threshold_and_eligible_file_count()
     std::fs::write(vault.path().join("b.md"), "b")?;
     std::fs::create_dir(vault.path().join(".git"))?;
     std::fs::write(vault.path().join(".git/config"), "ignored, matches default hidden")?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.server.resource_link_threshold_kb = 7;
     // `resource_eligible_files` now counts what
     // `resources_list_include` enumerates, not every hidden-excluded file;
@@ -171,7 +243,10 @@ async fn vault_info_reports_resource_link_threshold_and_eligible_file_count()
 async fn vault_info_and_allowed_directories_report_the_configured_vault_name()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let source = format!("[[vault]]\npath = {:?}\nname = \"mine\"\n", vault.path());
+    let source = format!(
+        "[[vault]]\npath = {:?}\nname = \"mine\"\nstate_directory = \".contextos\"\n",
+        vault.path()
+    );
     let server = ContextOsServer::try_from(Config::try_from(source.as_str())?)?;
 
     let info = call_tool(server.clone(), "vault_info", Map::new()).await?;
@@ -215,7 +290,8 @@ async fn a_bare_vault_name_selects_the_right_vault_through_the_real_tool_handler
     let mine = tempfile::Builder::new().prefix("mine").tempdir()?;
     let family = tempfile::Builder::new().prefix("family").tempdir()?;
     let source = format!(
-        "[[vault]]\npath = {:?}\nname = \"mine\"\n[[vault]]\npath = {:?}\nname = \"family\"\n",
+        "[[vault]]\npath = {:?}\nname = \"mine\"\nstate_directory = \".contextos\"\n\
+         [[vault]]\npath = {:?}\nname = \"family\"\nstate_directory = \".contextos\"\n",
         mine.path(),
         family.path()
     );
@@ -301,7 +377,7 @@ async fn a_bare_vault_name_selects_the_right_vault_through_the_real_tool_handler
         .and_then(|value| value.get("outcomes"))
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| std::io::Error::other("doctor_resolve omitted outcomes"))?;
-    assert!(!outcomes.is_empty());
+    assert!(!outcomes.is_empty(), "`outcomes` should not be empty");
     let mine_resolved = dunce::canonicalize(mine.path())?.display().to_string();
     assert!(
         outcomes

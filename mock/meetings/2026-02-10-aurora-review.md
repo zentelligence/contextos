@@ -10,7 +10,9 @@ tags:
 
 ## Review Outcomes
 
-The aurora review outcomes: Milestone 1 signed off, the single point of failure fix moves to next sprint, and Chloe will draft the vendor risk follow-up.
+The aurora review outcomes: Milestone 1 signed off, the single point of
+failure fix moves to next sprint, and Chloe will draft the vendor risk
+follow-up.
 
 ## Attendees
 

@@ -1,0 +1,24 @@
+<div class="jobs-screen" id="packages-screen">
+  <p class="hint"><a href="{{ back.href }}">{{ back.label }}</a> · {{ rows.len() }} installed</p>
+{% if rows.is_empty() && unreadable.is_empty() %}
+  <section class="panel"><p class="hint">No packages are installed.</p></section>
+{% else %}
+  <section class="panel">
+    <table class="packages-table">
+      <thead><tr><th scope="col">Package</th><th scope="col">Version</th><th scope="col">Exports</th><th scope="col">Required by</th></tr></thead>
+      <tbody>
+{% for row in rows %}        <tr><th scope="row">{{ row.name }}</th><td>{{ row.version }}</td><td>{% if row.exports.is_empty() %}<span class="hint">none</span>{% else %}{{ row.exports.join(", ") }}{% endif %}</td><td>{% if row.required_by.is_empty() %}<span class="hint">nothing installed</span>{% else %}{{ row.required_by.join(", ") }}{% endif %}</td></tr>
+{% endfor %}      </tbody>
+    </table>
+  </section>
+{% endif %}
+{% if !unreadable.is_empty() %}
+  <section class="panel">
+    <header class="panel-header"><h2>Releases that cannot be read</h2></header>
+    <ul>
+{% for release in unreadable %}      <li><span class="badge attention">unreadable</span> {{ release.name }} {{ release.version }}: {{ release.reason }}</li>
+{% endfor %}    </ul>
+  </section>
+{% endif %}
+{{ libraries|safe }}
+</div>

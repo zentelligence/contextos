@@ -6,12 +6,12 @@
 //! feature, [`crate::fastembed_embedder`]). This module also owns
 //! [`EmbeddingProviderConfig`], a vault-agnostic mirror of
 //! `contextos_mcp::config::EmbeddingConfig`'s `provider`, `model`,
-//! `endpoint`, and `api_key_env` fields, and the `TryFrom` conversion that
+//! `endpoint`, `api_key`, and `api_key_env` fields, and the `TryFrom` conversion that
 //! turns it into a running provider. The conversion lives here (rather than
 //! in `contextos-mcp`) because only this crate sees both the config
 //! shape and the concrete provider types; `contextos-mcp` never depends
 //! on a lower crate's absence, and library crates never depend on
-//! `contextos-mcp` (architecture.md dependency direction).
+//! `contextos-mcp`.
 //!
 //! Every method here is synchronous, matching every other capability trait
 //! in this crate ([`crate::IndexesText`], [`crate::LinkGraph`]): this crate
@@ -51,8 +51,8 @@ pub trait EmbedsText: Send + Sync {
     /// once known.
     ///
     /// A provider whose model exposes its output dimension without
-    /// inference (for example the local ONNX provider, which the addendum
-    /// pins to a single known model) reports it immediately after
+    /// inference (for example the local ONNX provider, which is pinned
+    /// to a single known model) reports it immediately after
     /// construction. A provider that cannot know its dimension from
     /// configuration alone (an arbitrary openai-compatible endpoint)
     /// reports `None` until its first successful [`EmbedsText::embed`] call
@@ -62,7 +62,7 @@ pub trait EmbedsText: Send + Sync {
 
 /// Vault-agnostic embedding provider selection configuration, mirroring
 /// `contextos_mcp::config::EmbeddingConfig` (`provider`, `model`,
-/// `endpoint`, `api_key_env`) so provider selection stays purely
+/// `endpoint`, `api_key` or `api_key_env`) so provider selection stays purely
 /// configuration-driven: swapping `provider` between `local` and
 /// `openai-compatible` in the vault's TOML changes which variant the server
 /// constructs, with no code change.
@@ -72,7 +72,7 @@ pub enum EmbeddingProviderConfig {
     /// directory (`[vault.search.embedding] provider = "local"`).
     Local {
         /// Directory holding the model's ONNX and tokenizer files. Always
-        /// supplied by the caller (platform app-data per the addendum);
+        /// supplied by the caller (platform app-data);
         /// never derived from the current working directory or the
         /// operator's home directory.
         model_directory: PathBuf,
@@ -84,10 +84,9 @@ pub enum EmbeddingProviderConfig {
         endpoint: String,
         /// The model name sent in each request body.
         model: String,
-        /// Name of the environment variable holding the API key; never the
-        /// key value itself (security.md: configuration stores variable
-        /// names, not secrets).
-        api_key_env: String,
+        /// Where the API key comes from: the key itself, or the environment
+        /// variable that holds it.
+        api_key: crate::ApiKeySource,
     },
 }
 
@@ -102,21 +101,23 @@ impl TryFrom<EmbeddingProviderConfig> for Box<dyn EmbedsText> {
     /// selected in a build compiled without the `semantic-local` feature,
     /// [`SearchError::EmbeddingModelUnavailable`] when the local model
     /// directory is missing or invalid, and
+    /// [`SearchError::EmbeddingConfig`] or
     /// [`SearchError::EmbeddingApiKeyMissing`] when `OpenAiCompatible` is
-    /// selected and its named environment variable is absent.
+    /// selected with an empty key or a named environment variable that is
+    /// absent.
     fn try_from(value: EmbeddingProviderConfig) -> Result<Self, Self::Error> {
         match value {
             EmbeddingProviderConfig::Local { model_directory } => local_provider(model_directory),
             EmbeddingProviderConfig::OpenAiCompatible {
                 endpoint,
                 model,
-                api_key_env,
+                api_key,
             } => {
                 let provider = crate::openai_embedder::OpenAiCompatible::try_from(
                     crate::openai_embedder::OpenAiCompatibleConfig {
                         endpoint,
                         model,
-                        api_key_env,
+                        api_key,
                     },
                 )?;
                 Ok(Box::new(provider))

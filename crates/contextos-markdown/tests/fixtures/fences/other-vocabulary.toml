@@ -1,0 +1,20 @@
+# A client vault whose copy of the standard is older: it knows details and card, and has no warning, grid, or
+# page-break fence.
+schema = 1
+standard = "markdown-fence-conventions 2025-01"
+
+[fences.details]
+role = "callout"
+tone = "neutral"
+
+[fences.note]
+role = "callout"
+
+[fences.card]
+role = "layout"
+
+[attributes.title]
+type = "text"
+
+[attributes.collapse]
+type = "boolean"

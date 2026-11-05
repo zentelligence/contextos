@@ -27,7 +27,17 @@ fn fs_read_text_file_and_fs_read_multiple_files_advertise_a_flat_fallible_output
     assert_flat_fallible_output_schema(
         &catalogue,
         "fs_read_text_file",
-        &["content", "content_hash", "line_count", "truncated"],
+        &[
+            "content",
+            "content_hash",
+            "length",
+            "line_count",
+            "next_offset",
+            "offset",
+            "size",
+            "truncated",
+            "version",
+        ],
     )?;
     assert_flat_fallible_output_schema(&catalogue, "fs_read_multiple_files", &["files"])?;
     Ok(())
@@ -63,11 +73,19 @@ fn every_remaining_tool_advertises_a_flat_fallible_output_schema() -> Result<(),
     let catalogue = ContextOsServer::catalogue();
     let expected: &[(&str, &[&str])] = &[
         // query.rs
-        ("query_text", &["hits", "index_freshness"]),
-        ("query_semantic", &["hits"]),
-        ("query_graph", &["nodes", "edges"]),
-        ("query_index_status", &["state_directory", "text", "graph", "semantic"]),
-        ("query_index_rebuild", &["text", "graph", "semantic"]),
+        ("query_text", &["hits", "total", "offset", "index_freshness"]),
+        ("query_semantic", &["hits", "total", "offset", "total_capped"]),
+        // query_blended.rs
+        (
+            "query_blended",
+            &["hits", "total", "offset", "total_capped", "warnings", "index_freshness"],
+        ),
+        ("query_graph", &["nodes", "edges", "links", "notes", "total", "offset"]),
+        (
+            "query_index_status",
+            &["state_directory", "failure", "text", "graph", "semantic"],
+        ),
+        ("query_index_rebuild", &["text", "graph", "semantic", "recovered"]),
         // doctor.rs
         ("doctor", &["checks", "has_failures"]),
         ("doctor_resolve", &["outcomes", "report"]),

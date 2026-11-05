@@ -9,7 +9,8 @@ tags:
 
 ## House Style
 
-Use Australian English spelling and the Oxford comma. Keep the style guide short: one screen per topic.
+Use Australian English spelling and the Oxford comma. Keep the style guide
+short: one screen per topic.
 
 ## Headings
 

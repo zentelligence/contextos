@@ -3,7 +3,7 @@
 # This file shows every currently supported configuration field.
 # Environment overrides:
 # - CONTEXTOS_MCP_CONFIG: path to this file
-# - CONTEXTOS_MCP_TOKEN: overrides [server.http].token
+# - CONTEXTOS_MCP_TOKEN: overrides [server.http].token or token_env
 # - CONTEXTOS_MCP_LOG_LEVEL: overrides [server].log_level
 
 [server]
@@ -11,12 +11,31 @@
 transports = ["stdio"]
 # Allowed values: "error", "warn", "info", "debug", "trace"
 log_level = "info"
-# Empty means log to stderr only.
+# Empty means log to stderr only. Every contextos process loading this file
+# shares the one log file, which is safe: rotation is coordinated between them.
+# Where a background service would lose stderr, `contextos config` offers a
+# file: %LOCALAPPDATA%\contextos\logs\contextos.log on Windows,
+# ~/Library/Logs/contextos/contextos.log on macOS.
 log_file = ""
+# Rotates log_file once it reaches this size, in megabytes. Meaningless
+# (and rejected) while log_file is empty.
+# log_max_size_mb = 50
+# Rotates log_file on every UTC calendar-day boundary. Combinable with
+# log_max_size_mb: whichever condition is reached first triggers a rotation.
+# log_rotate_daily = false
+# Deletes a rotated log file once it is older than this many days.
+# log_retention_days = 14
+# Keeps only the N most recently rotated log files, deleting older ones.
+# log_retention_files = 5
 # Size (in KB) at or above which a text-reading tool result attaches a
 # resource_link alongside a bounded inline preview, instead of returning the
 # full content inline.
 resource_link_threshold_kb = 5
+# The IANA time zone every time written into a vault is shown in (note
+# created/updated stamps, operation log days, and the dates contextos-web gives
+# new notes and journal entries), daylight saving included. Omit to use the
+# host's own zone. Never a fixed offset such as "+10:00".
+# timezone = "Australia/Sydney"
 # Registers the ephemeris_* tools (moon phase, solar events,
 # Wheel-of-the-Year, personal-year period) into the advertised MCP tool
 # catalogue. Off by default: a niche, personal-practice
@@ -28,10 +47,13 @@ astro = false
 
 [server.http]
 # Only used when "http" transport is enabled.
-bind = "127.0.0.1:7331"
-# Required when binding on a non-loopback address.
+bind = "127.0.0.1:3737"
+# Required when binding on a non-loopback address: write the token itself
+# in token, or name an environment variable holding it in token_env. Set one
+# or the other, never both.
 token = ""
-max_body_kb = 2048
+token_env = ""
+max_body_kb = 14336
 
 [[vault]]
 # Absolute path to a vault root.
@@ -44,7 +66,9 @@ path = "/absolute/path/to/your/vault"
 # and unique across every configured vault; an invalid or colliding
 # name, explicit or defaulted, is a hard error at startup.
 name = "mine"
-# If false, mutating tools reject writes for this vault.
+# If false, the vault is filesystem-only: the tools still read and write its
+# files, but managed index.md maintenance, the operation log, Git recovery, and
+# search are all off for it.
 managed = true
 
 # Path patterns hidden from every enumeration surface for this vault
@@ -92,6 +116,8 @@ exclude = [
   ".obsidian",
   "memory/log",
   "memory/sessions",
+  "memory/jobs",
+  "memory/events",
 ]
 
 [vault.oplog]
@@ -105,18 +131,27 @@ author_name = "ContextOS MCP"
 author_email = "mcp@contextos.local"
 destructive_delete = false
 # Portable relative paths only.
-restore_exclude = ["memory/log", "memory/sessions"]
+restore_exclude = ["memory/log", "memory/sessions", "memory/coding", "memory/jobs", "memory/events"]
+
+[vault.events]
+# Days an info event under memory/events is kept before the daily sweep deletes
+# it. Zero is refused. An event kind's own retention_days overrides this.
+retention_days = 90
+# Keep warning and error events while they are still open (nothing has cleared
+# them); once cleared they age out by the same window as info events. When false
+# they age out by the window whether open or not.
+keep_attention = true
 
 [vault.search]
 text = true
 graph = true
-# The link graph's persistence backend. Allowed
-# values: "serde" (a single JSON file, simplest, no cross-process
-# concurrency guarantee, for a small, starter, or experimental vault),
-# "fjall" (an embedded KV store, single-process-exclusive, fastest
-# for the common case), "sqlite" (WAL mode, tolerates more than one
-# contextos process against the same vault at once, for example Claude
-# Cowork's general connector instance plus a per-task instance).
+# The link graph's persistence backend. Allowed values: "sqlite" (the
+# default; WAL mode, tolerates more than one contextos process against
+# the same vault at once, for example Claude Cowork's general connector
+# instance plus a per-task instance), "fjall" (an embedded KV store,
+# single-process-exclusive, fastest when only one process ever opens the
+# vault), "serde" (a single JSON file, simplest, no cross-process
+# concurrency guarantee, for a small, starter, or experimental vault).
 graph_backend = "sqlite"
 # Semantic indexing is expensive and not always needed. Disable it to save time
 # and disk space if you don't need semantic search.
@@ -130,6 +165,8 @@ exclude = [
   ".obsidian",
   "memory/log",
   "memory/sessions",
+  "memory/jobs",
+  "memory/events",
 ]
 # Default budget, in seconds, for query_index_rebuild's semantic phase when a
 # call omits budget_seconds. A per-call budget_seconds always overrides this.
@@ -144,8 +181,10 @@ provider = "local"
 model = "sentence-transformers/all-MiniLM-L6-v2"
 # Used by openai-compatible providers.
 endpoint = ""
-# Name of the environment variable containing an API key,
-# used by openai-compatible providers.
+# The API key used by openai-compatible providers: write the key itself
+# in api_key, or name an environment variable holding it in api_key_env.
+# Set one or the other, never both.
+api_key = ""
 api_key_env = ""
 # Local provider model files. Run `contextos model download` to fetch the
 # default model into this directory. It can point at the exact model
@@ -174,5 +213,61 @@ semantic = true
 provider = "openai-compatible"
 model = "text-embedding-3-small"
 endpoint = "https://api.openai.com/v1/embeddings"
+# Or write the key itself: api_key = "sk-..."
 api_key_env = "OPENAI_API_KEY"
 # model_directory is only used by provider = "local".
+
+# Agent host projection: keeps Claude Code's and Codex's user-level agent and
+# skill folders in step with every vault's registry/agents/ and
+# registry/skills/ definitions. The first [[vault]] above that defines a name
+# wins when several do.
+#
+# With no [projection] section, a configuration file that exists at the
+# platform default location (~/.config/contextos/config.toml) and lists its own
+# vaults projects with the defaults shown here. With no file there, or when
+# vaults come from --vault, nothing is projected. A configuration named by
+# --config or CONTEXTOS_MCP_CONFIG does not project unless it sets
+# enabled = true. An explicit enabled always wins. Any unknown key is a
+# configuration error.
+#
+# An agents or skills folder that is itself a symbolic link stops the server
+# starting; point it at a real folder, or set enabled = false here or in the
+# host's table.
+[projection]
+enabled = true
+
+# Claude Code. Every path must be absolute after "~" is expanded from the home
+# directory, and must lie outside every vault root.
+[projection.claude]
+enabled = true
+agents = "~/.claude/agents"
+skills = "~/.claude/skills"
+instructions = "~/.claude/CLAUDE.md"
+# The name ContextOS is registered under in Claude Code. A read-only agent is
+# allowed every non-mutating ContextOS tool as mcp__<mcp_server>__<tool>.
+mcp_server = "contextos"
+
+# The model each tier of agent definition resolves to.
+[projection.claude.tiers]
+fast = "haiku"
+balanced = "sonnet"
+deep = "opus"
+
+# Codex. A read-only agent is only partly enforced: Codex switches off shell,
+# apps, and plugins, while MCP tools stay available.
+[projection.codex]
+enabled = true
+agents = "~/.codex/agents"
+skills = "~/.agents/skills"
+instructions = "~/.codex/AGENTS.md"
+
+# Each Codex tier takes an optional model (left out, Codex uses its own default)
+# and a reasoning effort: minimal, low, medium, high, xhigh, or max.
+[projection.codex.tiers.fast]
+effort = "low"
+
+[projection.codex.tiers.balanced]
+effort = "medium"
+
+[projection.codex.tiers.deep]
+effort = "high"

@@ -263,7 +263,7 @@ fn write_document(path: &Path, document: &Map<String, Value>) -> Result<(), Host
     })?;
     write_file_atomically(path, &rendered).map_err(|source| HostRegistrationError::Write {
         path: path.to_path_buf(),
-        source,
+        source: Box::new(source),
     })
 }
 
@@ -332,8 +332,10 @@ pub enum HostRegistrationError {
     #[error("could not write {}: {source}", path.display())]
     Write {
         path: PathBuf,
+        // Boxed because a `PathBuf` is wider on Windows, which takes this variant, and `InterviewError` holding it,
+        // past `clippy::result_large_err` there and nowhere else.
         #[source]
-        source: ConfigIoError,
+        source: Box<ConfigIoError>,
     },
     #[error(
         "wrote {} but the read-back check found unexpected content (expected {expected}, found {found})",

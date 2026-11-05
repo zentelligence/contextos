@@ -1,0 +1,20 @@
+<section class="settings-section overview-panel" hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-swap="outerHTML">
+  <div class="tasks-dashboard-header">
+    <h2><span class="ic ic-inbox" aria-hidden="true"></span> Inputs</h2>
+    <span class="hint">{{ rows.len() }} source{% if rows.len() != 1 %}s{% endif %}</span>
+  </div>
+  <ul class="input-rows">
+  {% for row in rows %}
+    <li><a class="input-row" href="{{ row.href }}">
+      <span class="ic ic-{{ row.icon }}" aria-hidden="true"></span>
+      <span class="input-row-label">{{ row.label }}</span>
+      <span class="input-row-meta">{{ row.meta }}</span>
+      <span class="input-dot input-dot-{{ row.state }}" aria-label="{{ row.state }}"></span>
+    </a></li>
+  {% endfor %}
+  </ul>
+{% if incomplete %}
+  <p class="hint">Some sources could not be read, so this list may be incomplete.</p>
+{% endif %}
+  <p class="hint"><a href="{{ signals_href }}">All signals</a></p>
+</section>

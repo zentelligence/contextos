@@ -5,8 +5,8 @@ use std::path::{Component, Path};
 use std::sync::{Arc, Mutex};
 
 use contextos_core::{
-    AppendMutation, AppendsVault, LogsOperations, OpKind, OperationEvent, OperationWarning, Origin, VaultPath,
-    VaultPathInput, VaultRoot, VaultRootId, VaultSet,
+    AppendMutation, AppendsVault, LogsOperations, OpKind, OperationEvent, OperationWarning, Origin, RoutedEvents,
+    RoutesOperations, VaultPath, VaultPathInput, VaultRoot, VaultRootId, VaultSet,
 };
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -29,6 +29,10 @@ pub struct OperationLog<A> {
     relative_directory: String,
     appender: A,
     pending: Arc<Mutex<VecDeque<AppendMutation>>>,
+    /// Events for entries already written but not yet handed to a caller. An entry is written before the entries
+    /// behind it, so a later failure must not lose the events of those that succeeded: they wait here and go out with
+    /// the next call that can deliver them.
+    written: Arc<Mutex<Vec<OperationEvent>>>,
 }
 
 /// Caller-authored operation-log content with trusted timestamp and paths.
@@ -37,6 +41,8 @@ pub struct ManualLogInput {
     pub entry: String,
     pub files: Vec<VaultPath>,
     pub at: OffsetDateTime,
+    /// The tool that asked for the entry. The write is attributed to it, so version history names the tool.
+    pub requested_by: String,
 }
 
 impl<A> TryFrom<OperationLogConfig<A>> for OperationLog<A>
@@ -72,6 +78,7 @@ where
             relative_directory: value.relative_directory,
             appender: value.appender,
             pending: Arc::new(Mutex::new(VecDeque::new())),
+            written: Arc::new(Mutex::new(Vec::new())),
         })
     }
 }
@@ -99,33 +106,87 @@ where
             Origin::Internal(_) => return Ok(Vec::new()),
         };
         let operation = OperationName::from(event.kind);
-        self.append_record(event.at, &origin, <&str>::from(&operation), &event.summary, &files)
+        self.append_record(
+            event.at,
+            &origin,
+            <&str>::from(&operation),
+            &event.summary,
+            &files,
+            Origin::Internal("oplog".to_owned()),
+        )
     }
 
-    /// Appends one explicit caller-authored log entry with `manual` origin.
+    /// Appends one explicit caller-authored log entry with `manual` origin, and routes every write it made (the
+    /// entry, and any buffered entries recovered first) through `router`.
     ///
     /// # Errors
     ///
     /// Returns a typed validation, path, append, or retry-buffer error.
-    pub fn append_manual(&self, input: &ManualLogInput) -> Result<Vec<OperationEvent>, OperationLogError<A::Error>> {
+    pub fn append_manual(
+        &self,
+        input: &ManualLogInput,
+        router: &dyn RoutesOperations,
+    ) -> Result<RoutedEvents, OperationLogError<A::Error>> {
         if input.entry.trim().is_empty() {
             return Err(OperationLogError::EmptyManualEntry);
         }
         if input.files.iter().any(|path| path.root_id() != self.root_id) {
             return Err(OperationLogError::WrongRoot);
         }
-        self.append_record(input.at, "manual", "log", &input.entry, &input.files)
+        let appended = self.append_record(
+            input.at,
+            "manual",
+            "log",
+            &input.entry,
+            &input.files,
+            Origin::Internal(input.requested_by.clone()),
+        );
+        self.route_written(appended, router)
     }
 
-    /// Retries every buffered append in original order without creating a new record.
+    /// Retries every buffered append in original order without creating a new record, and routes every write it
+    /// recovered through `router`.
     ///
     /// # Errors
     ///
     /// Returns a typed append or retry-buffer error and leaves the failing and
     /// subsequent records buffered for another recovery attempt.
-    pub fn flush(&self) -> Result<Vec<OperationEvent>, OperationLogError<A::Error>> {
-        let mut pending = self.pending.lock().map_err(|_| OperationLogError::BufferUnavailable)?;
-        self.flush_pending(&mut pending)
+    pub fn flush(&self, router: &dyn RoutesOperations) -> Result<RoutedEvents, OperationLogError<A::Error>> {
+        let flushed = {
+            let mut pending = self.pending.lock().map_err(|_| OperationLogError::BufferUnavailable)?;
+            self.flush_pending(&mut pending).and_then(|()| self.take_written())
+        };
+        self.route_written(flushed, router)
+    }
+
+    /// Routes what `appended` produced. When it failed part-way, the entries written before the failure are routed
+    /// all the same, and the failure is still returned.
+    fn route_written(
+        &self,
+        appended: Result<Vec<OperationEvent>, OperationLogError<A::Error>>,
+        router: &dyn RoutesOperations,
+    ) -> Result<RoutedEvents, OperationLogError<A::Error>> {
+        match appended {
+            Ok(events) => Ok(router.route_all(events)),
+            Err(error) => {
+                if let Ok(stranded) = self.take_written() {
+                    let outcome = router.route_all(stranded);
+                    for warning in &outcome.warnings {
+                        tracing::warn!(
+                            code = warning.code,
+                            "entries written before a log failure were not fully routed"
+                        );
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Hands over the events of every entry written and not yet delivered.
+    fn take_written(&self) -> Result<Vec<OperationEvent>, OperationLogError<A::Error>> {
+        let mut written = self.written.lock().map_err(|_| OperationLogError::BufferUnavailable)?;
+        Ok(std::mem::take(&mut *written))
     }
 
     fn append_record(
@@ -135,6 +196,7 @@ where
         operation: &str,
         summary: &str,
         files: &[VaultPath],
+        written_as: Origin,
     ) -> Result<Vec<OperationEvent>, OperationLogError<A::Error>> {
         let year = at.year();
         let month = u8::from(at.month());
@@ -156,7 +218,7 @@ where
         let summary = single_line(summary);
         let files = files
             .iter()
-            .map(|path| single_line(&forward_slash_display(path.relative())))
+            .map(|path| single_line(&path.portable_relative()))
             .collect::<Vec<_>>()
             .join(", ");
         let line = format!(
@@ -172,22 +234,25 @@ where
             path,
             preamble,
             content: line,
-            origin: Origin::Internal("oplog".to_owned()),
+            origin: written_as,
         });
-        self.flush_pending(&mut pending)
+        self.flush_pending(&mut pending)?;
+        drop(pending);
+        self.take_written()
     }
 
-    fn flush_pending(
-        &self,
-        pending: &mut VecDeque<AppendMutation>,
-    ) -> Result<Vec<OperationEvent>, OperationLogError<A::Error>> {
-        let mut events = Vec::new();
+    fn flush_pending(&self, pending: &mut VecDeque<AppendMutation>) -> Result<(), OperationLogError<A::Error>> {
         while let Some(request) = pending.front() {
             let result = self.appender.append(request).map_err(OperationLogError::Append)?;
-            events.extend(result.event);
+            if let Some(event) = result.event {
+                self.written
+                    .lock()
+                    .map_err(|_| OperationLogError::BufferUnavailable)?
+                    .push(event);
+            }
             pending.pop_front();
         }
-        Ok(events)
+        Ok(())
     }
 }
 
@@ -220,18 +285,6 @@ impl<'a> From<&'a OperationName> for &'a str {
     fn from(value: &'a OperationName) -> Self {
         value.0
     }
-}
-
-/// Renders a relative path using forward slashes regardless of platform,
-/// matching this vault's documented relative-path convention: `Path::
-/// display` alone would leak the native separator (`\` on Windows) into the
-/// persisted log line.
-fn forward_slash_display(relative: &Path) -> String {
-    relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn single_line(value: &str) -> String {

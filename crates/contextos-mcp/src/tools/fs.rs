@@ -5,14 +5,15 @@
 
 use std::sync::Arc;
 
+use base64::Engine;
 use contextos_core::{
     ContentHash, CreateDirectoryMutation, DeleteMode, DeleteMutation, DeleteOutcome, MoveMutation, Origin,
-    PipelineResult, VaultPath, VaultPathInput, VaultSet, WriteMutation,
+    PipelineResult, VaultPath, VaultPathInput, VaultSet, WriteContent, WriteMutation,
 };
 use contextos_fs::{
     AttachmentRequest, DirectoryTreeRequest, EditFileRequest, FileInfoRequest, Filesystem, FsError,
-    ListDirectoryRequest, ListDirectoryWithSizesRequest, ReadManyRequest, ReadTextRequest, SearchFilesRequest,
-    TextEdit,
+    ListDirectoryRequest, ListDirectoryWithSizesRequest, MAX_ATTACHMENT_BYTES, ReadManyRequest, ReadPartRequest,
+    ReadTextRequest, SearchFilesRequest, TextEdit,
 };
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, ResourceContents};
@@ -23,53 +24,96 @@ use crate::resource_support::{
 };
 use crate::server::{ContextOsServer, ManagedIndexService, PathInput, RoutedMutationService};
 use crate::tool_error::{ToolError, ToolFailure, evaluate, execute, execute_value};
-use crate::tools::fs_types::{
-    AllowedDirectoriesToolResult, AttachmentResource, BatchErrorToolResult, CreateDirectoryToolResult, DeleteFailure,
-    DeleteInput, DeleteToolResult, DirectoryListingToolResult, EditInput, EditToolResult, FileInfoToolResult,
-    ListDirectoryToolInput, MoveInput, MoveToolResult, PathsInput, ReadManyItemToolResult, ReadManyToolResult,
-    ReadTextInput, ReadTextToolResult, SearchInput, SearchToolResult, ToolReadLimit, TreeInput, TreeNodeToolResult,
-    WriteInput, WriteToolResult,
+use crate::tools::fs_expand::{Expandable, ExpandedAttachment, ExpansionInput};
+use crate::tools::fs_read_types::{
+    ReadPartToolResult, ReadTextInput, ReadTextOutput, ReadTextToolResult, ReadThreshold, ToolReadRequest,
+    ToolReadSelection,
 };
+use crate::tools::fs_types::{
+    AllowedDirectoriesToolResult, AttachFileInput, AttachmentHashToolResult, AttachmentResource, BatchErrorToolResult,
+    CreateDirectoryToolResult, DeleteFailure, DeleteInput, DeleteToolResult, DirectoryListingToolResult, EditInput,
+    EditToolResult, FileInfoToolResult, LinksExpandedToolResult, ListDirectoryToolInput, MoveInput, MoveToolResult,
+    PathsInput, ReadManyItemToolResult, ReadManyToolResult, SearchInput, SearchToolResult, TreeInput,
+    TreeNodeToolResult, WriteInput, WriteToolResult,
+};
+
+/// What an `fs_read_text_file` call read.
+enum ReadOutcome {
+    Text(ReadTextToolResult),
+    Part(ReadPartToolResult),
+}
 
 #[tool_router(vis = "pub(crate)")]
 impl ContextOsServer {
     #[tool(
         name = "fs_read_text_file",
-        description = "Read a UTF-8 file with an optional head, tail, or inclusive line range",
-        output_schema = fallible_output_schema_for::<ReadTextToolResult>()
+        description = "Read a UTF-8 file with an optional head, tail, or inclusive line range. Content at or above the server's inline threshold (5 kB by default) is returned as a bounded preview with truncated true and a resource_link; content_hash always describes the whole file. To read the rest, or any file the whole-file read refuses as too large, read it in byte parts: pass offset and length (at most the threshold, ending on a whole character) and continue with each part's next_offset until it is -1. A part is read by seeking and carries no content_hash or line_count, so take the hash from a whole read or fs_attach_file before writing. Every read returns size and version; pass the version as expected_version on later reads, which are refused with io/conflict and current_version if the file has changed (a cheap guard on size, modification time, and identity, plus change time on Unix, not proof of identical content: a whole read's content_hash is). offset and length cannot be combined with head, tail, or range. fs_attach_file returns a whole file",
+        output_schema = fallible_output_schema_for::<ReadTextOutput>()
     )]
     async fn read_text(&self, Parameters(input): Parameters<ReadTextInput>) -> Result<CallToolResult, ToolFailure> {
-        let ToolReadLimit(limit) = ToolReadLimit::try_from(&input)?;
+        let threshold_bytes = self.resource_link_threshold_bytes;
+        let ToolReadRequest {
+            selection,
+            expected_version,
+        } = ToolReadRequest::try_from((&input, ReadThreshold(threshold_bytes)))?;
         let roots = Arc::clone(&self.roots);
         let filesystem = Arc::clone(&self.filesystem);
-        let threshold_bytes = self.resource_link_threshold_bytes;
         let roots_for_link = Arc::clone(&roots);
-        let (mut result, path) = evaluate(move || {
+        let (outcome, path) = evaluate(move || {
             let path = VaultPath::try_from(VaultPathInput {
                 roots: &roots,
                 raw: &input.path,
             })?;
-            let read = filesystem.read_text(&ReadTextRequest {
-                path: path.clone(),
-                limit,
-            })?;
-            Ok((ReadTextToolResult::from(read), path))
+            let outcome = match selection {
+                ToolReadSelection::Part(part) => {
+                    ReadOutcome::Part(ReadPartToolResult::from(filesystem.read_part(&ReadPartRequest {
+                        path: path.clone(),
+                        part,
+                        expected_version,
+                    })?))
+                }
+                ToolReadSelection::Lines(limit) => {
+                    let request = ReadTextRequest {
+                        path: path.clone(),
+                        limit,
+                    };
+                    let read = match &expected_version {
+                        Some(version) => filesystem.read_text_if_unchanged(&request, version)?,
+                        None => filesystem.read_text(&request)?,
+                    };
+                    ReadOutcome::Text(ReadTextToolResult::from(read))
+                }
+            };
+            Ok((outcome, path))
         })
         .await?;
-        // At or above the configured threshold, bound the
-        // inline preview and attach a `resource_link` so a resource-aware
-        // host fetches the full content via `resources/read` instead of
-        // exhausting its own inline-result budget. Below threshold,
-        // behaviour is unchanged.
-        let mut resource_links = Vec::new();
-        let threshold = usize::try_from(threshold_bytes).unwrap_or(usize::MAX);
-        if result.content.len() >= threshold {
-            let (preview, bounded) = bounded_preview(&result.content, threshold);
-            result.content = preview;
-            result.truncated = result.truncated || bounded;
-            resource_links.extend(resource_link_for(&path, &roots_for_link));
-        }
-        let value = serde_json::to_value(result).map_err(ToolError::CallToolResultSerialisation)?;
+        let (value, resource_links) = match outcome {
+            // A part is at most the threshold, so it is never bounded or linked: the caller continues from
+            // `next_offset`.
+            ReadOutcome::Part(part) => (
+                serde_json::to_value(part).map_err(ToolError::CallToolResultSerialisation)?,
+                Vec::new(),
+            ),
+            ReadOutcome::Text(mut result) => {
+                // At or above the configured threshold, bound the
+                // inline preview and attach a `resource_link` so a resource-aware
+                // host fetches the full content via `resources/read` instead of
+                // exhausting its own inline-result budget. Below threshold,
+                // behaviour is unchanged.
+                let mut resource_links = Vec::new();
+                let threshold = usize::try_from(threshold_bytes).unwrap_or(usize::MAX);
+                if result.content.len() >= threshold {
+                    let (preview, bounded) = bounded_preview(&result.content, threshold);
+                    result.content = preview;
+                    result.truncated = result.truncated || bounded;
+                    resource_links.extend(resource_link_for(&path, &roots_for_link));
+                }
+                (
+                    serde_json::to_value(result).map_err(ToolError::CallToolResultSerialisation)?,
+                    resource_links,
+                )
+            }
+        };
         let mut content = vec![ContentBlock::text(value.to_string())];
         content.extend(resource_links);
         let mut tool_result = CallToolResult::success(content);
@@ -79,7 +123,7 @@ impl ContextOsServer {
 
     #[tool(
         name = "fs_read_multiple_files",
-        description = "Read several UTF-8 files with isolated per-file failures",
+        description = "Read several UTF-8 files with isolated per-file failures. A file at or above the server's inline threshold (5 kB by default) is returned as a bounded preview with truncated true and a resource_link; use fs_attach_file for the whole file, or fs_read_text_file with offset and length to read it in parts. Each item also reports size and version",
         output_schema = fallible_output_schema_for::<ReadManyToolResult>()
     )]
     async fn read_many(&self, Parameters(input): Parameters<PathsInput>) -> Result<CallToolResult, ToolFailure> {
@@ -112,6 +156,8 @@ impl ContextOsServer {
                         path: raw,
                         content: None,
                         content_hash: None,
+                        size: None,
+                        version: None,
                         truncated: false,
                         error: Some(BatchErrorToolResult::from(error)),
                     })),
@@ -154,26 +200,47 @@ impl ContextOsServer {
 
     #[tool(
         name = "fs_attach_file",
-        description = "Embed a text or base64 binary file as a size-capped MCP resource"
+        description = "Embed a text or base64 binary file as a size-capped MCP resource, followed by a text block giving its content_hash, which can be supplied as expected_hash to overwrite the file, and its size and version. The resource is the whole file, never a preview. With expand_links (Markdown notes and canvases only) the resource is instead the note, or the canvas's text and file nodes, with every link rewritten in place to a vault-rooted path, and the text block reports links_expanded with no content_hash: that content is for reading, never for writing back"
     )]
-    async fn attach_file(&self, Parameters(input): Parameters<PathInput>) -> Result<CallToolResult, ToolFailure> {
+    async fn attach_file(&self, Parameters(input): Parameters<AttachFileInput>) -> Result<CallToolResult, ToolFailure> {
         let roots = Arc::clone(&self.roots);
         let filesystem = Arc::clone(&self.filesystem);
+        let file_names = Arc::clone(&self.file_names);
         let roots_for_uri = Arc::clone(&roots);
-        let attachment = evaluate(move || {
+        let (attachment, metadata) = evaluate(move || {
             let path = VaultPath::try_from(VaultPathInput {
                 roots: &roots,
                 raw: &input.path,
             })?;
-            filesystem
-                .read_attachment(&AttachmentRequest { path })
-                .map_err(ToolError::from)
+            if input.expand_links {
+                Expandable::try_from(&path)?;
+            }
+            let root_index = usize::try_from(path.root_id())?;
+            let attachment = filesystem.read_attachment(&AttachmentRequest { path })?;
+            if input.expand_links {
+                let names = file_names
+                    .get(root_index)
+                    .ok_or(ToolError::Invalid("the vault has no file name index"))?;
+                let ExpandedAttachment(attachment) = ExpandedAttachment::try_from(ExpansionInput {
+                    attachment,
+                    filesystem: &filesystem,
+                    roots: &roots,
+                    names,
+                })?;
+                let metadata = serde_json::to_string(&LinksExpandedToolResult::default())
+                    .map_err(ToolError::CallToolResultSerialisation)?;
+                return Ok((attachment, metadata));
+            }
+            let metadata = serde_json::to_string(&AttachmentHashToolResult::from(&attachment))
+                .map_err(ToolError::CallToolResultSerialisation)?;
+            Ok((attachment, metadata))
         })
         .await?;
         let resource = AttachmentResource::try_from((attachment, roots_for_uri.as_ref()))?;
-        Ok(CallToolResult::success(vec![ContentBlock::resource(
-            ResourceContents::from(resource),
-        )]))
+        Ok(CallToolResult::success(vec![
+            ContentBlock::resource(ResourceContents::from(resource)),
+            ContentBlock::text(metadata),
+        ]))
     }
 
     #[tool(
@@ -188,12 +255,46 @@ impl ContextOsServer {
         let roots = Arc::clone(&self.roots);
         let service = Arc::clone(&self.mutations);
         let request = evaluate(move || {
+            let path = VaultPath::try_from(VaultPathInput {
+                roots: &roots,
+                raw: &input.path,
+            })?;
+            let content = match (input.content, input.content_base64) {
+                (Some(_), Some(_)) => {
+                    return Err(ToolError::Invalid(
+                        "fs_write_file accepts exactly one of 'content' or 'content_base64', not both",
+                    ));
+                }
+                (None, None) => {
+                    return Err(ToolError::Invalid(
+                        "fs_write_file requires exactly one of 'content' or 'content_base64'",
+                    ));
+                }
+                (Some(text), None) => WriteContent::from(text),
+                (None, Some(encoded)) => {
+                    // Reject an oversized payload from its encoded length
+                    // and padding alone, before allocating a decode buffer,
+                    // not as a replacement for `Filesystem::write`'s own
+                    // authoritative check of the real decoded length, which
+                    // still runs regardless.
+                    let decoded_bytes = decoded_size(&encoded);
+                    if decoded_bytes > MAX_ATTACHMENT_BYTES {
+                        return Err(FsError::TooLargeToWrite {
+                            path: <&std::path::Path>::from(&path).to_path_buf(),
+                            size: decoded_bytes,
+                            maximum: MAX_ATTACHMENT_BYTES,
+                        }
+                        .into());
+                    }
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(encoded)
+                        .map_err(|_| ToolError::Invalid("content_base64 is not valid base64"))?;
+                    WriteContent::Binary(bytes)
+                }
+            };
             Ok(WriteMutation {
-                path: VaultPath::try_from(VaultPathInput {
-                    roots: &roots,
-                    raw: &input.path,
-                })?,
-                content: input.content,
+                path,
+                content,
                 expected_hash: input.expected_hash.map(ContentHash::try_from).transpose()?,
                 force: input.force,
                 origin: Origin::Tool("fs_write_file".to_owned()),
@@ -425,7 +526,7 @@ impl ContextOsServer {
                         root_index,
                         &mutation,
                     )
-                    .map_err(|error| Box::new((mutation.path.relative().to_string_lossy().into_owned(), error))),
+                    .map_err(|error| Box::new((mutation.path.portable_relative(), error))),
                     Err(failure) => Err(failure),
                 })
                 .collect::<Vec<_>>();
@@ -537,7 +638,7 @@ fn delete_honouring_managed_index(
             if !is_managed {
                 return Err(ToolError::from(FsError::DirectoryNotEmpty { path }));
             }
-            for name in ["index.md", "_index.md"] {
+            for name in contextos_index::FOLDER_INDEX_NAMES {
                 let child = child_path(&request.path, roots, name)?;
                 let cleanup = DeleteMutation {
                     path: child,
@@ -564,7 +665,7 @@ fn delete_honouring_managed_index(
 /// appending onto it directly would produce a leading-slash remainder
 /// that `VaultPath::try_from` resolves as an absolute filesystem path
 /// instead of a vault-relative one.
-fn child_path(directory: &VaultPath, roots: &VaultSet, relative: &str) -> Result<VaultPath, ToolError> {
+pub(crate) fn child_path(directory: &VaultPath, roots: &VaultSet, relative: &str) -> Result<VaultPath, ToolError> {
     let root = roots.root(directory.root_id()).ok_or_else(|| {
         ToolError::from(ResourceError::InvalidPath {
             path: <&std::path::Path>::from(directory).to_path_buf(),
@@ -661,7 +762,7 @@ fn plan_delete(
 }
 
 fn plan_one_delete(path: VaultPath, hard: bool, destructive_delete: &[bool]) -> DeletePlanItem {
-    let display = path.relative().to_string_lossy().into_owned();
+    let display = path.portable_relative();
     let root_index = match usize::try_from(path.root_id()) {
         Ok(index) => index,
         Err(error) => return Err(Box::new((display, ToolError::from(error)))),
@@ -683,3 +784,17 @@ fn plan_one_delete(path: VaultPath, hard: bool, destructive_delete: &[bool]) -> 
         root_index,
     ))
 }
+
+/// The number of bytes `encoded` decodes to, worked out from its length and trailing `=` padding without decoding it:
+/// exact for padded standard base64, the only form `fs_write_file` decodes, and never more than the real length for
+/// anything else, which the decode then refuses. An estimate from the length alone counts up to two padding bytes as
+/// content, so it would refuse content at the very edge of the cap.
+fn decoded_size(encoded: &str) -> u64 {
+    let padding = encoded.bytes().rev().take(2).take_while(|byte| *byte == b'=').count();
+    let decoded = (encoded.len() / 4 * 3).saturating_sub(padding);
+    u64::try_from(decoded).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+#[path = "fs_test.rs"]
+mod tests;

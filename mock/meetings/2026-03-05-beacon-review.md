@@ -10,7 +10,8 @@ tags:
 
 ## Action Items
 
-Beacon review action items: ship the firmware rollback change, replace two corroded housings, and confirm the GPS timestamp drift fix with Sam.
+Beacon review action items: ship the firmware rollback change, replace two
+corroded housings, and confirm the GPS timestamp drift fix with Sam.
 
 ## Attendees
 

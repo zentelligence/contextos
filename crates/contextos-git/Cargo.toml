@@ -10,18 +10,18 @@ publish.workspace = true
 
 [dependencies]
 contextos-core = { path = "../contextos-core" }
+contextos-fs = { path = "../contextos-fs" }
 git2.workspace = true
 sha2.workspace = true
 similar.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-contextos-fs = { path = "../contextos-fs" }
 contextos-index = { path = "../contextos-index" }
 contextos-oplog = { path = "../contextos-oplog" }
 tempfile.workspace = true
-time.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,12 @@
+{% match action %}
+{% when TitleAction::NewTask(vault) %}
+<a class="btn small primary" href="/{{ vault }}/tasks/new">New task</a>
+{% when TitleAction::NewNote(vault) %}
+<button type="button" class="btn small primary" title="New note" aria-label="New note" hx-get="/{{ vault }}/notes/new" hx-target=".notes-screen" hx-swap="outerHTML"><span class="ic ic-square-pen" aria-hidden="true"></span> New</button>
+{% when TitleAction::RescanApps(vault) %}
+<form method="post" action="/{{ vault }}/apps/rescan" class="apps-rescan"><button type="submit" class="icon-button" title="Rescan registry/apps/ for new or changed apps" aria-label="Rescan apps"><span class="ic ic-rescan" aria-hidden="true"></span></button></form>
+{% when TitleAction::UploadToInbox(action_href) %}
+<form hx-post="{{ action_href }}" hx-encoding="multipart/form-data" hx-target=".inbox-screen" hx-swap="outerHTML" hx-on::after-request="this.reset()" class="apps-rescan"><label class="btn small primary" for="inbox-upload-input">Upload <span class="ic ic-upload" aria-hidden="true"></span></label><input id="inbox-upload-input" type="file" name="file" style="display:none" onchange="this.form.requestSubmit()"></form>
+{% when TitleAction::Download { href, name } %}
+<a class="icon-button title-download" href="{{ href }}" download="{{ name }}" title="Download {{ name }}" aria-label="Download {{ name }}"><span class="ic ic-download" aria-hidden="true"></span></a>
+{% endmatch %}

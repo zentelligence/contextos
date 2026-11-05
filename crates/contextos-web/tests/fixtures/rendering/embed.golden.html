@@ -3,54 +3,388 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>embed-fixture.md</title>
+<title>Wiki</title>
 <link rel="icon" href="/static/favicon.ico">
 <link rel="stylesheet" href="/static/contextos-web.css">
 </head>
 <body>
-<header class="shell-header">
-  <img class="shell-logo" src="/static/logo.png" alt="Command Centre logo">
-  <span class="shell-title">Command Centre</span>
-</header>
-<div class="app">
-  <nav class="shell-nav">
+<script src="/static/htmx.min.js"></script>
+<script src="/static/htmx-ext-json-enc.min.js"></script>
+<script src="/static/htmx-ext-sse.js"></script>
+<script src="/static/contextos-web-client.js"></script>
+<script src="/static/task-forms.js"></script>
+<div class="shell" hx-ext="sse" sse-connect="/contract-fixture/events/stream" hx-on::sse-open="this.dataset.stream='open'" hx-on::sse-error="this.dataset.stream='error'">
+  <header class="topbar">
+    <span class="brand">
+      <img class="logo" src="/static/logo.png" alt="" onerror="this.remove()">
 
 
-    <ul class="nav-primary">
+      <span class="wordmark">Command Centre</span>
 
-      <li><a href="/contract-fixture/" class="active">📁 Vault browser</a></li>
-      <li><a href="/contract-fixture/apps/" class="">🧩 Apps</a></li>
 
-      <li><a href="/settings/" class="">⚙️ Settings</a></li>
+    </span>
+
+
+
+
+    <span class="header-sep" aria-hidden="true">/</span>
+    <span class="breadcrumb"><a href="/contract-fixture/wiki/">wiki</a><span class="breadcrumb-sep">/</span><span class="breadcrumb-current">embed-fixture.md</span></span>
+    <div class="topbar-actions">
+
+      <form class="search-box-form" method="get" action="/contract-fixture/search">
+        <input type="search" name="q" class="search-box" placeholder="Search" aria-label="Search">
+      </form>
+
+<span id="system-status-badge" class="live-badge status-ok" role="status" aria-label="System status: 1 MCP server connected" title="System status: 1 MCP server connected"><span class="ic ic-activity" aria-hidden="true"></span><span class="live-badge-label">LIVE</span></span>
+      <details class="favourites-panel" hx-get="/shell/favourites?vault=contract-fixture" hx-trigger="toggle, favourites-changed from:body" hx-target="find .favourites-panel-dropdown" hx-swap="innerHTML">
+        <summary class="header-icon-button" aria-label="Favourites" title="Favourites"><span class="ic ic-star" aria-hidden="true"></span></summary>
+        <div class="favourites-panel-dropdown">
+          <p class="hint">Loading&hellip;</p>
+        </div>
+      </details>
+
+      <a class="header-icon-button" href="/contract-fixture/notes/" aria-label="New note" title="New note"><span class="ic ic-square-pen" aria-hidden="true"></span></a>
+
+
+      <a class="header-icon-button health-chip health-unknown" href="/contract-fixture/settings/#health" hx-get="/contract-fixture/health/summary?surface=header" hx-trigger="load, vault-health-changed from:body" hx-swap="outerHTML" aria-label="Vault health: checking" title="Vault health: checking"><span class="ic ic-heart-pulse" aria-hidden="true"></span></a>
+
+
+      <a class="header-icon-button" href="/contract-fixture/settings/" aria-label="Vault settings" title="Vault settings"><span class="ic ic-database-zap" aria-hidden="true"></span></a>
+
+      <a class="header-icon-button " href="/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
+
+      <details class="favourites-panel alerts-panel" hx-get="/contract-fixture/alerts" hx-trigger="toggle" hx-target="find .favourites-panel-dropdown" hx-swap="innerHTML">
+        <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/contract-fixture/alerts/summary" hx-trigger="load" hx-swap="outerHTML"></span></summary>
+        <div class="favourites-panel-dropdown alerts-dropdown">
+          <p class="hint">Loading&hellip;</p>
+        </div>
+      </details>
+
+
+      <a class="header-icon-button" href="/contract-fixture/profile/" aria-label="Profile" title="Profile"><span class="ic ic-user-round" aria-hidden="true"></span></a>
+
+    </div>
+  </header>
+
+  <div class="shell-body">
+    <aside class="shell-sidebar">
+
+
+    <ul class="nav-links nav-links-general">
+
+        <li><a class="nav-link " href="/contract-fixture/"><span class="ic ic-layout-dashboard" aria-hidden="true"></span><span class="nav-link-label">Dashboard</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/tasks/"><span class="ic ic-list-checks" aria-hidden="true"></span><span class="nav-link-label">Tasks</span><span class="nav-link-meta">0</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/signals/"><span class="ic ic-radio" aria-hidden="true"></span><span class="nav-link-label">Signals</span><span class="nav-link-meta">0</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/inbox/"><span class="ic ic-inbox" aria-hidden="true"></span><span class="nav-link-label">Inbox</span><span class="nav-link-meta">0</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/outbox/"><span class="ic ic-send" aria-hidden="true"></span><span class="nav-link-label">Outbox</span><span class="nav-link-meta">0</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/journal/"><span class="ic ic-book-open" aria-hidden="true"></span><span class="nav-link-label">Journal</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/notes/"><span class="ic ic-file-text" aria-hidden="true"></span><span class="nav-link-label">Notes</span></a></li>
+
     </ul>
 
 
-    <div class="nav-section">
-      <h3 class="breadcrumb-tree"><span class="breadcrumb-current">contract-fixture</span></h3>
 
-      <p class="hint">No entries.</p>
+    <details class="nav-group" open>
+      <summary class="nav-group-summary">
 
-    </div>
+        <a class="nav-group-heading-link " href="/contract-fixture/agents/"><span class="ic ic-agents" aria-hidden="true"></span><span class="nav-group-label-text">Agents</span></a>
+
+        <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+      </summary>
+      <ul class="nav-links">
+
+        <li><a class="nav-link " href="/contract-fixture/agents/?team=general"><span class="ic ic-globe" aria-hidden="true"></span><span class="nav-link-label">General</span><span class="nav-link-meta">0</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/agents/?team=business"><span class="ic ic-briefcase" aria-hidden="true"></span><span class="nav-link-label">Business</span><span class="nav-link-meta">0</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/agents/?team=personal"><span class="ic ic-user-round" aria-hidden="true"></span><span class="nav-link-label">Personal</span><span class="nav-link-meta">0</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/agents/?state=blocked"><span class="ic ic-octagon-alert" aria-hidden="true"></span><span class="nav-link-label">Blocked</span><span class="nav-link-meta">0</span></a></li>
+
+      </ul>
+    </details>
 
 
 
-    <div class="shell-footer">
-      <form method="post" action="/contract-fixture/apps/rescan"><button type="submit" class="link-button">↻ Rescan apps</button></form>
-    </div>
+    <details class="nav-group" open>
+      <summary class="nav-group-summary">
 
-  </nav>
+        <a class="nav-group-heading-link " href="/contract-fixture/apps/"><span class="ic ic-apps" aria-hidden="true"></span><span class="nav-group-label-text">Apps</span></a>
 
-  <div class="shell-main">
-    <div class="topbar"><span class="breadcrumb"><a href="/contract-fixture/">contract-fixture</a><span class="breadcrumb-sep">/</span><span class="breadcrumb-current">embed-fixture.md</span></span></div>
-    <main class="content"><h1 id="embed-fixture">Embed fixture</h1>
-<div class="embed-block"><div class="embed-label">embed-target</div><h1 id="embed-target">Embed target</h1>
+        <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+      </summary>
+      <ul class="nav-links">
+
+      </ul>
+    </details>
+
+
+
+    <details class="nav-group" open>
+      <summary class="nav-group-summary">
+
+        <a class="nav-group-heading-link " href="/contract-fixture/workflows"><span class="ic ic-jobs" aria-hidden="true"></span><span class="nav-group-label-text">Workflows</span></a>
+
+        <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+      </summary>
+      <ul class="nav-links">
+
+      </ul>
+    </details>
+
+
+
+    <details class="nav-group" open>
+      <summary class="nav-group-summary">
+
+        <a class="nav-group-heading-link active" href="/contract-fixture/wiki/"><span class="ic ic-book" aria-hidden="true"></span><span class="nav-group-label-text">Knowledge</span></a>
+
+        <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+      </summary>
+      <ul class="nav-links">
+
+        <li><a class="nav-link active" href="/contract-fixture/wiki/"><span class="ic ic-book" aria-hidden="true"></span><span class="nav-link-label">Wiki</span></a></li>
+
+        <li><a class="nav-link " href="/contract-fixture/insights/"><span class="ic ic-sparkles" aria-hidden="true"></span><span class="nav-link-label">Insights</span></a></li>
+
+      </ul>
+    </details>
+
+
+
+      <div class="sidebar-footer">
+        <form method="post" action="/shell/sidebar-toggle">
+          <button type="submit" class="header-icon-button" aria-label="Collapse sidebar" title="Collapse sidebar">
+
+            <span class="ic ic-panel-left-close" aria-hidden="true"></span>
+
+          </button>
+        </form>
+      </div>
+    </aside>
+
+    <main class="content"><header class="page-title"><span class="ic ic-book" aria-hidden="true"></span><h1>Wiki</h1>
+<a class="icon-button title-download" href="/contract-fixture/wiki/embed-fixture.md?raw=1" download="embed-fixture.md" title="Download embed-fixture.md" aria-label="Download embed-fixture.md"><span class="ic ic-download" aria-hidden="true"></span></a>
+<form hx-patch="/contract-fixture/favourites/memory/wiki/embed-fixture.md" hx-ext="json-enc" hx-vals='{"favourite": true}' hx-target="this" hx-swap="outerHTML" class="app-favourite-form">
+  <button type="submit" class="icon-button favourite-toggle " aria-label="Add embed-fixture.md to favourites" aria-pressed="false" title="Not favourited"><span class="ic ic-star" aria-hidden="true"></span></button>
+</form></header>
+
+
+
+
+
+
+<div class="wiki-screen" hx-ext="json-enc">
+
+  <div class="notes-header-row">
+    <div class="section-label">Wiki</div>
+    <span class="header-actions">
+  
+    <p class="hint italic">Open at least a domain and a topic folder to add a page here.</p>
+  
+    <details class="header-disclosure">
+      <summary class="btn small" title="New folder" aria-label="New folder">
+        <span class="ic ic-folder" aria-hidden="true"></span> New folder
+      </summary>
+      <form
+        class="header-disclosure-body"
+        hx-post="/contract-fixture/wiki/execute/new-folder"
+        hx-target="closest .wiki-screen"
+        hx-swap="outerHTML"
+        hx-vals="js:{name: document.getElementById('wiki-new-folder-field').value}"
+      >
+        <input id="wiki-new-folder-field" type="text" placeholder="Folder name" required autofocus>
+        <button type="submit" class="btn primary small">Create</button>
+      </form>
+    </details>
+    </span>
+  </div>
+  <div class="notes-layout notes-layout-panel-right">
+  
+    <div class="notes-main">
+    
+      <div class="notes-main-header">
+        <span class="ic ic-file-text" aria-hidden="true"></span>
+        <span class="notes-title">embed-fixture</span>
+      
+        <span class="header-actions">
+        <details class="header-disclosure">
+          <summary class="btn small" title="Rename page" aria-label="Rename page">Rename</summary>
+          <form
+            class="header-disclosure-body"
+            hx-patch="/contract-fixture/wiki/embed-fixture.md/rename"
+            hx-target="closest .wiki-screen"
+            hx-swap="outerHTML"
+          >
+            <input id="wiki-rename-field" type="text" name="title" value="embed-fixture" required>
+            <button type="submit" class="btn primary small">Save title</button>
+          </form>
+        </details>
+        <button
+          type="button"
+          class="btn small"
+          title="Edit page"
+          aria-label="Edit page"
+          hx-get="/contract-fixture/wiki/embed-fixture.md/edit"
+          hx-target="closest .wiki-screen"
+          hx-swap="outerHTML"
+        >Edit</button>
+        <button
+          type="button"
+          class="btn small"
+          title="Delete page"
+          aria-label="Delete page"
+          hx-get="/contract-fixture/wiki/embed-fixture.md/confirm-delete"
+          hx-target="#wiki-main-body"
+          hx-swap="outerHTML"
+        >Delete</button>
+        </span>
+      
+      </div>
+
+      <div class="notes-main-body" id="wiki-main-body">
+      
+        <div class="wiki-rendered"><h1 id="embed-fixture">Embed fixture</h1>
+<div class="embed-block"><div class="embed-label"><a class="wikilink" href="/contract-fixture/wiki/embed-target.md">embed-target</a></div><h1 id="embed-target">Embed target</h1>
 <p>Embedded content body.</p>
 </div>
-</main>
-  </div>
 </div>
-<script src="/static/htmx.min.js"></script>
-<script src="/static/htmx-ext-json-enc.min.js"></script>
-<script src="/static/contextos-web-client.js"></script>
+      
+      </div>
+    
+    </div>
+  
+    <div class="notes-side-column">
+    
+      
+        
+<aside class="notes-metadata-panel">
+  <div class="section-label">Metadata</div>
+  <form
+    class="notes-metadata-form"
+    id="notes-metadata-form"
+    hx-patch="/contract-fixture/wiki/embed-fixture.md"
+    hx-target="closest .notes-screen"
+    hx-swap="outerHTML"
+    hx-vals="js:{patch:(function(el){var p={};el.querySelectorAll('[data-field]').forEach(function(i){p[i.dataset.field]=i.value;});return p;})(document.getElementById('notes-metadata-form')), expected_hash: '746e72607d75e6637b4e299ba2a448fe45a39771ea4222bca983c6be778b2897'}"
+  >
+  
+  
+    <p class="hint italic">This page has no frontmatter fields.</p>
+  
+  
+    <button type="submit" class="btn primary small">Save</button>
+  </form>
+</aside>
+
+      
+    
+    
+      
+<aside class="notes-sidebar">
+  <div class="tree-nest">
+  
+    
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/base-fixture.base">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">base-fixture.base</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/callout-fixture.md">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">callout-fixture</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/canvas-fixture.canvas">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">canvas-fixture.canvas</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item active" href="/contract-fixture/wiki/embed-fixture.md">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">embed-fixture</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/embed-target.md">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">embed-target</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/fence-fixture.md">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">fence-fixture</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/mermaid-fixture.mermaid">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">mermaid-fixture.mermaid</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/target-note.md">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">target-note</span>
+  </a>
+  
+
+  
+  <a class="notes-list-item" href="/contract-fixture/wiki/wikilink-fixture.md">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">wikilink-fixture</span>
+  </a>
+  
+
+
+  
+  </div>
+</aside>
+
+    
+    </div>
+  
+  </div>
+</div></main>
+  </div>
+
+  <footer class="status-bar">
+    <span id="system-status-mcp" class="status-bar-item" title="1 MCP server connected"><span class="status-dot " aria-hidden="true"></span> <span class="status-bar-label">MCP servers</span> <span class="status-bar-meta">1 of 1 connected &middot; 47 tools</span></span>
+    <span hidden hx-get="/shell/status" hx-trigger="every 30s" hx-swap="none"></span>
+
+    <span class="status-bar-divider" aria-hidden="true"></span>
+    <a class="status-bar-item health-chip health-unknown" href="/contract-fixture/settings/#health" hx-get="/contract-fixture/health/summary?surface=footer" hx-trigger="load, vault-health-changed from:body" hx-swap="outerHTML" title="Vault health: checking"><span class="status-dot" aria-hidden="true"></span> <span class="status-bar-label">Vault health</span> <span class="status-bar-meta">Checking&hellip;</span></a>
+
+    <span class="status-bar-divider" aria-hidden="true"></span>
+
+    <span class="status-bar-item stream-status" title="Live events from the vault">
+      <span class="ic ic-radio" aria-hidden="true"></span> <span class="status-bar-label">Stream</span>
+      <span class="stream-state" data-state="connected" sse-swap="status" hx-swap="outerHTML"><span class="stream-connected">Connected</span><span class="stream-disconnected">Disconnected</span></span>
+      <span class="status-bar-meta"><span class="stream-count">0</span> since load</span>
+      <ul class="stream-ticks visually-hidden" aria-hidden="true" sse-swap="signal" hx-swap="none" hx-on:htmx:sse-message="this.dataset.n=String((Number(this.dataset.n)||0)+1);this.closest('.stream-status').querySelector('.stream-count').textContent=this.dataset.n"></ul>
+    </span>
+
+    <span class="status-bar-item status-bar-about"><a href="https://zentelligence.au" target="_blank" rel="noopener noreferrer">Zentelligence</a> <span class="status-bar-meta">v0.23.6</span></span>
+  </footer>
+</div>
 </body>
 </html>

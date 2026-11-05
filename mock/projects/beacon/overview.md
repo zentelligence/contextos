@@ -10,7 +10,9 @@ tags:
 
 ## Coastal Navigation Safety
 
-Beacon replaces the ageing lamp control unit on six coastal navigation safety beacons along the southern approach. Reliability matters more than features here: a dark beacon is a safety incident, not an inconvenience.
+Beacon replaces the ageing lamp control unit on six coastal navigation
+safety beacons along the southern approach. Reliability matters more than
+features here: a dark beacon is a safety incident, not an inconvenience.
 
 ## Scope
 

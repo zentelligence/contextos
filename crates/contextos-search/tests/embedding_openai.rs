@@ -18,7 +18,9 @@ mod support;
 use std::process::Command;
 use std::time::Duration;
 
-use contextos_search::{Chunk, ChunkSource, EmbedsText, OpenAiCompatible, OpenAiCompatibleConfig, chunk_document};
+use contextos_search::{
+    ApiKeySource, Chunk, ChunkSource, EmbedsText, OpenAiCompatible, OpenAiCompatibleConfig, chunk_document,
+};
 use serde_json::Value;
 use support::http_stub::{HttpStub, StubResponse};
 use support::vault_note;
@@ -56,9 +58,9 @@ fn missing_api_key_env_is_rejected_with_no_request_sent() -> Result<(), Box<dyn 
     );
 
     let result = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
-        endpoint: "http://127.0.0.1:1/v1/embeddings".to_owned(),
+        endpoint: format!("{}/v1/embeddings", support::unreachable_loopback_url()?),
         model: "test-model".to_owned(),
-        api_key_env: variable.to_owned(),
+        api_key: ApiKeySource::Environment(variable.to_owned()),
     });
 
     let Err(error) = result else {
@@ -79,7 +81,7 @@ fn plain_http_to_a_non_loopback_endpoint_is_rejected_with_no_request_sent() -> R
     let result = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
         endpoint: "http://embeddings.example.com/v1/embeddings".to_owned(),
         model: "test-model".to_owned(),
-        api_key_env: variable.to_owned(),
+        api_key: ApiKeySource::Environment(variable.to_owned()),
     });
 
     let Err(error) = result else {
@@ -105,7 +107,7 @@ fn https_endpoint_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
     let result = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
         endpoint: "https://embeddings.example.com/v1/embeddings".to_owned(),
         model: "test-model".to_owned(),
-        api_key_env: variable.to_owned(),
+        api_key: ApiKeySource::Environment(variable.to_owned()),
     });
 
     // An https endpoint passes the scheme check, so construction fails on
@@ -159,7 +161,7 @@ fn batched_request_shape_and_response_are_round_tripped_child() -> Result<(), Bo
     let provider = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
         endpoint: stub.endpoint("/v1/embeddings"),
         model: "test-model".to_owned(),
-        api_key_env: "CONTEXTOS_TEST_KEY_FR54_BATCH".to_owned(),
+        api_key: ApiKeySource::Environment("CONTEXTOS_TEST_KEY_FR54_BATCH".to_owned()),
     })?;
 
     let vectors = provider.embed(&chunks)?;
@@ -200,14 +202,14 @@ fn empty_input_sends_no_request_child() -> Result<(), Box<dyn std::error::Error>
     }
 
     let provider = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
-        endpoint: "http://127.0.0.1:1/v1/embeddings".to_owned(),
+        endpoint: format!("{}/v1/embeddings", support::unreachable_loopback_url()?),
         model: "test-model".to_owned(),
-        api_key_env: "CONTEXTOS_TEST_KEY_FR54_EMPTY".to_owned(),
+        api_key: ApiKeySource::Environment("CONTEXTOS_TEST_KEY_FR54_EMPTY".to_owned()),
     })?;
 
     let vectors = provider.embed(&[])?;
 
-    assert!(vectors.is_empty());
+    assert!(vectors.is_empty(), "`vectors` should be empty, got {vectors:?}");
     Ok(())
 }
 
@@ -239,7 +241,7 @@ fn timeout_is_reported_as_a_typed_error_child() -> Result<(), Box<dyn std::error
         OpenAiCompatibleConfig {
             endpoint: stub.endpoint("/v1/embeddings"),
             model: "test-model".to_owned(),
-            api_key_env: "CONTEXTOS_TEST_KEY_FR54_TIMEOUT".to_owned(),
+            api_key: ApiKeySource::Environment("CONTEXTOS_TEST_KEY_FR54_TIMEOUT".to_owned()),
         },
         Duration::from_millis(50),
     )?;
@@ -284,7 +286,7 @@ fn oversized_response_body_is_rejected_child() -> Result<(), Box<dyn std::error:
     let provider = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
         endpoint: stub.endpoint("/v1/embeddings"),
         model: "test-model".to_owned(),
-        api_key_env: "CONTEXTOS_TEST_KEY_FR54_OVERSIZE".to_owned(),
+        api_key: ApiKeySource::Environment("CONTEXTOS_TEST_KEY_FR54_OVERSIZE".to_owned()),
     })?;
 
     let result = provider.embed(&chunks);
@@ -323,7 +325,7 @@ fn non_2xx_status_is_mapped_to_a_typed_error_child() -> Result<(), Box<dyn std::
     let provider = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
         endpoint: stub.endpoint("/v1/embeddings"),
         model: "test-model".to_owned(),
-        api_key_env: "CONTEXTOS_TEST_KEY_FR54_STATUS".to_owned(),
+        api_key: ApiKeySource::Environment("CONTEXTOS_TEST_KEY_FR54_STATUS".to_owned()),
     })?;
 
     let result = provider.embed(&chunks);
@@ -363,7 +365,7 @@ fn api_key_never_appears_in_debug_or_error_output_child() -> Result<(), Box<dyn 
     let provider = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
         endpoint: stub.endpoint("/v1/embeddings"),
         model: "test-model".to_owned(),
-        api_key_env: "CONTEXTOS_TEST_KEY_FR54_REDACT".to_owned(),
+        api_key: ApiKeySource::Environment("CONTEXTOS_TEST_KEY_FR54_REDACT".to_owned()),
     })?;
 
     let debug_output = format!("{provider:?}");
@@ -378,5 +380,96 @@ fn api_key_never_appears_in_debug_or_error_output_child() -> Result<(), Box<dyn 
     assert!(!debug_output.contains("sk-super-secret-do-not-leak"));
     assert!(!error_display.contains("sk-super-secret-do-not-leak"));
     assert!(!error_debug.contains("sk-super-secret-do-not-leak"));
+    Ok(())
+}
+
+#[test]
+fn a_key_written_in_configuration_is_sent_as_the_bearer_token() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempfile::tempdir()?;
+    let chunks = chunks_for(&vault, "note.md", "Prose embedded with a key from the file.\n")?;
+    let response_body = serde_json::json!({
+        "object": "list",
+        "model": "test-model",
+        "data": [{ "object": "embedding", "index": 0, "embedding": [0.5_f32, 0.5] }],
+    });
+    let stub = HttpStub::start(StubResponse::Immediate {
+        status: 200,
+        body: serde_json::to_vec(&response_body)?,
+    })?;
+
+    let provider = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
+        endpoint: stub.endpoint("/v1/embeddings"),
+        model: "test-model".to_owned(),
+        api_key: ApiKeySource::Value("sk-written-in-the-file".to_owned()),
+    })?;
+
+    let vectors = provider.embed(&chunks)?;
+    let captured = stub.join()?;
+
+    assert_eq!(vectors.len(), 1);
+    assert_eq!(captured.authorization.as_deref(), Some("Bearer sk-written-in-the-file"));
+    Ok(())
+}
+
+#[test]
+fn an_empty_key_value_is_refused_with_no_request_sent() -> Result<(), Box<dyn std::error::Error>> {
+    let result = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
+        endpoint: format!("{}/v1/embeddings", support::unreachable_loopback_url()?),
+        model: "test-model".to_owned(),
+        api_key: ApiKeySource::Value(String::new()),
+    });
+
+    let Err(error) = result else {
+        return Err("expected an empty api_key to be refused".into());
+    };
+    assert_eq!(error.code(), "embedding/config");
+    assert!(error.to_string().contains("api_key"));
+    Ok(())
+}
+
+#[test]
+fn a_key_written_in_configuration_never_appears_in_debug_output() {
+    let secret = "sk-file-secret-do-not-leak";
+    let config = OpenAiCompatibleConfig {
+        endpoint: "https://embeddings.example.com/v1/embeddings".to_owned(),
+        model: "test-model".to_owned(),
+        api_key: ApiKeySource::Value(secret.to_owned()),
+    };
+
+    assert!(!format!("{config:?}").contains(secret));
+    assert!(!format!("{:?}", config.api_key).contains(secret));
+    assert!(format!("{:?}", ApiKeySource::Environment("OPENAI_API_KEY".to_owned())).contains("OPENAI_API_KEY"));
+}
+
+#[test]
+fn a_key_variable_that_is_set_but_empty_is_refused_with_no_request_sent() -> Result<(), Box<dyn std::error::Error>> {
+    run_with_env_child(
+        "a_key_variable_that_is_set_but_empty_is_refused_with_no_request_sent_child",
+        "CONTEXTOS_TEST_KEY_EMPTY_VARIABLE",
+        "",
+    )
+}
+
+#[test]
+fn a_key_variable_that_is_set_but_empty_is_refused_with_no_request_sent_child() -> Result<(), Box<dyn std::error::Error>>
+{
+    if std::env::var_os("CONTEXTOS_TEST_KEY_EMPTY_VARIABLE").is_none() {
+        return Ok(());
+    }
+
+    let result = OpenAiCompatible::try_from(OpenAiCompatibleConfig {
+        endpoint: format!("{}/v1/embeddings", support::unreachable_loopback_url()?),
+        model: "test-model".to_owned(),
+        api_key: ApiKeySource::Environment("CONTEXTOS_TEST_KEY_EMPTY_VARIABLE".to_owned()),
+    });
+
+    let Err(error) = result else {
+        return Err("expected an empty key variable to be refused".into());
+    };
+    assert_eq!(error.code(), "embedding/config");
+    assert!(
+        error.to_string().contains("CONTEXTOS_TEST_KEY_EMPTY_VARIABLE"),
+        "{error}"
+    );
     Ok(())
 }

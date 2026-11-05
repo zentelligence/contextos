@@ -1,0 +1,70 @@
+{# The metadata panel shared by Notes, Wiki, Insights, and Entity-folders: the selected
+   item's own real frontmatter, shown and edited as real fields
+   (`crate::metadata_panel::metadata_field_views`'s own "full frontmatter editor" doc), every
+   string or string-array field it actually has. Submitted through the same `data-field`
+   convention `base_view.html`'s row-edit form already uses: one input per real frontmatter
+   key, collected into a `patch` object by its own script, rather than a fixed set of named
+   form fields this dynamic a field list could never have.
+
+   `save_href` is the URL the panel's changes are saved to, the selected item's own address on
+   its screen, which each caller takes from `crate::urls::VaultUrls`.
+
+   `hint_primary`/`hint_secondary` are an optional short header line shown above the field
+   list, joined with a middle dot when both are non-empty and omitted entirely when both are
+   empty - Notes' own weekday and ISO week
+   (`routes::notes::weekday_and_iso_week`, which formats its own "week " prefix onto the plain
+   number itself, keeping that wording a Notes-specific concern rather than baking it into
+   this shared macro) is the only caller with anything to put here today; Wiki, Insights, and
+   Entity-folders pass empty strings, which render as nothing through the same emptiness
+   checks. Named generically, not `weekday`/`iso_week`, so no one screen's own frontmatter
+   shape leaks into this shared contract.
+
+   The empty-field-list message takes a last parameter, `noun` - the selected item's own
+   plain-English name ("note", "page", ...) - so it reads naturally for every screen rather
+   than staying Notes' own original hardcoded "note" wording. Notes passes `"note"` here,
+   keeping its own rendered output unchanged from before this parameter existed. #}
+{% macro metadata_panel(save_href, expected_hash, hint_primary, hint_secondary, fields, noun) %}
+<aside class="notes-metadata-panel">
+  <div class="section-label">Metadata</div>
+  <form
+    class="notes-metadata-form"
+    id="notes-metadata-form"
+    hx-patch="{{ save_href }}"
+    hx-target="closest .notes-screen"
+    hx-swap="outerHTML"
+    hx-vals="js:{patch:(function(el){var p={};el.querySelectorAll('[data-field]').forEach(function(i){p[i.dataset.field]=i.value;});return p;})(document.getElementById('notes-metadata-form')), expected_hash: '{{ expected_hash }}'}"
+  >
+  {% if !hint_primary.is_empty() || !hint_secondary.is_empty() %}
+    <p class="hint mono">
+    {%- if !hint_primary.is_empty() %}{{ hint_primary }}{% endif -%}
+    {%- if !hint_primary.is_empty() && !hint_secondary.is_empty() %} &middot; {% endif -%}
+    {%- if !hint_secondary.is_empty() %}{{ hint_secondary }}{% endif -%}
+    </p>
+  {% endif %}
+  {% if fields.is_empty() %}
+    <p class="hint italic">This {{ noun }} has no frontmatter fields.</p>
+  {% endif %}
+  {% for field in fields %}
+    <div class="field-row">
+      <label{% if field.links.is_empty() %} for="metadata-field-{{ field.key }}"{% endif %}>{{ field.key }}</label>
+    {% if !field.links.is_empty() %}
+      <ul class="metadata-links">
+      {% for link in field.links %}
+        <li>{% if link.dead %}<span class="metadata-link dead" title="{{ link.reason }}">{{ link.text }}<span class="visually-hidden"> ({{ link.reason }})</span></span>{% else %}<a class="metadata-link" href="{{ link.href }}">{{ link.text }}</a>{% endif %}</li>
+      {% endfor %}
+      </ul>
+      <details class="metadata-link-edit">
+        <summary>Edit</summary>
+        <input id="metadata-field-{{ field.key }}" type="text" data-field="{{ field.key }}" value="{{ field.value }}">
+      </details>
+    {% else if field.editable %}
+      <input id="metadata-field-{{ field.key }}" type="text" data-field="{{ field.key }}" value="{{ field.value }}">
+    {% else %}
+      <span class="hint mono" id="metadata-field-{{ field.key }}">{{ field.value }}</span>
+    {% endif %}
+    </div>
+  {% endfor %}
+    <button type="submit" class="btn primary small">Save</button>
+  </form>
+</aside>
+{% endmacro %}

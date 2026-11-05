@@ -1,0 +1,20 @@
+<div class="jobs-screen" id="workflows-screen">
+{% for notice in notices %}  <p class="job-message" role="alert">{{ notice }}</p>
+{% endfor %}  <nav class="filter-chips" aria-label="Filter jobs by state">
+{% for chip in chips %}    <a class="chip{% if chip.active %} active{% endif %}" href="{{ chip.href }}" hx-get="{{ chip.href }}" hx-target="#workflows-screen" hx-swap="outerHTML" hx-push-url="true"{% if chip.active %} aria-current="true"{% endif %}>{{ chip.label }}</a>
+{% endfor %}  </nav>
+  <p class="hint">{{ shown }} shown{% for link in links %} · <a href="{{ link.href }}">{{ link.label }}</a>{% endfor %}</p>
+{% if workflows.is_empty() %}
+  <section class="panel"><p class="hint">{% if filter_value == "all" %}No workflows are registered yet.{% else %}No job matches this filter.{% endif %}</p></section>
+{% else %}
+{% for workflow in workflows %}
+  <section class="panel workflow-section">
+    <header class="panel-header"><h2><a href="{{ workflow.href }}">{{ workflow.name }}</a></h2>{% if let Some(problem) = workflow.problem %}<span class="badge attention">{{ problem.badge }}</span>{% endif %}</header>
+{% if let Some(problem) = workflow.problem %}    <p class="hint" role="alert">{{ problem.detail }}</p>
+{% endif %}{% if workflow.jobs.is_empty() %}    <p class="hint">No jobs.</p>
+{% else %}    <div class="jobs-grid">
+{% for job in workflow.jobs %}{% include "job_card.html" %}{% endfor %}    </div>
+{% endif %}  </section>
+{% endfor %}
+{% endif %}
+</div>

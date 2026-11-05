@@ -1,0 +1,46 @@
+{% for field in link_fields %}
+  <div class="task-field task-link-field" data-field="{{ field.key }}" data-single="{{ field.single }}">
+    <span class="task-field-label">{{ field.label }}</span>
+    <!-- Always submitted, whether or not any chip is: distinguishes "this
+         link field was on the form with zero chips" (clear it) from "this
+         field never appeared at all" (leave it untouched), which a chip's
+         own hidden input alone cannot do once every chip has been removed. -->
+    <input type="hidden" name="{{ field.key }}__present" value="1">
+    <div class="link-chip-list">
+    {% for chip in field.chips %}
+      <span class="link-chip" data-target="{{ chip.target }}">
+        <input type="hidden" name="{{ field.key }}" value="{{ chip.target }}">
+      {% if let Some(href) = chip.href %}
+        <a class="mono" href="{{ href }}">{{ chip.display_id }}</a>
+      {% else %}
+        <span class="mono">{{ chip.display_id }}</span>
+      {% endif %}
+      {% if let Some(title) = chip.title %}
+        <span class="link-chip-title">{{ title }}</span>
+      {% else if chip.unrouted %}
+        <span class="link-chip-title link-chip-dangling" title="{{ crate::vault_links::UNROUTED_HINT }}">No screen yet</span>
+      {% else if chip.href.is_none() %}
+        <span class="link-chip-title link-chip-dangling">Not found</span>
+      {% endif %}
+        <button type="button" class="link-chip-remove" aria-label="Remove link">&times;</button>
+      </span>
+    {% endfor %}
+    </div>
+    <div class="link-search">
+      <!-- Deliberately no `name`: this box is ephemeral search-as-you-type
+           state for its own `hx-get` below, never a frontmatter value, and
+           this field group sits inside the "Save fields" form
+           (`task_detail.html`) - a `name` here would have htmx's own
+           `json-enc` serialise it into that submission alongside every real
+           field. `hx-vals` supplies this request's own "q" query parameter
+           directly from the input instead. -->
+      <input type="text" class="link-search-input" placeholder="Search tasks…" autocomplete="off"
+        hx-get="{{ urls.task_link_search(id, field.key) }}"
+        hx-trigger="keyup changed delay:300ms"
+        hx-target="#link-search-results-{{ field.key }}"
+        hx-vals="js:{q: this.value}"
+        hx-swap="innerHTML">
+      <div class="link-search-results" id="link-search-results-{{ field.key }}"></div>
+    </div>
+  </div>
+{% endfor %}

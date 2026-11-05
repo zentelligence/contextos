@@ -1,0 +1,35 @@
+{# `href` doubles as both the `PATCH` save target and the `GET` cancel
+   target: every Profile item's own URL already answers both
+   methods (`GET` reads it, `PATCH` saves it), matching Wiki/Insights'
+   identical per-item addressing - no separate cancel route is needed. #}
+{% macro form(href, edit_body, edit_expected_hash) %}
+<form
+  class="wiki-edit-form"
+  hx-patch="{{ href }}"
+  hx-target="closest .profile-screen"
+  hx-swap="outerHTML"
+>
+  <input type="hidden" name="expected_hash" value="{{ edit_expected_hash }}">
+  <div class="save-bar save-bar-top">
+    <button type="submit" class="btn primary small">Save</button>
+    <button
+      type="button"
+      class="btn small"
+      hx-get="{{ href }}"
+      hx-target="closest .profile-screen"
+      hx-swap="outerHTML"
+    >Cancel</button>
+  </div>
+  <textarea name="content" class="notes-body-textarea" autofocus>{{ edit_body }}</textarea>
+  <div class="save-bar">
+    <button type="submit" class="btn primary small">Save</button>
+    <button
+      type="button"
+      class="btn small"
+      hx-get="{{ href }}"
+      hx-target="closest .profile-screen"
+      hx-swap="outerHTML"
+    >Cancel</button>
+  </div>
+</form>
+{% endmacro %}

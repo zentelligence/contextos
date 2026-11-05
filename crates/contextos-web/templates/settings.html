@@ -1,6 +1,13 @@
 <div class="settings" hx-ext="json-enc">
   <h1>Settings</h1>
 
+{% if let Some(notice) = notice %}
+  <p class="hint settings-banner settings-banner-notice">{{ notice }}</p>
+{% endif %}
+{% if let Some(error) = error %}
+  <p class="hint error settings-banner settings-banner-error">{{ error }}</p>
+{% endif %}
+
   <div class="settings-grid">
     <div class="settings-nav" id="settings-nav">
       <button type="button" class="active" data-pane="appearance">Appearance</button>
@@ -11,28 +18,101 @@
     <div>
       <section class="settings-panel settings-appearance" id="pane-appearance">
         <h2>Appearance</h2>
-        <p class="hint"><code>[server.ui]</code> is an unenumerated key/value table (theme, font, size, <code>system_name</code> for the header title, and similar rendering-side preferences); edit any existing key below or add a new one.</p>
+
+        <div class="field-row">
+          <label>Theme</label>
+          <div class="appearance-picker" role="group" aria-label="Theme">
+{% for option in theme_options %}
+            <button
+              type="button"
+              class="appearance-option{% if option.selected %} selected{% endif %}"
+              aria-pressed="{{ option.selected }}"
+              hx-patch="/settings/"
+              hx-target=".settings"
+              hx-swap="outerHTML"
+              hx-vals='{"target":"ui","patch":{"theme":"{{ option.value }}"}}'
+            >
+              <span class="theme-swatch swatch-{{ option.value }}"></span>
+              <span class="option-label">{{ option.label }}</span>
+            </button>
+{% endfor %}
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label>Font size</label>
+          <div class="appearance-picker" role="group" aria-label="Font size">
+{% for option in size_options %}
+            <button
+              type="button"
+              class="appearance-option{% if option.selected %} selected{% endif %}"
+              aria-pressed="{{ option.selected }}"
+              hx-patch="/settings/"
+              hx-target=".settings"
+              hx-swap="outerHTML"
+              hx-vals='{"target":"ui","patch":{"size":"{{ option.value }}"}}'
+            >
+              <span class="option-label font-size-sample size-{{ option.value }}">{{ option.label }}</span>
+            </button>
+{% endfor %}
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label>Font</label>
+          <div class="appearance-picker" role="group" aria-label="Font">
+{% for option in font_options %}
+            <button
+              type="button"
+              class="appearance-option{% if option.selected %} selected{% endif %}"
+              aria-pressed="{{ option.selected }}"
+              hx-patch="/settings/"
+              hx-target=".settings"
+              hx-swap="outerHTML"
+              hx-vals='{"target":"ui","patch":{"font":"{{ option.value }}"}}'
+            >
+              <span class="option-label font-sample font-{{ option.value }}">{{ option.label }}</span>
+            </button>
+{% endfor %}
+          </div>
+        </div>
+
         <form
+          class="field-row"
           hx-patch="/settings/"
           hx-target=".settings"
           hx-swap="outerHTML"
-          hx-vals="js:{target:'ui', patch:(function(){var out={};document.querySelectorAll('#appearance-fields input[data-ui-key]').forEach(function(i){out[i.dataset.uiKey]=i.value;});var k=(document.getElementById('ui-new-key').value||'').trim();var v=document.getElementById('ui-new-value').value||'';if(k)out[k]=v;return out;})()}"
+          hx-vals="js:{target:'ui', patch:{system_name: document.getElementById('system-name-input').value}}"
         >
-          <div id="appearance-fields">
-{% if ui.is_empty() %}
-            <p class="hint">No <code>[server.ui]</code> keys are set yet.</p>
-{% else %}
-{% for (key, value) in ui %}
-            <div class="field-row"><label>{{ key }}<input type="text" data-ui-key="{{ key }}" value="{{ value }}"></label></div>
-{% endfor %}
-{% endif %}
-          </div>
-          <div class="field-row">
-            <label>Add key<input type="text" id="ui-new-key" placeholder="e.g. theme"></label>
-            <label>Value<input type="text" id="ui-new-value"></label>
-          </div>
+          <label>System name<input type="text" id="system-name-input" data-ui-key="system_name" value="{{ system_name }}"></label>
           <div class="save-bar"><button type="submit" class="btn primary">Save</button></div>
         </form>
+
+        <details class="appearance-advanced">
+          <summary>Advanced</summary>
+          <p class="hint">Every other <code>[server.ui]</code> key (<code>logo</code> for the header logo's filename under <code>static_dir</code>, and any other unenumerated rendering-side preference); edit an existing key below or add a new one.</p>
+          <form
+            hx-patch="/settings/"
+            hx-target=".settings"
+            hx-swap="outerHTML"
+            hx-vals="js:{target:'ui', patch:(function(){var out={};document.querySelectorAll('#appearance-fields input[data-ui-key]').forEach(function(i){out[i.dataset.uiKey]=i.value;});var k=(document.getElementById('ui-new-key').value||'').trim();var v=document.getElementById('ui-new-value').value||'';if(k)out[k]=v;return out;})()}"
+          >
+            <div id="appearance-fields">
+{% if ui.is_empty() %}
+              <p class="hint">No other <code>[server.ui]</code> keys are set yet.</p>
+{% else %}
+{% for (key, value) in ui %}
+              <div class="field-row"><label>{{ key }}<input type="text" data-ui-key="{{ key }}" value="{{ value }}"></label></div>
+{% endfor %}
+{% endif %}
+            </div>
+            <div class="field-row">
+              <label>Add key<input type="text" id="ui-new-key" placeholder="e.g. logo"></label>
+              <label>Value<input type="text" id="ui-new-value"></label>
+            </div>
+            <div class="save-bar"><button type="submit" class="btn primary">Save</button></div>
+          </form>
+        </details>
       </section>
 
       <section class="settings-panel settings-mcp-servers" id="pane-servers" hidden>
@@ -44,7 +124,6 @@
 {% for server in mcp_servers %}
           <li data-name="{{ server.name }}">
             <div class="mcp-server-row">
-              <span class="mcp-server-status" title="{{ server.status_label }}">{{ server.status_icon }}</span>
               <span class="mcp-server-name">{{ server.name }}</span>
               <span class="mcp-server-transport">{{ server.transport }}</span>
               <span class="mcp-server-detail">{{ server.detail }}</span>
@@ -52,35 +131,153 @@
               <button
                 type="button"
                 class="mcp-server-delete btn small"
-                hx-delete="/settings/"
+                hx-delete="/settings/mcp-servers/{{ server.name_encoded }}"
                 hx-target=".settings"
                 hx-swap="outerHTML"
-                hx-vals='{"name": "{{ server.name }}"}'
                 hx-confirm="Remove MCP server &quot;{{ server.name }}&quot;? Any registered app whose manifest still names it will be refused."
               >Remove</button>
             </div>
+{% let connection = server.connection.clone() %}
+{% include "settings_mcp_connection.html" %}
             <form
               class="mcp-server-edit"
               id="mcp-server-edit-{{ loop.index0 }}"
               data-name="{{ server.name }}"
               hidden
-              hx-patch="/settings/"
-              hx-target=".settings"
-              hx-swap="outerHTML"
-{% if server.transport == "stdio" %}
-              hx-vals="js:{target:'mcp_server', name:this.dataset.name, patch:{command: this.querySelector('[data-field=command]').value, args: this.querySelector('[data-field=args]').value.split(/\s+/).filter(Boolean)}}"
-{% else %}
-              hx-vals="js:{target:'mcp_server', name:this.dataset.name, patch:(function(el){var p={endpoint: el.querySelector('[data-field=endpoint]').value};var t=el.querySelector('[data-field=token_env]').value;if(t)p.token_env=t;return p;})(this)}"
-{% endif %}
             >
 {% if server.transport == "stdio" %}
               <label>command<input type="text" data-field="command" value="{{ server.command.as_deref().unwrap_or_default() }}"></label>
               <label>args (space-separated)<input type="text" data-field="args" value="{{ server.args.as_deref().unwrap_or_default() }}"></label>
 {% else %}
               <label>endpoint<input type="text" data-field="endpoint" value="{{ server.endpoint.as_deref().unwrap_or_default() }}"></label>
-              <label>auth: token_env (environment variable name holding the bearer token; never the token itself)<input type="text" data-field="token_env" value="{{ server.token_env.as_deref().unwrap_or_default() }}" placeholder="e.g. SOME_OTHER_SERVER_TOKEN"></label>
+
+              <div class="mcp-server-auth" id="mcp-server-auth-{{ loop.index0 }}">
+                <label>Authentication mode
+                  <select data-field="auth_mode">
+                    <option value="none"{% if server.auth.mode == "none" %} selected{% endif %}>None</option>
+                    <option value="bearer"{% if server.auth.mode == "bearer" %} selected{% endif %}>Bearer token</option>
+                    <option value="oauth2"{% if server.auth.mode == "oauth2" %} selected{% endif %}>OAuth2</option>
+                  </select>
+                </label>
+
+                <fieldset class="mcp-server-auth-bearer">
+                  <legend>Bearer token</legend>
+                  <p class="hint">Either an environment variable or a pasted token supplies the bearer token; neither is a fallback of the other. A pasted token is kept in the credential store beside web.toml, never in web.toml itself.</p>
+                  <div class="field-row">
+                    <label>Environment variable name<input type="text" data-field="auth_bearer_token_env" value="{{ server.auth.bearer_token_env }}" placeholder="e.g. SOME_OTHER_SERVER_TOKEN"></label>
+                    <label>Paste a token<input type="password" autocomplete="off" data-field="auth_bearer_credential_paste" value="" placeholder="{% if server.auth.bearer_credential_configured %}Configured; paste to replace{% else %}Paste to set{% endif %}"></label>
+                  </div>
+{% if let Some(secret) = server.auth.bearer_variable_secret %}
+                  <p class="hint">Value of ${{ server.auth.bearer_token_env }}: {% include "settings_secret.html" %}</p>
 {% endif %}
-              <button type="submit" class="btn primary small">Save</button>
+{% if let Some(secret) = server.auth.bearer_token_secret %}
+                  <p class="hint">Pasted token: {% include "settings_secret.html" %}</p>
+{% endif %}
+                  <input type="hidden" data-field="auth_bearer_credential_ref" value="{{ server.auth.bearer_credential_ref }}">
+                </fieldset>
+
+                <fieldset class="mcp-server-auth-oauth2">
+                  <legend>OAuth2</legend>
+                  <div class="field-row mcp-server-oauth-detect">
+                    <button
+                      type="button"
+                      class="btn small"
+                      hx-post="/settings/oauth/{{ server.name_encoded }}/detect"
+                      hx-target=".settings"
+                      hx-swap="outerHTML"
+                      hx-vals="js:{endpoint: document.getElementById('mcp-server-edit-{{ loop.index0 }}').querySelector('[data-field=endpoint]').value}"
+                    >Detect</button>
+                    <span class="hint">Checks the endpoint above for its authentication requirement and pre-fills what it finds below; nothing is saved until you review and Connect.</span>
+                  </div>
+                  <div class="field-row">
+                    <label>Client ID<input type="text" data-field="auth_oauth_client_id" value="{{ server.auth.oauth_client_id }}"></label>
+                  </div>
+                  <p class="hint">A client secret, when the provider issues one, comes from either an environment variable or a pasted secret, as for a bearer token.</p>
+                  <div class="field-row">
+                    <label>Client secret environment variable name<input type="text" data-field="auth_oauth_client_secret_env" value="{{ server.auth.oauth_client_secret_env }}" placeholder="e.g. SOME_CLIENT_SECRET"></label>
+                    <label>Paste a client secret<input type="password" autocomplete="off" data-field="auth_oauth_client_secret_paste" value="" placeholder="{% if server.auth.oauth_client_secret_configured %}Configured; paste to replace{% else %}Paste to set{% endif %}"></label>
+                  </div>
+{% if let Some(secret) = server.auth.oauth_client_secret_variable_secret %}
+                  <p class="hint">Value of ${{ server.auth.oauth_client_secret_env }}: {% include "settings_secret.html" %}</p>
+{% endif %}
+                  <div class="field-row">
+                    <label>Authorization endpoint<input type="text" data-field="auth_oauth_authorization_endpoint" value="{{ server.auth.oauth_authorization_endpoint }}"></label>
+                    <label>Token endpoint<input type="text" data-field="auth_oauth_token_endpoint" value="{{ server.auth.oauth_token_endpoint }}"></label>
+                  </div>
+                  <label>Scopes (space-separated)<input type="text" data-field="auth_oauth_scopes" value="{{ server.auth.oauth_scopes }}"></label>
+{% if let Some(secret) = server.auth.oauth_client_secret_secret %}
+                  <p class="hint">Client secret: {% include "settings_secret.html" %}</p>
+{% endif %}
+                  <input type="hidden" data-field="auth_oauth_client_secret_ref" value="{{ server.auth.oauth_client_secret_ref }}">
+                  <input type="hidden" data-field="auth_oauth_credential_ref" value="{{ server.auth.oauth_credential_ref }}">
+                  <div class="mcp-server-oauth-status">
+{% if server.auth.oauth_connected %}
+                    <span class="hint">Connected{% if !server.auth.oauth_expires_at.is_empty() %} (expires {{ server.auth.oauth_expires_at }}){% endif %}</span>
+                    <button type="button" class="btn small" hx-post="/settings/oauth/{{ server.name_encoded }}/connect">Sign in again</button>
+                    <button type="button" class="btn small" hx-delete="/settings/oauth/{{ server.name_encoded }}/connect" hx-target=".settings" hx-swap="outerHTML">Disconnect</button>
+{% else %}
+                    <span class="hint">Not connected</span>
+                    <button type="button" class="btn small" hx-post="/settings/oauth/{{ server.name_encoded }}/connect">Connect</button>
+{% endif %}
+                  </div>
+                </fieldset>
+
+                <fieldset class="mcp-server-headers">
+                  <legend>Headers</legend>
+                  <p class="hint"><code>[mcp_server.headers]</code>: static, non-secret name/value pairs sent with every request to this server, written in web.toml as shown. Supply a token under Bearer token above instead, where it is kept out of web.toml and shown only on request.</p>
+                  <div class="mcp-server-headers-fields">
+{% if server.auth.headers.is_empty() %}
+                    <p class="hint">No <code>[mcp_server.headers]</code> keys are set yet.</p>
+{% else %}
+{% for (key, value) in server.auth.headers %}
+                    <div class="field-row"><label>{{ key }}<input type="text" data-header-key="{{ key }}" value="{{ value }}"></label></div>
+{% endfor %}
+{% endif %}
+                  </div>
+                  <div class="field-row">
+                    <label>Add key<input type="text" data-field="header_new_key" placeholder="e.g. locationId"></label>
+                    <label>Value<input type="text" data-field="header_new_value"></label>
+                  </div>
+                </fieldset>
+              </div>
+{% endif %}
+              <button
+                type="submit"
+                class="btn primary small mcp-server-save"
+                hx-patch="/settings/"
+                hx-target=".settings"
+                hx-swap="outerHTML"
+{% if server.transport == "stdio" %}
+                hx-vals="js:{target:'mcp_server', name:document.getElementById('mcp-server-edit-{{ loop.index0 }}').dataset.name, patch:{command: document.getElementById('mcp-server-edit-{{ loop.index0 }}').querySelector('[data-field=command]').value, args: document.getElementById('mcp-server-edit-{{ loop.index0 }}').querySelector('[data-field=args]').value.split(/\s+/).filter(Boolean)}}"
+{% else %}
+                hx-vals="js:{target:'mcp_server', name:document.getElementById('mcp-server-edit-{{ loop.index0 }}').dataset.name, patch:(function(el){
+var p={endpoint: el.querySelector('[data-field=endpoint]').value};
+var mode=el.querySelector('[data-field=auth_mode]').value;
+if(mode==='none'){
+p.auth={mode:'none'};
+}else if(mode==='bearer'){
+var bearer={mode:'bearer'};
+var bearerTokenEnv=el.querySelector('[data-field=auth_bearer_token_env]').value;
+var bearerRef=el.querySelector('[data-field=auth_bearer_credential_ref]').value;
+var bearerPaste=el.querySelector('[data-field=auth_bearer_credential_paste]').value;
+if(bearerTokenEnv){bearer.token_env=bearerTokenEnv;}if(!bearerTokenEnv||bearerPaste){bearer.credential_ref=bearerRef;if(bearerPaste){bearer.credential_value=bearerPaste;}}
+p.auth=bearer;
+}else if(mode==='oauth2'){
+var oauth={mode:'oauth2',authorization_endpoint:el.querySelector('[data-field=auth_oauth_authorization_endpoint]').value,token_endpoint:el.querySelector('[data-field=auth_oauth_token_endpoint]').value,scopes:(el.querySelector('[data-field=auth_oauth_scopes]').value||'').split(/\s+/).filter(Boolean),credential_ref:el.querySelector('[data-field=auth_oauth_credential_ref]').value};
+var clientId=el.querySelector('[data-field=auth_oauth_client_id]').value;
+if(clientId){oauth.client_id=clientId;var secretEnv=(el.querySelector('[data-field=auth_oauth_client_secret_env]').value||'').trim();var secretPaste=el.querySelector('[data-field=auth_oauth_client_secret_paste]').value;if(secretEnv){oauth.client_secret_env=secretEnv;}if(!secretEnv||secretPaste){oauth.client_secret_ref=el.querySelector('[data-field=auth_oauth_client_secret_ref]').value;if(secretPaste){oauth.client_secret_value=secretPaste;}}}
+p.auth=oauth;
+}
+var headers={};
+el.querySelectorAll('[data-header-key]').forEach(function(input){headers[input.dataset.headerKey]=input.value;});
+var newHeaderKey=(el.querySelector('[data-field=header_new_key]').value||'').trim();
+var newHeaderValue=el.querySelector('[data-field=header_new_value]').value||'';
+if(newHeaderKey)headers[newHeaderKey]=newHeaderValue;
+if(Object.keys(headers).length>0){p.headers=headers;}
+return p;
+})(document.getElementById('mcp-server-edit-{{ loop.index0 }}'))}"
+{% endif %}
+              >Save</button>
             </form>
           </li>
 {% endfor %}
@@ -115,13 +312,28 @@
           hx-post="/settings/"
           hx-target=".settings"
           hx-swap="outerHTML"
-          hx-vals="js:(function(){var t=(document.getElementById('mcp-server-add-token-env').value||'').trim();return t?{token_env:t}:{};})()"
+          hx-vals="js:{auth: (function(form){
+var variable=(document.getElementById('mcp-server-add-token-env').value||'').trim();
+var pasted=document.getElementById('mcp-server-add-token-paste').value;
+var name=(form.querySelector('[name=name]').value||'').trim();
+var auth={mode:'bearer'};
+if(variable)auth.token_env=variable;
+if(pasted){auth.credential_ref=name+'-token';auth.credential_value=pasted;}
+return (variable||pasted)?auth:undefined;
+})(document.getElementById('mcp-server-add-http'))}"
         >
           <h3>Add an MCP server (HTTP)</h3>
           <input type="hidden" name="transport" value="http">
           <label>name <input type="text" name="name" required></label>
           <label>endpoint <input type="text" name="endpoint" placeholder="http://127.0.0.1:9000" required></label>
-          <label>auth: token_env (environment variable name holding the bearer token; never the token itself) <input type="text" id="mcp-server-add-token-env" placeholder="e.g. SOME_OTHER_SERVER_TOKEN"></label>
+          <fieldset>
+            <legend>Bearer token (optional)</legend>
+            <p class="hint">Either an environment variable or a pasted token supplies the bearer token. A pasted token is kept in the credential store beside web.toml, never in web.toml itself. OAuth2 and headers are set under Edit once the server is added.</p>
+            <div class="field-row">
+              <label>Environment variable name <input type="text" id="mcp-server-add-token-env" placeholder="e.g. SOME_OTHER_SERVER_TOKEN"></label>
+              <label>Paste a token <input type="password" autocomplete="off" id="mcp-server-add-token-paste" placeholder="Paste to set"></label>
+            </div>
+          </fieldset>
           <button type="submit" class="btn primary">Add</button>
         </form>
       </section>
@@ -145,17 +357,42 @@
 </div>
 <script>
 (function(){
+  // Every mutation on this page (adding a server, saving a field, connecting OAuth) re-renders
+  // this whole fragment server-side and swaps it in via `hx-swap="outerHTML"`, which always comes
+  // back with Appearance marked active (`settings.rs::render` carries no notion of "which pane was
+  // open"). Without this, an operator adding an MCP server was silently dropped back onto
+  // Appearance even though the MCP servers pane's own content had just changed underneath them.
+  // A per-viewer sessionStorage note survives the swap (this script re-runs on every one, since
+  // htmx's default `allowScriptTags` executes inline scripts in swapped-in content) without
+  // needing the server to track UI focus state at all.
+  var PANE_STORAGE_KEY = 'contextos-settings-active-pane';
+  var PANES = ['appearance', 'servers', 'bind'];
   var nav = document.getElementById('settings-nav');
+
+  function activatePane(pane){
+    if(PANES.indexOf(pane) === -1) return;
+    if(nav){
+      nav.querySelectorAll('button[data-pane]').forEach(function(b){
+        b.classList.toggle('active', b.dataset.pane === pane);
+      });
+    }
+    PANES.forEach(function(p){
+      var section = document.getElementById('pane-' + p);
+      if(section) section.hidden = p !== pane;
+    });
+  }
+
+  try {
+    var storedPane = sessionStorage.getItem(PANE_STORAGE_KEY);
+    if(storedPane) activatePane(storedPane);
+  } catch(_e) { /* private-browsing or blocked storage: keep the server-rendered default */ }
+
   if(nav){
     nav.addEventListener('click', function(event){
       var button = event.target.closest('button[data-pane]');
       if(!button) return;
-      nav.querySelectorAll('button').forEach(function(b){ b.classList.remove('active'); });
-      button.classList.add('active');
-      ['appearance', 'servers', 'bind'].forEach(function(pane){
-        var section = document.getElementById('pane-' + pane);
-        if(section) section.hidden = pane !== button.dataset.pane;
-      });
+      activatePane(button.dataset.pane);
+      try { sessionStorage.setItem(PANE_STORAGE_KEY, button.dataset.pane); } catch(_e) { /* no-op */ }
     });
   }
 

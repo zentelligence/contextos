@@ -1,7 +1,7 @@
 //! Relevance smoke harness: 20 known-answer queries must return the target
 //! file in the top 3 results.
 //!
-//! `fr_50_relevance_smoke_set_ranks_targets_top_three` runs the mock vault
+//! `relevance_smoke_set_ranks_targets_top_three` runs the mock vault
 //! and query set checked in under `mock/` and is part of the ordinary
 //! `cargo test` gate.
 //!
@@ -131,6 +131,7 @@ fn index_vault(
 
     let index = TantivyIndex::try_from(TextIndexConfig {
         directory: index_directory.to_path_buf(),
+        writer_lock_wait: TextIndexConfig::DEFAULT_WRITER_LOCK_WAIT,
     })?;
     index.index(&documents)?;
     Ok(index)

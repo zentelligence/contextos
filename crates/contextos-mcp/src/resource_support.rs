@@ -27,6 +27,12 @@ pub(crate) enum ResourceError {
     Filesystem(#[from] FsError),
     #[error("{path:?} could not be represented as a resource path")]
     InvalidPath { path: std::path::PathBuf },
+    #[error("directory listing for {path:?} could not be serialised")]
+    DirectoryListingSerialisation {
+        path: std::path::PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 impl ResourceError {
@@ -51,6 +57,9 @@ impl ResourceError {
                 "resource/invalid-uri",
                 "Use a {name}://{relative-path} URI previously returned by resources/list.",
             ),
+            Self::DirectoryListingSerialisation { .. } => {
+                ("resource/serialisation", "This is an internal error; please report it.")
+            }
             Self::Path(error) => (error.code(), error.remediation()),
             Self::Filesystem(FsError::TooLarge { .. }) => (
                 "io/too-large",
@@ -152,11 +161,9 @@ pub(crate) fn bounded_preview(content: &str, max_bytes: usize) -> (String, bool)
 /// directly rather than `Json<T>` (needed to attach an optional
 /// `resource_link` content block): the `#[tool]` macro's
 /// automatic schema derivation only recognises a `Json<T>` return type,
-/// so this replicates it explicitly. Falls back to an empty schema in
-/// the defensive-only case `schema_for_output` itself fails: an
-/// `output_schema` attribute expression must not panic.
+/// so this replicates it explicitly.
 pub(crate) fn output_schema_for<T: schemars::JsonSchema + std::any::Any>() -> std::sync::Arc<rmcp::model::JsonObject> {
-    rmcp::handler::server::tool::schema_for_output::<T>().unwrap_or_default()
+    rmcp::handler::server::tool::schema_for_output::<T>()
 }
 
 /// Output schema for a tool handler whose `CallToolResult` return type

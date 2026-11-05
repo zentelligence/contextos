@@ -4,15 +4,15 @@ This file governs all work in this repository. More specific `AGENTS.md` files m
 
 ## Mission and current state
 
-Build `contextos`, a Rust MCP server that provides safe filesystem parity and ContextOS-aware indexing, logging, versioning, Obsidian operations, and query services. Phase 1 filesystem parity is under implementation; consult the delivery plan and requirement-to-test matrix for verified and pending gates.
+Build `contextos`, a Rust MCP server that provides safe filesystem parity and ContextOS-aware indexing, logging, versioning, Obsidian operations, and query services.
 
-The authoritative product input (requirements and specification) is maintained outside this repository. See `CLAUDE.local.md` for its exact location if present in your checkout, or ask the repository owner.
+Development happens in this repository, on branches merged into `main`. `docs/`, the tests, and the code describe intended behaviour; the maintainer's requirements and specification are kept privately, and a maintainer's checkout may add to this guidance through `*.local.*` files, which are never committed.
 
-Read `requirements.md`, then the specification index and relevant component documents before changing product behaviour. If those files are unavailable, do not invent missing semantics. Record the uncertainty and ask for the required source.
+Read the relevant documentation and tests before changing product behaviour. If intended behaviour is unclear, do not invent missing semantics. Record the uncertainty and ask.
 
 ## Quality mandate
 
-**Holistic quality trumps everything else.** Optimise for the integrity of the whole product and its lifecycle, including correctness, security, data safety, architecture, interoperability, test strength, operability, maintainability, performance, accessibility of diagnostics, and documentation.
+**Holistic quality trumps everything else.** Optimise for the integrity of the whole product and its lifecycle, including correctness, security, data safety, architecture, interoperability, test strength, operability, maintainability, performance, accessibility of diagnostics, and documentation. Suspend any "simplest and smallest bias".
 
 Delivery speed, diff size, convenience, token cost, and passing a narrow test are never sufficient reasons to weaken the result. Scope discipline still applies: solve the requested problem completely and coherently without adding unrequested product surface. However, any bias towards simplest and or smallest is explicitly overruled as violation of the quality mandate.
 
@@ -22,7 +22,7 @@ Prior existence of an error, deviation, or violation is no excuse for perpetuati
 
 1. Read this file and [`.claude/rules/00-index.md`](.claude/rules/00-index.md).
 2. Inspect the working tree and preserve unrelated or user-authored changes.
-3. Identify the governing requirement and delivery phase from the authoritative specification, so the change is grounded in what the product must do.
+3. Identify the behaviour the change must deliver, from the issue, `docs/`, and the tests, so the change is grounded in what the product must do.
 4. Read only the `.claude` rules relevant to the task.
 5. Define the smallest observable behaviour that can be driven by a failing test.
 
@@ -40,12 +40,18 @@ Prior existence of an error, deviation, or violation is no excuse for perpetuati
 - Internal service writes must be structurally unable to recurse into index or operation-log processing.
 - Use `tracing`, never `println!` or `eprintln!`, for runtime diagnostics. Never log vault content, tokens, secrets, or full sensitive paths at INFO or above.
 - Reject malformed or unknown input. Never silently repair or degrade a write.
+- A change to the MCP tool surface, or to behaviour agents rely on when using it, updates the ContextOS plugin's `mcp-tools` skill in the same delivery. See [`.claude/rules/mcp-contracts.md`](.claude/rules/mcp-contracts.md).
 - Use Australian English spelling, grammar, and punctuation for operator-facing text and documentation, including the Oxford comma.
 - Maximum 1000 lines per code file.
-- Do not hard-wrap Markdown prose: one line per paragraph, soft-wrapped by the reader's editor. Wrap only where it adds real value (tables, code samples, or content that must align in a fixed-width view); where a hard limit is genuinely needed, use 120 characters.
+- Do not hard-wrap Markdown prose: one line per paragraph, soft-wrapped by the reader's editor. Wrap only where it adds real value (tables, code samples, or content that must align in a fixed-width view); where a hard limit is genuinely needed or adopted (e.g. Rustdoc), use 120 not 80 characters.
 - Keep changes scoped. Do not commit, push, rewrite history, or alter releases unless the user explicitly asks.
 - Never add attribution to commit messages.
 - Use zero-context sub-agents, forked contexts waste tokens.
+- Never add 'current state' updates to repo files.
+- `contextos-web` is intentionally SSR+HTMX+SSE, client-side JS may only be added where HTMX genuinely cannot provide the functionality. Backend for JS server calls must follow the `docs/http-routing-response-contract.md` standard with:
+1. HTMX calls via `htmx.min.js`,
+2. MCP calls to `/mcp/{{server}}/{{tool}}` via `contextos-web-client.js`
+3. `/api/v{n}` endpoints only if neither 1 nor 2 can meet the need.
 
 ## Test standards
 

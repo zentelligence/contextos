@@ -1,67 +1,40 @@
 use std::sync::Arc;
 
 use contextos_core::{
-    LogsOperations, MaintainsIndexes, OperationEvent, OperationRouter, OperationRouterConfig, OperationWarning,
-    PathError, SystemClock, VaultPath, VaultRootId, VaultSet, VersionsVault,
+    FirstReportedCreation, LocalClock, LocalClockInput, LogsOperations, MaintainsIndexes, OperationEvent,
+    OperationRouter, OperationWarning, OperatorTimeZone, VaultRootId, VaultSet,
 };
 use contextos_fs::{
-    Filesystem, FilesystemConfig, FilesystemService, FilesystemServiceConfig, FsError, FsLimits,
-    RoutedFilesystemServiceConfig,
+    FileNameIndex, Filesystem, FilesystemService, FilesystemServiceConfig, FsError, RoutedFilesystemServiceConfig,
 };
-use contextos_git::{Git2Vault, Git2VaultConfig, GitCommitResult, GitError, GitWriteError};
-use contextos_index::{IndexService, IndexServiceConfig, IndexServiceError};
+use contextos_git::{Git2Vault, GitCommitResult, GitError};
+use contextos_index::IndexService;
 use contextos_mermaid::MermanParser;
-use contextos_oplog::{OperationLog, OperationLogConfig, OperationLogError};
+use contextos_oplog::{OperationLog, OperationLogError};
 use contextos_search::{
-    EmbeddingProviderConfig, EmbedsText, SearchError, SemanticConfig, VaultSearchConfig, VaultSearchService,
+    ApiKeySource, EmbeddingProviderConfig, EmbedsText, SearchError, SemanticConfig, VaultSearchConfig,
+    VaultSearchService,
 };
 use rmcp::handler::server::router::tool::ToolRoute;
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::schemars;
 use serde::Deserialize;
-use thiserror::Error;
-use tokio::sync::{Mutex, OwnedMutexGuard};
 use tokio_util::sync::CancellationToken;
 
-use crate::module::{ModuleContext, ModuleRegistry, ModuleRegistryError};
-use crate::tool_error::ToolError;
+use crate::commit_schedule::VersionCollection;
+use crate::module::{ModuleContext, ModuleRegistry};
+use crate::projection_wiring::Projection;
+use crate::server_clock::ServerClock;
+use crate::server_compose as compose;
+pub use crate::server_error::{ServerBuildError, ShutdownFlushError};
 use crate::tools::vault::VaultInfoConfig;
-use crate::{Config, ConfigError, EmbeddingProvider, VaultConfig};
+use crate::vault_events::VaultEvents;
+pub(crate) use crate::write_coordinator::WriteCoordinator;
+use crate::{Config, EmbeddingProvider, VaultConfig};
 
-#[derive(Clone, Debug)]
-pub(crate) struct WriteCoordinator {
-    locks: Arc<Vec<Arc<Mutex<()>>>>,
-}
-
-impl From<usize> for WriteCoordinator {
-    fn from(root_count: usize) -> Self {
-        let locks = (0..root_count).map(|_| Arc::new(Mutex::new(()))).collect();
-        Self { locks: Arc::new(locks) }
-    }
-}
-
-impl WriteCoordinator {
-    pub(crate) async fn lock_roots(&self, roots: &[VaultRootId]) -> Result<Vec<OwnedMutexGuard<()>>, ToolError> {
-        let mut indices = roots
-            .iter()
-            .copied()
-            .map(usize::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-        indices.sort_unstable();
-        indices.dedup();
-
-        let mut guards = Vec::with_capacity(indices.len());
-        for root_index in indices {
-            let lock = self
-                .locks
-                .get(root_index)
-                .cloned()
-                .ok_or(ToolError::RootLockMissing { root_index })?;
-            guards.push(lock.lock_owned().await);
-        }
-        Ok(guards)
-    }
-}
+/// The most files one vault's file name index holds. A vault with more fails to build the index, and links naming a
+/// file outside the linking note's own folder tree then fail rather than resolve against a partial list.
+pub(crate) const MAX_INDEXED_FILES: usize = 500_000;
 
 #[derive(Clone)]
 pub struct ContextOsServer {
@@ -70,9 +43,14 @@ pub struct ContextOsServer {
     /// `DoctorReport::try_from(&Config)` unchanged, giving identical
     /// diagnostic content to `contextos doctor` on the CLI.
     pub(crate) config: Arc<Config>,
+    /// The operator's local clock, for every time a tool writes into a vault.
+    pub(crate) clock: VaultClock,
     pub(crate) roots: Arc<VaultSet>,
     pub(crate) filesystem: Arc<Filesystem>,
     pub(crate) mutations: Arc<RoutedMutationService>,
+    /// The router `mutations` delivers to, kept so a service that writes on its own account (a rebuild, a manual log
+    /// entry, a log flush) hands every write it makes to the same Git and search services.
+    pub(crate) router: Arc<SubstrateRouter>,
     pub(crate) writes: WriteCoordinator,
     pub(crate) destructive_delete: Arc<Vec<bool>>,
     pub(crate) indexes: Arc<Vec<Option<ManagedIndexService>>>,
@@ -80,6 +58,12 @@ pub struct ContextOsServer {
     pub(crate) git: Arc<Vec<Option<ManagedGit>>>,
     pub(crate) git_debounce_seconds: Arc<Vec<u64>>,
     pub(crate) search: Arc<Vec<Option<Arc<VaultSearchService>>>>,
+    /// Agent host projection as `doctor` and `doctor_resolve` assess and repair it; [`Projection::Disabled`] for a
+    /// configuration that does not project.
+    pub(crate) projection: Projection,
+    /// Per-vault, index-aligned with `roots`: every file in the vault by name, which answers a link that names a file
+    /// outside the linking note's own folder tree.
+    pub(crate) file_names: Arc<Vec<FileNameIndex>>,
     pub(crate) rebuild_budget_seconds: Arc<Vec<u64>>,
     pub(crate) vault_info: Arc<VaultInfoConfig>,
     pub(crate) mermaid: Arc<MermanParser>,
@@ -95,16 +79,27 @@ pub struct ContextOsServer {
     pub(crate) resource_link_threshold_bytes: u64,
 }
 
-pub(crate) type ManagedIndexService = IndexService<Filesystem, FilesystemService<SystemClock>>;
-type ManagedOperationLog = OperationLog<FilesystemService<SystemClock>>;
-pub(crate) type ManagedGit = Git2Vault<SystemClock>;
-pub(crate) type SubstrateRouter =
-    OperationRouter<IndexCollection, OperationLogCollection, VersionCollection, SearchCollection>;
-pub(crate) type RoutedMutationService = FilesystemService<SystemClock, SubstrateRouter>;
+/// The clock behind every time the server writes into a vault: the current instant at the operator's local offset
+/// (`[server] timezone`, else the host's zone), never UTC.
+pub(crate) type VaultClock = LocalClock<ServerClock>;
+pub(crate) type ManagedIndexService =
+    IndexService<Filesystem, FilesystemService<VaultClock>, VaultClock, ManagedCreation>;
+type ManagedCreation = FirstReportedCreation<Option<ManagedGit>, Filesystem>;
+pub(crate) type ManagedOperationLog = OperationLog<FilesystemService<VaultClock>>;
+pub(crate) type ManagedGit = Git2Vault<VaultClock>;
+pub(crate) type SubstrateRouter = OperationRouter<
+    IndexCollection,
+    OperationLogCollection,
+    VersionCollection,
+    SearchCollection,
+    Projection,
+    VaultEvents,
+>;
+pub(crate) type RoutedMutationService = FilesystemService<VaultClock, SubstrateRouter>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct IndexCollection {
-    services: Arc<Vec<Option<ManagedIndexService>>>,
+    pub(crate) services: Arc<Vec<Option<ManagedIndexService>>>,
 }
 
 impl MaintainsIndexes for IndexCollection {
@@ -119,7 +114,7 @@ impl MaintainsIndexes for IndexCollection {
 
 #[derive(Clone, Debug)]
 pub(crate) struct OperationLogCollection {
-    services: Arc<Vec<Option<ManagedOperationLog>>>,
+    pub(crate) services: Arc<Vec<Option<ManagedOperationLog>>>,
 }
 
 impl LogsOperations for OperationLogCollection {
@@ -133,59 +128,21 @@ impl LogsOperations for OperationLogCollection {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct VersionCollection {
-    services: Arc<Vec<Option<ManagedGit>>>,
-    debounce_seconds: Arc<Vec<u64>>,
-}
-
-impl VersionsVault for VersionCollection {
-    fn stage(&self, event: &OperationEvent) -> Result<(), OperationWarning> {
-        let mut roots = event.paths.iter().map(VaultPath::root_id).collect::<Vec<_>>();
-        roots.sort_by_key(|root| usize::try_from(*root).unwrap_or(usize::MAX));
-        roots.dedup();
-        for root in roots {
-            let index = usize::try_from(root).map_err(|error| OperationWarning {
-                code: "git/stage".to_owned(),
-                message: error.to_string(),
-            })?;
-            if let Some(service) = self.services.get(index).and_then(Option::as_ref)
-                && service.is_repository()
-            {
-                let mut scoped = event.clone();
-                scoped.paths.retain(|path| path.root_id() == root);
-                service.stage(&scoped)?;
-                let generation = service.pending_generation().map_err(OperationWarning::from)?;
-                let delay = self.debounce_seconds.get(index).copied().unwrap_or(30);
-                let service = service.clone();
-                if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                    runtime.spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-                        let committed =
-                            tokio::task::spawn_blocking(move || service.commit_if_generation(generation)).await;
-                        match committed {
-                            Ok(Ok(_)) => {}
-                            Ok(Err(error)) => {
-                                tracing::warn!(code = error.code(), error = %error, "debounced Git commit failed");
-                            }
-                            Err(error) => tracing::warn!(error = %error, "debounced Git task failed"),
-                        }
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct SearchCollection {
-    services: Arc<Vec<Option<Arc<VaultSearchService>>>>,
+    pub(crate) services: Arc<Vec<Option<Arc<VaultSearchService>>>>,
 }
 
 impl contextos_core::UpdatesSearch for SearchCollection {
     fn update(&self, event: &OperationEvent) -> Result<(), OperationWarning> {
         for service in self.services.iter().flatten() {
             service.update(event)?;
+        }
+        Ok(())
+    }
+
+    fn update_all(&self, events: &[OperationEvent]) -> Result<(), OperationWarning> {
+        for service in self.services.iter().flatten() {
+            service.update_all(events)?;
         }
         Ok(())
     }
@@ -234,7 +191,9 @@ impl ContextOsServer {
         router.merge(Self::mermaid_tool_router());
         router.merge(Self::git_tool_router());
         router.merge(Self::query_tool_router());
+        router.merge(Self::query_blended_tool_router());
         router.merge(Self::vault_tool_router());
+        router.merge(Self::agents_tool_router());
         router.merge(Self::obsidian_tool_router());
         router.merge(Self::doctor_tool_router());
         router
@@ -265,6 +224,28 @@ pub struct ServerBuildConfig {
     pub modules: ModuleRegistry,
 }
 
+/// What a composed server is for, which decides how its start-up treats Git and search.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Purpose {
+    /// A server that goes on to serve: Git's start-up work is performed (maintaining the ignore rules, giving a
+    /// repository with no commits its first commit, and committing changes an earlier process left pending), and a
+    /// vault whose search state cannot be opened stops construction, since every later write would otherwise skip it.
+    Serve,
+    /// The one-shot `contextos doctor --resolve`, which must report every write it makes and do exactly what its dry
+    /// run previewed: Git's start-up work is left to the findings that resolve it, and a vault whose search state
+    /// cannot be opened is resolved without search, reported as a [`SearchUnavailable`] beside the outcomes.
+    Resolve,
+}
+
+/// A vault whose search state could not be opened while composing for [`Purpose::Resolve`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SearchUnavailable {
+    /// The vault's index into `Config::vaults`.
+    pub(crate) vault_index: usize,
+    /// Why its search state could not be opened.
+    pub(crate) reason: String,
+}
+
 impl TryFrom<Config> for ContextOsServer {
     type Error = ServerBuildError;
 
@@ -279,255 +260,160 @@ impl TryFrom<Config> for ContextOsServer {
 impl TryFrom<ServerBuildConfig> for ContextOsServer {
     type Error = ServerBuildError;
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the composition root keeps all per-vault service wiring visible in one auditable boundary"
-    )]
     fn try_from(build: ServerBuildConfig) -> Result<Self, Self::Error> {
+        Self::compose(build, Purpose::Serve, ServerClock::default()).map(|(server, _)| server)
+    }
+}
+
+impl ContextOsServer {
+    /// Builds a serving server whose every reading of the time comes from `clock` instead of the system clock, so
+    /// anything that depends on today's date (the retention sweep, an event's `at`, the day an entry is filed under)
+    /// can be made deterministic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerBuildError`] when the configuration cannot be composed into a server.
+    pub fn with_clock(build: ServerBuildConfig, clock: ServerClock) -> Result<Self, ServerBuildError> {
+        Self::compose(build, Purpose::Serve, clock).map(|(server, _)| server)
+    }
+
+    /// Composes every service for the configured vaults for `purpose`, returning with it every vault whose search
+    /// state could not be opened (always none for [`Purpose::Serve`], which fails instead). Crate-private so only the
+    /// one-shot doctor resolution, which reports every write it makes, can compose for [`Purpose::Resolve`], and no
+    /// server that goes on to serve is built without Git's start-up work or with a vault's search missing.
+    pub(crate) fn compose(
+        build: ServerBuildConfig,
+        purpose: Purpose,
+        time: ServerClock,
+    ) -> Result<(Self, Vec<SearchUnavailable>), ServerBuildError> {
         let ServerBuildConfig { config: value, modules } = build;
-        let vault_info = Arc::new(VaultInfoConfig::from(&value));
-        let destructive_delete = value
-            .vaults
-            .iter()
-            .map(|vault| vault.git.destructive_delete)
-            .collect::<Vec<_>>();
         let roots = VaultSet::try_from(&value)?;
-        let limits = value
-            .vaults
-            .iter()
-            .map(|vault| {
-                Ok(FsLimits {
-                    max_read_bytes: vault
-                        .limits
-                        .max_read_mb
-                        .checked_mul(1024 * 1024)
-                        .ok_or(ServerBuildError::ReadLimitOverflow)?,
-                    max_batch_files: vault.limits.max_batch_files,
-                })
-            })
-            .collect::<Result<Vec<_>, ServerBuildError>>()?;
-        let hidden = value
-            .vaults
-            .iter()
-            .map(|vault| vault.hidden.clone())
-            .collect::<Vec<_>>();
-        let resources_list_include = value
-            .vaults
-            .iter()
-            .map(|vault| vault.resources_list_include.clone())
-            .collect::<Vec<_>>();
-        let filesystem = Filesystem::try_from(FilesystemConfig {
-            roots: roots.clone(),
-            limits,
-            hidden,
-            atomic_write_guard: None,
-        })?;
+        let clock = VaultClock::from(LocalClockInput {
+            clock: time,
+            zone: OperatorTimeZone::try_from(&value.server)?,
+        });
+        let filesystem = compose::filesystem(&value, &roots)?;
         let plain_mutations = FilesystemService::from(FilesystemServiceConfig {
             filesystem: filesystem.clone(),
-            clock: SystemClock,
+            clock: clock.clone(),
         });
-        let indexes = value
-            .vaults
-            .iter()
-            .zip(roots.iter())
-            .map(|(config, root)| {
-                if !config.managed || !config.index_md.enabled {
-                    return Ok(None);
-                }
-                IndexService::try_from(IndexServiceConfig {
-                    root: root.clone(),
-                    roots: roots.clone(),
-                    reader: filesystem.clone(),
-                    writer: plain_mutations.clone(),
-                    excluded: config.index_md.exclude.clone(),
-                })
-                .map(Some)
-                .map_err(ServerBuildError::Index)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let indexes = Arc::new(indexes);
-        let operation_logs = value
-            .vaults
-            .iter()
-            .zip(roots.iter())
-            .map(|(config, root)| {
-                if !config.managed || !config.oplog.enabled {
-                    return Ok(None);
-                }
-                let relative_directory = config
-                    .oplog
-                    .path
-                    .to_str()
-                    .ok_or_else(|| ServerBuildError::NonUtf8OperationLogPath {
-                        path: config.oplog.path.clone(),
-                    })?
-                    .to_owned();
-                OperationLog::try_from(OperationLogConfig {
-                    root: root.clone(),
-                    roots: roots.clone(),
-                    relative_directory,
-                    appender: plain_mutations.clone(),
-                })
-                .map(Some)
-                .map_err(ServerBuildError::OperationLog)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let operation_logs = Arc::new(operation_logs);
-        let git = value
-            .vaults
-            .iter()
-            .zip(roots.iter())
-            .map(|(config, root)| {
-                if !config.managed || !config.git.enabled {
-                    return Ok(None);
-                }
-                Git2Vault::try_from(Git2VaultConfig {
-                    root: root.clone(),
-                    roots: roots.clone(),
-                    clock: SystemClock,
-                    author_name: config.git.author_name.clone(),
-                    author_email: config.git.author_email.clone(),
-                    allow_destructive_restore: config.git.destructive_delete,
-                    protected_restore_paths: {
-                        let mut paths = config.git.restore_exclude.clone();
-                        if config.oplog.enabled && !paths.contains(&config.oplog.path) {
-                            paths.push(config.oplog.path.clone());
-                        }
-                        paths
-                    },
-                })
-                .map(Some)
-                .map_err(ServerBuildError::Git)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let git = Arc::new(git);
-        for service in git.iter().flatten() {
-            if service.is_repository() {
-                service
-                    .initialise(&plain_mutations)
-                    .map_err(ServerBuildError::GitWrite)?;
-            }
-            service.recover_staged().map_err(ServerBuildError::Git)?;
+        let git = Arc::new(compose::git_services(&value, &roots, &clock)?);
+        let indexes = Arc::new(compose::index_services(&compose::IndexWiring {
+            config: &value,
+            roots: &roots,
+            filesystem: &filesystem,
+            writer: &plain_mutations,
+            clock: &clock,
+            git: &git,
+        })?);
+        let operation_logs = Arc::new(compose::operation_log_services(&value, &roots, &plain_mutations)?);
+        if purpose == Purpose::Serve {
+            compose::start_git(&git, &plain_mutations)?;
         }
         let debounce_seconds = Arc::new(
             value
                 .vaults
                 .iter()
-                .map(|config| config.git.commit_debounce_s)
+                .map(|vault| vault.git.commit_debounce_s)
                 .collect::<Vec<_>>(),
         );
-        let search = value
-            .vaults
-            .iter()
-            .zip(roots.iter())
-            .enumerate()
-            .map(|(index, (config, root))| {
-                let enabled = config.search.text || config.search.graph || config.search.semantic;
-                if !config.managed || !enabled {
-                    return Ok(None);
-                }
-                let root_id = VaultRootId::try_from(index)?;
-                let state_directory =
-                    crate::state_dir::resolve_state_directory(config.state_directory.as_deref(), root.path())?;
-                let semantic = semantic_config(config, &state_directory)?;
-                tracing::info!(
-                    vault = %root.path().display(),
-                    state_directory = %state_directory.display(),
-                    text_enabled = config.search.text,
-                    graph_enabled = config.search.graph,
-                    graph_backend = ?config.search.graph_backend,
-                    semantic_enabled = semantic.is_some(),
-                    "opening vault search service"
-                );
-                VaultSearchService::try_from(VaultSearchConfig {
-                    root_id,
-                    root: root.path().to_path_buf(),
-                    excludes: config.search.exclude.clone(),
-                    state_directory: state_directory.clone(),
-                    text_enabled: config.search.text,
-                    graph_enabled: config.search.graph,
-                    graph_backend: config.search.graph_backend.into(),
-                    semantic,
-                })
-                .inspect_err(|error| {
-                    // The last line an operator sees before the whole
-                    // server aborts construction over this one vault
-                    // (`ServerBuildError`'s `?` below has no further
-                    // context to add): pairs the vault and its resolved
-                    // state directory with the stable error code, so a
-                    // hard-to-reproduce startup failure is diagnosable
-                    // from a log line alone.
-                    tracing::error!(
-                        vault = %root.path().display(),
-                        state_directory = %state_directory.display(),
-                        code = error.code(),
-                        error = %error,
-                        "vault search service failed to open; aborting server construction"
-                    );
-                })
-                .map(|service| Some(Arc::new(service)))
-                .map_err(ServerBuildError::from)
-            })
-            .collect::<Result<Vec<_>, ServerBuildError>>()?;
+        let (search, search_unavailable) = compose::search_services(&value, &roots, purpose)?;
         let search = Arc::new(search);
-        let rebuild_budget_seconds = Arc::new(
-            value
-                .vaults
-                .iter()
-                .map(|config| config.search.rebuild_budget_seconds)
-                .collect::<Vec<_>>(),
-        );
-        let mutations = FilesystemService::from(RoutedFilesystemServiceConfig {
-            filesystem: filesystem.clone(),
-            clock: SystemClock,
-            services: OperationRouter::from(OperationRouterConfig {
-                indexes: IndexCollection {
-                    services: Arc::clone(&indexes),
-                },
-                operation_log: OperationLogCollection {
-                    services: Arc::clone(&operation_logs),
-                },
-                versions: VersionCollection {
-                    services: Arc::clone(&git),
-                    debounce_seconds: Arc::clone(&debounce_seconds),
-                },
-                search: SearchCollection {
-                    services: Arc::clone(&search),
-                },
-            }),
+        let (doctor_projection, projection) = compose::projections(&value, &roots, &filesystem, purpose)?;
+        let state_directories = compose::state_directories(&value, &roots)?;
+        let events = compose::vault_events(
+            &value,
+            &state_directories,
+            compose::VaultEventsParts {
+                roots: roots.clone(),
+                filesystem: filesystem.clone(),
+                writer: plain_mutations.clone(),
+                clock: clock.clone(),
+            },
+        )?;
+        let writes = compose::write_coordinator(&state_directories);
+        if purpose == Purpose::Serve {
+            // Tasks already in the vault are recorded without events, so only later changes fire. Each vault is seeded
+            // under its write lock, so a table another process has written since is never overwritten.
+            events.seed_missing_tables(|index| writes.hold_host_lock(index));
+        }
+        let router = compose::router(compose::RouterParts {
+            indexes: Arc::clone(&indexes),
+            operation_logs: Arc::clone(&operation_logs),
+            git: Arc::clone(&git),
+            debounce_seconds: Arc::clone(&debounce_seconds),
+            search: Arc::clone(&search),
+            projection: projection.clone(),
+            events,
         });
-        let writes = WriteCoordinator::from(roots.len());
+        let mutations = FilesystemService::from(RoutedFilesystemServiceConfig {
+            filesystem: filesystem
+                .clone()
+                .with_server_owned_folders(crate::server_owned_folders::server_owned_folders()),
+            clock: clock.clone(),
+            services: router.clone(),
+        });
+        let module_router = Self::module_router(&modules)?;
+        let resource_link_threshold_bytes = Self::resource_link_threshold_bytes(&value)?;
+        let file_names = compose::file_name_indexes(&roots, &filesystem)?;
+        // After every service is composed and before any transport can exist: edits made outside the server (in
+        // Obsidian, or on the filesystem) reach the hosts at the next start. Never fails start-up.
+        projection.refresh();
+        let settings = compose::VaultSettings::from(&value);
+        let server = Self {
+            vault_info: Arc::new(VaultInfoConfig::from(&value)),
+            destructive_delete: Arc::new(settings.destructive_delete),
+            rebuild_budget_seconds: Arc::new(settings.rebuild_budget_seconds),
+            resources_list_include: Arc::new(settings.resources_list_include),
+            config: Arc::new(value),
+            clock,
+            roots: Arc::new(roots),
+            // The same owned folders as the mutation service, so a tool that plans before it writes can be refused up
+            // front by the same rule.
+            filesystem: Arc::new(
+                filesystem.with_server_owned_folders(crate::server_owned_folders::server_owned_folders()),
+            ),
+            file_names: Arc::new(file_names),
+            mutations: Arc::new(mutations),
+            router: Arc::new(router),
+            writes,
+            indexes,
+            operation_logs,
+            git,
+            git_debounce_seconds: debounce_seconds,
+            search,
+            projection: doctor_projection,
+            mermaid: Arc::new(MermanParser::new()),
+            resource_link_threshold_bytes,
+            module_router: Arc::new(module_router),
+        };
+        Ok((server, search_unavailable))
+    }
+
+    /// The size at or above which a text-reading result attaches a `resource_link`, from `[server]
+    /// resource_link_threshold_kb`.
+    fn resource_link_threshold_bytes(config: &Config) -> Result<u64, ServerBuildError> {
+        if config.server.resource_link_threshold_kb == 0 {
+            return Err(ServerBuildError::ResourceLinkThresholdZero);
+        }
+        config
+            .server
+            .resource_link_threshold_kb
+            .checked_mul(1024)
+            .ok_or(ServerBuildError::ResourceLinkThresholdOverflow)
+    }
+
+    /// The dispatch routes of the registered modules, after checking that none reuses a tool name this server owns.
+    fn module_router(
+        modules: &ModuleRegistry,
+    ) -> Result<rmcp::handler::server::router::tool::ToolRouter<Self>, ServerBuildError> {
         let reserved_tool_names: std::collections::HashSet<String> = Self::catalogue()
             .list_all()
             .into_iter()
             .map(|tool| tool.name.into_owned())
             .collect();
         modules.validate(&reserved_tool_names)?;
-        let module_router = build_module_router(&modules);
-        let resource_link_threshold_bytes = value
-            .server
-            .resource_link_threshold_kb
-            .checked_mul(1024)
-            .ok_or(ServerBuildError::ResourceLinkThresholdOverflow)?;
-        Ok(Self {
-            config: Arc::new(value),
-            roots: Arc::new(roots),
-            filesystem: Arc::new(filesystem),
-            mutations: Arc::new(mutations),
-            writes,
-            destructive_delete: Arc::new(destructive_delete),
-            indexes,
-            operation_logs,
-            git,
-            git_debounce_seconds: debounce_seconds,
-            search,
-            rebuild_budget_seconds,
-            vault_info,
-            mermaid: Arc::new(MermanParser::new()),
-            resources_list_include: Arc::new(resources_list_include),
-            resource_link_threshold_bytes,
-            module_router: Arc::new(module_router),
-        })
+        Ok(build_module_router(modules))
     }
 }
 
@@ -575,13 +461,82 @@ fn build_module_router(modules: &ModuleRegistry) -> rmcp::handler::server::route
                     let call = crate::module::ModuleCall {
                         name: tcc.name.to_string(),
                         arguments: tcc.arguments.clone().unwrap_or_default(),
+                        input_responses: tcc.input_responses.clone(),
+                        request_state: tcc.request_state.clone(),
+                        protocol_version: tcc.request_context.protocol_version(),
+                        client_capabilities: tcc.request_context.client_capabilities(),
                     };
-                    Box::pin(async move { module.handle(call, &ctx).await })
+                    Box::pin(async move { module.handle(call, &ctx).await.map(crate::module::refuse_tasks) })
                 },
             ));
         }
     }
     router
+}
+
+/// Opens one vault's search service from its configuration: its state directory, its semantic provider, and the
+/// indexes it keeps there.
+pub(crate) fn open_vault_search(
+    config: &VaultConfig,
+    root: &contextos_core::VaultRoot,
+    root_id: VaultRootId,
+    purpose: Purpose,
+) -> Result<VaultSearchService, ServerBuildError> {
+    let state_directory = crate::state_dir::resolve_state_directory(config.state_directory.as_deref(), root.path())?;
+    let semantic = semantic_config(config, &state_directory).inspect_err(|error| {
+        log_search_unopened(root, &state_directory, error, purpose);
+    })?;
+    tracing::info!(
+        vault = %root.path().display(),
+        state_directory = %state_directory.display(),
+        text_enabled = config.search.text,
+        graph_enabled = config.search.graph,
+        graph_backend = ?config.search.graph_backend,
+        semantic_enabled = semantic.is_some(),
+        "opening vault search service"
+    );
+    VaultSearchService::try_from(VaultSearchConfig {
+        root_id,
+        root: root.path().to_path_buf(),
+        excludes: config.search.exclude.clone(),
+        link_excludes: config.links.exclude.clone(),
+        hidden: config.hidden.clone(),
+        state_directory: state_directory.clone(),
+        text_enabled: config.search.text,
+        graph_enabled: config.search.graph,
+        graph_backend: config.search.graph_backend.into(),
+        semantic,
+    })
+    .inspect_err(|error| log_search_unopened(root, &state_directory, error, purpose))
+    .map_err(ServerBuildError::from)
+}
+
+/// Records why a vault's search could not be opened, pairing the vault and its resolved state directory with the
+/// stable error code, so a hard-to-reproduce start-up failure is diagnosable from a log line alone. For
+/// [`Purpose::Serve`] it is the last line an operator sees before construction stops over this one vault
+/// (`ServerBuildError` has no further context to add).
+fn log_search_unopened(
+    root: &contextos_core::VaultRoot,
+    state_directory: &std::path::Path,
+    error: &SearchError,
+    purpose: Purpose,
+) {
+    match purpose {
+        Purpose::Serve => tracing::error!(
+            vault = %root.path().display(),
+            state_directory = %state_directory.display(),
+            code = error.code(),
+            error = %error,
+            "vault search service failed to open; aborting server construction"
+        ),
+        Purpose::Resolve => tracing::warn!(
+            vault = %root.path().display(),
+            state_directory = %state_directory.display(),
+            code = error.code(),
+            error = %error,
+            "vault search service failed to open; resolving this vault without search"
+        ),
+    }
 }
 
 /// Builds this vault's semantic search capability from configuration
@@ -631,15 +586,50 @@ fn embedding_provider_config(embedding: &crate::EmbeddingConfig) -> Result<Embed
             let model_directory = crate::model_cli::resolve_model_directory(&model_directory);
             Ok(EmbeddingProviderConfig::Local { model_directory })
         }
-        EmbeddingProvider::OpenaiCompatible => Ok(EmbeddingProviderConfig::OpenAiCompatible {
-            endpoint: embedding.endpoint.clone(),
-            model: embedding.model.clone(),
-            api_key_env: embedding.api_key_env.clone(),
-        }),
+        EmbeddingProvider::OpenaiCompatible => {
+            // Configuration load refuses both being set, so at most one is non-empty here.
+            let api_key = if !embedding.api_key.is_empty() {
+                ApiKeySource::Value(embedding.api_key.clone())
+            } else if !embedding.api_key_env.is_empty() {
+                ApiKeySource::Environment(embedding.api_key_env.clone())
+            } else {
+                return Err(SearchError::EmbeddingConfig {
+                    reason: "provider = \"openai-compatible\" requires [vault.search.embedding] api_key or \
+                             api_key_env to be configured"
+                        .to_owned(),
+                });
+            };
+            Ok(EmbeddingProviderConfig::OpenAiCompatible {
+                endpoint: embedding.endpoint.clone(),
+                model: embedding.model.clone(),
+                api_key,
+            })
+        }
     }
 }
 
 impl ContextOsServer {
+    /// The same server, waiting at most `wait` for another process to release the host-level projection lock before
+    /// reporting `projection/busy`. A test seam: the bound is otherwise the write coordinator's.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_projection_lock_wait(self, wait: std::time::Duration) -> Self {
+        self.projection.set_lock_wait(wait);
+        self
+    }
+
+    /// The same server, with `observer` told each step of a skill folder swap into an agent host folder, so a test can
+    /// fail one at an exact point. A test seam: nothing in production sets an observer.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_projection_folder_observer(
+        self,
+        observer: std::sync::Arc<dyn contextos_fs::host_file::FolderReplaceObserver + Send + Sync>,
+    ) -> Self {
+        self.projection.set_folder_observer(observer);
+        self
+    }
+
     /// Flushes every pending MCP-owned Git batch, including during graceful shutdown.
     ///
     /// # Errors
@@ -676,8 +666,17 @@ impl ContextOsServer {
         let mut events = Vec::new();
         let mut first_error = None;
         for service in self.operation_logs.iter().flatten() {
-            match service.flush() {
-                Ok(flushed) => events.extend(flushed),
+            match service.flush(self.router.as_ref()) {
+                Ok(flushed) => {
+                    for warning in &flushed.warnings {
+                        tracing::warn!(
+                            code = warning.code,
+                            error = warning.message,
+                            "flushed operation-log entry was written but not fully routed"
+                        );
+                    }
+                    events.extend(flushed.events);
+                }
                 Err(error) if first_error.is_none() => first_error = Some(error),
                 Err(error) => tracing::warn!(
                     code = error.code(),
@@ -717,6 +716,26 @@ impl ContextOsServer {
         }
     }
 
+    /// Starts building each vault's file name index in the background, so the first link that needs it finds it
+    /// ready. Nothing waits on this: an index not yet built is built by the first question that needs it, and one that
+    /// fails to build is retried then. It does nothing outside a Tokio runtime.
+    ///
+    /// A walk in progress cannot be cancelled, so shutting the runtime down waits for the walks still running, which
+    /// is one walk of each vault at most.
+    pub fn warm_file_name_indexes(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        for position in 0..self.file_names.len() {
+            let indexes = Arc::clone(&self.file_names);
+            runtime.spawn_blocking(move || {
+                if let Some(Err(error)) = indexes.get(position).map(FileNameIndex::rescan) {
+                    tracing::warn!(code = error.code(), "file name index could not be built at startup");
+                }
+            });
+        }
+    }
+
     /// Spawns one background task per vault with semantic search enabled,
     /// each repeatedly draining that vault's embedding queue on its own
     /// (`crate::semantic_drain`) so the semantic index keeps pace with
@@ -752,98 +771,6 @@ pub(crate) struct PathInput {
     pub(crate) path: String,
 }
 
-#[derive(Debug, Error)]
-pub enum ServerBuildError {
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    #[error(transparent)]
-    Filesystem(#[from] FsError),
-    #[error(transparent)]
-    Index(#[from] IndexServiceError<FsError, FsError>),
-    #[error(transparent)]
-    OperationLog(#[from] OperationLogError<FsError>),
-    #[error("operation-log path is not valid UTF-8: {path}")]
-    NonUtf8OperationLogPath { path: std::path::PathBuf },
-    #[error(transparent)]
-    Git(#[from] GitError),
-    #[error(transparent)]
-    GitWrite(#[from] GitWriteError<FsError>),
-    #[error(transparent)]
-    Path(#[from] PathError),
-    #[error(transparent)]
-    Search(#[from] SearchError),
-    #[error(transparent)]
-    Module(#[from] ModuleRegistryError),
-    #[error(transparent)]
-    StateDir(#[from] crate::state_dir::StateDirError),
-    #[error("at least one vault is required")]
-    NoVaults,
-    #[error("configured maximum read size overflows bytes")]
-    ReadLimitOverflow,
-    #[error("configured resource_link_threshold_kb overflows a byte count")]
-    ResourceLinkThresholdOverflow,
-}
-
-/// Typed failure from graceful substrate persistence during server shutdown.
-#[derive(Debug, Error)]
-pub enum ShutdownFlushError {
-    #[error(transparent)]
-    OperationLog(#[from] OperationLogError<FsError>),
-    #[error(transparent)]
-    Git(#[from] GitError),
-}
-
 #[cfg(test)]
-mod tests {
-    use super::{WriteCoordinator, embedding_provider_config};
-    use crate::{EmbeddingConfig, EmbeddingProvider};
-    use contextos_search::{EmbeddingProviderConfig, REQUIRED_MODEL_FILES};
-
-    #[tokio::test]
-    async fn concurrent_mutations_for_one_root_are_serialised() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-    {
-        let coordinator = WriteCoordinator::from(1_usize);
-        let root = contextos_core::VaultRootId::try_from(0_usize)?;
-        let first_guards = coordinator.lock_roots(&[root]).await?;
-        let competitor = coordinator.clone();
-        let waiting = tokio::spawn(async move { competitor.lock_roots(&[root]).await });
-
-        tokio::task::yield_now().await;
-        assert!(!waiting.is_finished());
-
-        drop(first_guards);
-        let second_guards = waiting.await??;
-        assert_eq!(second_guards.len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn local_provider_config_resolves_a_shared_cache_root_model_directory() -> Result<(), Box<dyn std::error::Error>> {
-        let cache = tempfile::tempdir()?;
-        let repo_dir = cache.path().join("models--Qdrant--all-MiniLM-L6-v2-onnx");
-        let snapshot_dir = repo_dir.join("snapshots").join("test-revision");
-        std::fs::create_dir_all(&snapshot_dir)?;
-        let refs_dir = repo_dir.join("refs");
-        std::fs::create_dir_all(&refs_dir)?;
-        std::fs::write(refs_dir.join("main"), "test-revision")?;
-        for file in REQUIRED_MODEL_FILES {
-            std::fs::write(snapshot_dir.join(file), b"fixture")?;
-        }
-
-        let embedding = EmbeddingConfig {
-            provider: EmbeddingProvider::Local,
-            model: String::new(),
-            endpoint: String::new(),
-            api_key_env: String::new(),
-            model_directory: Some(cache.path().to_path_buf()),
-        };
-
-        let provider_config = embedding_provider_config(&embedding)?;
-
-        let EmbeddingProviderConfig::Local { model_directory } = provider_config else {
-            return Err("expected a Local provider config".into());
-        };
-        assert_eq!(model_directory, snapshot_dir);
-        Ok(())
-    }
-}
+#[path = "server_test.rs"]
+mod tests;

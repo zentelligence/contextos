@@ -21,7 +21,11 @@ fn hash(seed: u8) -> ContentHash {
 fn store(dimension: usize) -> Result<(SqliteVecStore, tempfile::TempDir), Box<dyn Error>> {
     let directory = tempdir()?;
     let path = directory.path().join("vectors.db");
-    let store = SqliteVecStore::try_from(SqliteVecConfig { path, dimension })?;
+    let store = SqliteVecStore::try_from(SqliteVecConfig {
+        path,
+        dimension,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
+    })?;
     Ok((store, directory))
 }
 
@@ -437,6 +441,7 @@ fn data_persists_across_store_close_and_reopen() -> Result<(), Box<dyn Error>> {
         let store = SqliteVecStore::try_from(SqliteVecConfig {
             path: path.clone(),
             dimension: 4,
+            write_wait: contextos_search::DEFAULT_WRITE_WAIT,
         })?;
         let record = VectorRecord {
             path: "a/one.md",
@@ -448,7 +453,11 @@ fn data_persists_across_store_close_and_reopen() -> Result<(), Box<dyn Error>> {
         store.upsert(std::slice::from_ref(&record))?;
     }
 
-    let reopened = SqliteVecStore::try_from(SqliteVecConfig { path, dimension: 4 })?;
+    let reopened = SqliteVecStore::try_from(SqliteVecConfig {
+        path,
+        dimension: 4,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
+    })?;
     let hits = reopened.similar(&SimilarityQuery {
         vector: &[1.0, 0.0, 0.0, 0.0],
         k: 10,
@@ -523,7 +532,11 @@ fn upsert_rejects_a_vector_of_the_wrong_dimension() -> Result<(), Box<dyn Error>
 fn construction_rejects_a_zero_dimension() -> Result<(), Box<dyn Error>> {
     let directory = tempdir()?;
     let path = directory.path().join("vectors.db");
-    let Err(error) = SqliteVecStore::try_from(SqliteVecConfig { path, dimension: 0 }) else {
+    let Err(error) = SqliteVecStore::try_from(SqliteVecConfig {
+        path,
+        dimension: 0,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
+    }) else {
         return Err("zero dimension must be rejected".into());
     };
     assert!(matches!(error, SearchError::VectorDimensionInvalid { .. }));
@@ -546,7 +559,7 @@ fn k_zero_returns_no_hits_without_error() -> Result<(), Box<dyn Error>> {
         path_prefix: None,
         exclude_paths: &[],
     })?;
-    assert!(hits.is_empty());
+    assert!(hits.is_empty(), "`hits` should be empty, got {hits:?}");
     Ok(())
 }
 

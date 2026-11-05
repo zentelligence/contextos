@@ -16,9 +16,10 @@
 //! cargo test -p contextos-mcp --test enumeration_benchmark -- --ignored --nocapture
 //! ```
 
+mod support;
 use std::time::Instant;
 
-use contextos_mcp::{Config, ContextOsServer};
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use serde_json::json;
@@ -35,7 +36,7 @@ async fn enumeration_surfaces_remain_viable_on_a_10k_file_vault() -> Result<(), 
         std::fs::write(vault.path().join(format!("file-{index:05}.md")), "content")?;
     }
 
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     // `resources/list` only enumerates configured include patterns; opt in
     // broadly so this benchmark still exercises a full 10k-file
     // enumeration, its own actual purpose.

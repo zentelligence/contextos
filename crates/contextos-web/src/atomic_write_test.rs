@@ -47,7 +47,12 @@ fn fails_without_writing_when_the_target_directory_does_not_exist() -> Result<()
 
     let result = write_atomically(&path, b"hello");
 
-    assert!(result.is_err());
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    );
+    assert!(!dir.path().join("missing-subdir").exists());
     assert!(!path.exists());
     Ok(())
 }

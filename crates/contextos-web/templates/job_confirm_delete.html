@@ -1,0 +1,9 @@
+<div class="job-confirm-delete" role="group" aria-label="Confirm delete">
+  {% if removes_file %}
+  <p>Delete this job? Its job file is removed along with its stored state, so it cannot come back.</p>
+  {% else %}
+  <p>Delete this job's stored state? Its files are left untouched, so the job comes back as a draft if they are still there.</p>
+  {% endif %}
+  <button type="button" class="btn small danger" hx-delete="{{ base_path }}" hx-target="#job-status" hx-swap="outerHTML">Delete</button>
+  <a class="btn small" href="{{ base_path }}">Cancel</a>
+</div>

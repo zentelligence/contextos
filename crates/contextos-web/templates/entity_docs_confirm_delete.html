@@ -1,0 +1,20 @@
+<div class="notes-main-body" id="entity-docs-main-body">
+  <p class="hint">Delete {{ kind }} &quot;{{ label }}&quot;? It will be moved to the vault's trash.</p>
+  <div class="notes-delete-confirm-actions">
+    <button
+      type="button"
+      class="btn small"
+      hx-delete="{{ urls.entity_file(entity_slug, path) }}"
+      hx-target="closest .entity-docs-screen"
+      hx-swap="outerHTML"
+    >Confirm delete</button>
+    <button
+      type="button"
+      class="btn small"
+      hx-get="{{ urls.entity_file(entity_slug, path) }}"
+      hx-select="#entity-docs-main-body"
+      hx-target="#entity-docs-main-body"
+      hx-swap="outerHTML"
+    >Cancel</button>
+  </div>
+</div>

@@ -129,6 +129,8 @@ mod tests {
             root_id: VaultRootId::try_from(0_usize)?,
             root: vault.path().to_path_buf(),
             excludes: vec![],
+            link_excludes: Vec::new(),
+            hidden: Vec::new(),
             state_directory: vault.path().join(".contextos"),
             text_enabled: false,
             graph_enabled: false,
@@ -177,6 +179,8 @@ mod tests {
             root_id: VaultRootId::try_from(0_usize)?,
             root: vault.path().to_path_buf(),
             excludes: vec![],
+            link_excludes: Vec::new(),
+            hidden: Vec::new(),
             state_directory: vault.path().join(".contextos"),
             text_enabled: true,
             graph_enabled: true,
@@ -203,7 +207,7 @@ mod tests {
         let vault = vault_dir()?;
         let service = semantic_service_at(&vault)?;
         enqueue_a_note(&vault, &service, "note.md")?;
-        assert_eq!(service.status()?.semantic.documents, 0);
+        assert_eq!(service.status().semantic.documents, 0);
 
         let shutdown = CancellationToken::new();
         let tasks = spawn(&[Some(Arc::clone(&service))], &[25], &shutdown);
@@ -245,7 +249,7 @@ mod tests {
         // undiscovered across many ticks, not just the first one.
         tokio::time::sleep(IDLE_INTERVAL * 5).await;
 
-        assert_eq!(service.status()?.semantic.documents, 0);
+        assert_eq!(service.status().semantic.documents, 0);
         shutdown.cancel();
         for task in tasks {
             task.await?;
@@ -318,7 +322,7 @@ mod tests {
         done: &mut impl FnMut(&contextos_search::IndexStatusReport) -> bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         loop {
-            let status = service.status()?;
+            let status = service.status();
             if done(&status) {
                 return Ok(());
             }

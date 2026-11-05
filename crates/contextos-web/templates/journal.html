@@ -1,0 +1,103 @@
+{% macro sidebar_tree(tree) %}
+<div class="section-label">Journal</div>
+{% for year in tree %}
+  <details class="nav-group" {% if year.is_open %}open{% endif %}>
+    <summary class="nav-group-summary">
+      <span class="nav-group-heading-link"><span class="nav-group-label-text">{{ year.label }}</span></span>
+      <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+    </summary>
+    <div class="tree-nest">
+    {% for month in year.months %}
+      <details class="nav-group" {% if month.is_open %}open{% endif %}>
+        <summary class="nav-group-summary">
+          <span class="nav-group-heading-link"><span class="nav-group-label-text">{{ month.label }}</span></span>
+          <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="tree-nest">
+        {% for day in month.days %}
+          <a class="journal-tree-day{% if day.is_selected %} active{% endif %}" href="{{ urls.journal_day(day.date_value) }}">
+            {{ day.date_value }}{% if day.is_today %}<span class="hint mono">today</span>{% endif %}
+          </a>
+        {% endfor %}
+        </div>
+      </details>
+    {% endfor %}
+    </div>
+  </details>
+{% endfor %}
+{% endmacro %}
+
+<div class="journal-screen" hx-ext="json-enc">
+  <div class="journal-header">
+    <a class="icon-button" href="{{ prev_href }}" title="Previous day" aria-label="Previous day"><span class="ic ic-chevron-left" aria-hidden="true"></span></a>
+    <details class="journal-calendar-toggle">
+      <summary><span class="ic ic-calendar" aria-hidden="true"></span> {{ date_value }}{% if is_today %} &middot; today{% endif %}</summary>
+      <div class="journal-calendar-popover">
+        <div class="journal-calendar-month-label">{{ calendar.month_label }}</div>
+        <div class="journal-calendar-weekdays">
+          <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+        </div>
+      {% for week in calendar.weeks %}
+        <div class="journal-calendar-week">
+        {% for day in week.days %}
+          {% if let Some(day) = day %}
+          <a
+            class="journal-calendar-day{% if day.is_selected %} selected{% endif %}{% if day.is_today %} today{% endif %}{% if day.has_entry %} has-entry{% endif %}"
+            href="{{ urls.journal_day(day.date_value) }}"
+          >{{ day.day }}</a>
+          {% else %}
+          <span class="journal-calendar-day empty"></span>
+          {% endif %}
+        {% endfor %}
+        </div>
+      {% endfor %}
+      </div>
+    </details>
+    <a class="icon-button" href="{{ next_href }}" title="Next day" aria-label="Next day"><span class="ic ic-chevron-right" aria-hidden="true"></span></a>
+    <span class="hint mono">{{ weekday_label }} &middot; week {{ iso_week }}</span>
+  </div>
+
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+
+  <div class="journal-layout{% if folder_pane_side_is_left %} journal-layout-folder-pane-left{% endif %}">
+  {% if folder_pane_side_is_left %}
+    <aside class="journal-sidebar">
+      {% call sidebar_tree(tree) %}{% endcall %}
+    </aside>
+  {% endif %}
+    <nav class="settings-nav journal-nav" id="journal-nav">
+    {% for tab in tabs %}
+      <button type="button" class="{% if tab.index == active %}active{% endif %}" data-pane="{{ tab.index }}">{{ tab.label }}</button>
+    {% endfor %}
+    </nav>
+
+    <div class="journal-main">
+    {% for pane in panes %}
+      {{ pane|safe }}
+    {% endfor %}
+    </div>
+
+  {% if !folder_pane_side_is_left %}
+    <aside class="journal-sidebar">
+      {% call sidebar_tree(tree) %}{% endcall %}
+    </aside>
+  {% endif %}
+  </div>
+</div>
+<script>
+(function(){
+  var nav = document.getElementById('journal-nav');
+  if(!nav) return;
+  nav.addEventListener('click', function(event){
+    var button = event.target.closest('button[data-pane]');
+    if(!button) return;
+    nav.querySelectorAll('button').forEach(function(b){ b.classList.remove('active'); });
+    button.classList.add('active');
+    document.querySelectorAll('.journal-main > .journal-section').forEach(function(pane){
+      pane.hidden = pane.id !== 'pane-' + button.dataset.pane;
+    });
+  });
+})();
+</script>

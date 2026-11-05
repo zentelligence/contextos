@@ -1,0 +1,13 @@
+{% if results.is_empty() %}
+<p class="hint">No matching tasks.</p>
+{% else %}
+<ul class="link-search-result-list">
+{% for result in results %}
+  <li>
+    <button type="button" class="link-search-result" data-field="{{ field }}" data-target="{{ result.target }}" data-display="{{ result.display_id }}" data-title="{{ result.title }}">
+      <span class="mono">{{ result.display_id }}</span> {{ result.title }}
+    </button>
+  </li>
+{% endfor %}
+</ul>
+{% endif %}

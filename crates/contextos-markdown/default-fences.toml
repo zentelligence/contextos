@@ -1,0 +1,353 @@
+# The triple-colon fence vocabulary this vault's renderer recognises.
+#
+# The standard it encodes is the vault's fence conventions document (standards/markdown-fence-conventions.md, or
+# memory/designs/markdown-extension.md in a scaffolded vault). Edit this file to change what the renderer recognises:
+# a fence not listed here renders plainly, flagged as unknown.
+#
+# schema: the format of this file. A renderer that does not support it uses its built-in vocabulary instead.
+# role: callout (a titled container), layout (a layout container), status (a labelled banner), or page (a page break).
+# tone: neutral, positive, caution, critical, emphasis, or analysis. The theme decides the colours.
+# self_closing: the fence needs no closing line.
+# alias_of: the fence is another name for the fence it names.
+
+schema = 1
+standard = "markdown-fence-conventions 2026-10"
+
+# Admonition
+
+[fences.note]
+role = "callout"
+tone = "neutral"
+
+[fences.info]
+role = "callout"
+tone = "neutral"
+
+[fences.tip]
+role = "callout"
+tone = "positive"
+
+[fences.hint]
+role = "callout"
+tone = "neutral"
+
+[fences.important]
+role = "callout"
+tone = "emphasis"
+
+[fences.warning]
+role = "callout"
+tone = "caution"
+
+[fences.caution]
+role = "callout"
+tone = "caution"
+
+[fences.danger]
+role = "callout"
+tone = "critical"
+
+[fences.error]
+role = "callout"
+tone = "critical"
+
+[fences.success]
+role = "callout"
+tone = "positive"
+
+# Reasoning and workflow
+
+[fences.summary]
+role = "callout"
+tone = "neutral"
+
+[fences.context]
+role = "callout"
+tone = "neutral"
+
+[fences.analysis]
+role = "callout"
+tone = "analysis"
+
+[fences.insight]
+role = "callout"
+tone = "analysis"
+
+[fences.recommendation]
+role = "callout"
+tone = "emphasis"
+
+[fences.decision]
+role = "callout"
+tone = "emphasis"
+
+[fences.rationale]
+role = "callout"
+tone = "analysis"
+
+[fences.assumption]
+role = "callout"
+tone = "analysis"
+
+[fences.constraint]
+role = "callout"
+tone = "emphasis"
+
+[fences.risk]
+role = "callout"
+tone = "analysis"
+
+[fences.mitigation]
+role = "callout"
+tone = "analysis"
+
+[fences.tradeoff]
+role = "callout"
+tone = "analysis"
+
+[fences.question]
+role = "callout"
+tone = "neutral"
+
+[fences.todo]
+role = "callout"
+tone = "neutral"
+
+[fences.next]
+role = "callout"
+tone = "emphasis"
+
+# Layout
+
+[fences.stack]
+role = "layout"
+
+[fences.row]
+role = "layout"
+
+[fences.columns]
+role = "layout"
+
+[fences.grid]
+role = "layout"
+
+[fences.cards]
+role = "layout"
+
+[fences.card]
+role = "layout"
+
+[fences.panel]
+role = "layout"
+
+[fences.section]
+role = "layout"
+
+[fences.hero]
+role = "layout"
+
+[fences.banner]
+alias_of = "hero"
+
+[fences.cta]
+role = "layout"
+
+[fences.aside]
+role = "layout"
+
+[fences.sidebar]
+role = "layout"
+
+[fences.footer]
+role = "layout"
+
+# Technical documentation
+
+[fences.definition]
+role = "callout"
+tone = "neutral"
+
+[fences.example]
+role = "callout"
+tone = "neutral"
+
+[fences.counterexample]
+role = "callout"
+tone = "critical"
+
+[fences.principle]
+role = "callout"
+tone = "emphasis"
+
+[fences.pattern]
+role = "callout"
+tone = "positive"
+
+[fences.antipattern]
+role = "callout"
+tone = "critical"
+
+[fences.procedure]
+role = "callout"
+tone = "neutral"
+
+[fences.checklist]
+role = "callout"
+tone = "neutral"
+
+[fences.reference]
+role = "callout"
+tone = "neutral"
+
+[fences.implementation]
+role = "callout"
+tone = "neutral"
+
+[fences.api]
+role = "callout"
+tone = "neutral"
+
+[fences.schema]
+role = "callout"
+tone = "neutral"
+
+[fences.migration]
+role = "callout"
+tone = "caution"
+
+[fences.test]
+role = "callout"
+tone = "neutral"
+
+# Status
+
+[fences.draft]
+role = "status"
+tone = "neutral"
+
+[fences.pending]
+role = "status"
+tone = "neutral"
+
+[fences.partial]
+role = "status"
+tone = "caution"
+
+[fences.blocked]
+role = "status"
+tone = "critical"
+
+[fences.pass]
+role = "status"
+tone = "positive"
+
+[fences.fail]
+role = "status"
+tone = "critical"
+
+[fences.unknown]
+role = "status"
+tone = "neutral"
+
+[fences.deprecated]
+role = "status"
+tone = "caution"
+
+[fences.experimental]
+role = "status"
+tone = "caution"
+
+[fences.stable]
+role = "status"
+tone = "positive"
+
+# AI workflow
+
+[fences.input]
+role = "callout"
+tone = "neutral"
+
+[fences.output]
+role = "callout"
+tone = "neutral"
+
+[fences.prompt]
+role = "callout"
+tone = "neutral"
+
+[fences.response]
+role = "callout"
+tone = "neutral"
+
+[fences.critique]
+role = "callout"
+tone = "analysis"
+
+[fences.revision]
+role = "callout"
+tone = "neutral"
+
+[fences.instruction]
+role = "callout"
+tone = "emphasis"
+
+[fences.memory]
+role = "callout"
+tone = "neutral"
+
+[fences.source]
+role = "callout"
+tone = "neutral"
+
+[fences.extraction]
+role = "callout"
+tone = "neutral"
+
+[fences.synthesis]
+role = "callout"
+tone = "analysis"
+
+[fences.validation]
+role = "callout"
+tone = "positive"
+
+# Document render
+
+[fences.section-break]
+role = "page"
+self_closing = true
+
+[fences.page-break]
+role = "page"
+self_closing = true
+
+# Attributes, written {key=value key="quoted value" flag}. type: text, id (letters, digits, - and _), token (a word),
+# integer, or boolean. values limits a token to the listed words.
+
+[attributes.title]
+type = "text"
+
+[attributes.id]
+type = "id"
+
+[attributes.variant]
+type = "token"
+
+[attributes.cols]
+type = "integer"
+
+[attributes.gap]
+type = "token"
+
+[attributes.collapse]
+type = "boolean"
+
+[attributes.open]
+type = "boolean"
+
+[attributes.level]
+type = "token"
+
+[attributes.display]
+type = "token"
+values = ["block", "inline"]

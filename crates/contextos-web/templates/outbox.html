@@ -1,0 +1,39 @@
+<div class="outbox-screen">
+{% if !ancestors.is_empty() %}
+  <div class="inbox-outbox-ancestors">
+  {% for ancestor in ancestors %}
+    {% if let Some(href) = ancestor.href %}
+    <a class="inbox-outbox-ancestor-row" style="padding-left: {{ ancestor.depth * 16 }}px" href="{{ href }}"><span class="ic ic-folder" aria-hidden="true"></span> {{ ancestor.label }}</a>
+    {% else %}
+    <div class="inbox-outbox-ancestor-row current" style="padding-left: {{ ancestor.depth * 16 }}px"><span class="ic ic-folder" aria-hidden="true"></span> {{ ancestor.label }}</div>
+    {% endif %}
+  {% endfor %}
+  </div>
+{% endif %}
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+{% if folders.is_empty() && items.is_empty() %}
+  <p class="hint">{% if ancestors.is_empty() %}Nothing has been generated for the Outbox yet.{% else %}This folder is empty.{% endif %}</p>
+{% else %}
+  <div class="inbox-outbox-list">
+  {% for folder in folders %}
+    <div class="row-card inbox-outbox-row">
+      <a class="inbox-outbox-folder-link" href="{{ folder.href }}"><span class="ic ic-folder" aria-hidden="true"></span> {{ folder.name }}</a>
+    </div>
+  {% endfor %}
+  {% for item in items %}
+    <div class="row-card inbox-outbox-row">
+      <span class="ic ic-send" aria-hidden="true"></span>
+      <div class="inbox-outbox-item-meta">
+        <div class="inbox-outbox-item-name">{{ item.name }}</div>
+        <div class="hint">{{ item.size_label }} &middot; {{ item.type_label }} &middot; {{ item.modified_label }}</div>
+      </div>
+      <button class="btn small" disabled title="No send destination is configured yet">Send <span class="ic ic-send" aria-hidden="true"></span></button>
+      <a class="icon-button" title="Download {{ item.name }}" aria-label="Download {{ item.name }}" href="{{ item.download_href }}" download><span class="ic ic-download" aria-hidden="true"></span></a>
+    </div>
+  {% endfor %}
+  </div>
+{% endif %}
+  <p class="hint">Files generated for distribution outside the knowledge substrate. Downloading does not remove them. Send has no configured destination yet.</p>
+</div>

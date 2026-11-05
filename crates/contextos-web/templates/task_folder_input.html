@@ -1,0 +1,9 @@
+<label class="task-field task-folder-field">
+  <span class="task-field-label">Folder</span>
+  <input type="text" name="folder" value="{{ folder }}" list="task-folder-suggestions" placeholder="Top level" autocomplete="off">
+  <datalist id="task-folder-suggestions">
+  {% for known in known_folders %}
+    <option value="{{ known }}">
+  {% endfor %}
+  </datalist>
+</label>

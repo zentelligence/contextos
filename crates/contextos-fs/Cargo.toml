@@ -19,15 +19,20 @@ sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 trash.workspace = true
 time.workspace = true
 walkdir.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 trash = { workspace = true, features = ["coinit_apartmentthreaded"] }
 
 [dev-dependencies]
 dunce.workspace = true
+proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

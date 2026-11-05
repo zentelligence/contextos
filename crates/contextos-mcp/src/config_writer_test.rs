@@ -125,17 +125,19 @@ fn remove_vault_errors_on_an_unknown_name_and_leaves_the_document_unchanged() ->
 }
 
 #[test]
-fn remove_vault_rejects_removing_the_last_vault_and_leaves_the_document_unchanged()
--> Result<(), Box<dyn std::error::Error>> {
+fn remove_vault_permits_removing_the_last_vault() -> Result<(), Box<dyn std::error::Error>> {
     let vault_dir = tempdir()?;
     let mut document = ConfigDocument::new();
     document.add_vault("mine", vault_dir.path(), true)?;
-    let before = document.render();
 
-    let result = document.remove_vault("mine");
+    document.remove_vault("mine")?;
 
-    assert!(result.is_err());
-    assert_eq!(document.render(), before);
+    let config = Config::try_from(document.render().as_str())?;
+    assert!(
+        config.vaults.is_empty(),
+        "`config.vaults` should be empty, got {:?}",
+        config.vaults
+    );
     Ok(())
 }
 
@@ -383,6 +385,109 @@ fn vaults_reports_semantic_false_and_no_model_directory_by_default() -> Result<(
     Ok(())
 }
 
+fn file_only(path: &str) -> LogSettings {
+    LogSettings {
+        file: path.to_owned(),
+        ..LogSettings::default()
+    }
+}
+
+fn rotating(path: &str) -> LogSettings {
+    LogSettings {
+        file: path.to_owned(),
+        max_size_mb: Some(10),
+        rotate_daily: true,
+        retention_days: Some(7),
+        retention_files: Some(3),
+    }
+}
+
+#[test]
+fn set_logging_writes_the_file_rotation_and_retention_into_a_config_that_loads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let vault_dir = tempdir()?;
+    let mut document = ConfigDocument::new();
+    document.add_vault("mine", vault_dir.path(), true)?;
+
+    document.set_logging(&rotating("/var/log/contextos.log"))?;
+
+    let config = Config::try_from(document.render().as_str())?;
+    assert_eq!(config.server.log_file, "/var/log/contextos.log");
+    assert_eq!(config.server.log_max_size_mb, Some(10));
+    assert!(config.server.log_rotate_daily);
+    assert_eq!(config.server.log_retention_days, Some(7));
+    assert_eq!(config.server.log_retention_files, Some(3));
+    assert_eq!(document.server_settings().logging, rotating("/var/log/contextos.log"));
+    Ok(())
+}
+
+#[test]
+fn set_logging_with_no_file_removes_the_rotation_and_retention_keys_and_keeps_the_rest()
+-> Result<(), Box<dyn std::error::Error>> {
+    let vault_dir = tempdir()?;
+    let source = format!(
+        "# my notes\n[[vault]]\npath = {:?}\nname = \"mine\"\n\n[server]\nlog_level = \"debug\"\nlog_file = \"/x.log\"\n\
+         log_max_size_mb = 5\nlog_rotate_daily = true\nlog_retention_days = 2\nlog_retention_files = 4\n",
+        vault_dir.path()
+    );
+    let mut document = ConfigDocument::parse(&source)?;
+
+    document.set_logging(&LogSettings::default())?;
+
+    let rendered = document.render();
+    for key in [
+        "log_file",
+        "log_max_size_mb",
+        "log_rotate_daily",
+        "log_retention_days",
+        "log_retention_files",
+    ] {
+        assert!(!rendered.contains(key), "{key} survived: {rendered}");
+    }
+    assert!(rendered.contains("# my notes"));
+    assert!(rendered.contains("log_level = \"debug\""));
+    Config::try_from(rendered.as_str())?;
+    Ok(())
+}
+
+#[test]
+fn set_logging_rejects_retention_without_rotation_and_leaves_the_document_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    let vault_dir = tempdir()?;
+    let mut document = ConfigDocument::new();
+    document.add_vault("mine", vault_dir.path(), true)?;
+    let before = document.render();
+    let logging = LogSettings {
+        retention_days: Some(7),
+        ..file_only("/var/log/contextos.log")
+    };
+
+    let result = document.set_logging(&logging);
+
+    assert!(matches!(result, Err(ConfigWriterError::Invalid { .. })));
+    assert_eq!(document.render(), before);
+    Ok(())
+}
+
+#[test]
+fn set_logging_rejects_a_size_too_large_for_toml_and_leaves_the_document_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    let vault_dir = tempdir()?;
+    let mut document = ConfigDocument::new();
+    document.add_vault("mine", vault_dir.path(), true)?;
+    let before = document.render();
+    let logging = LogSettings {
+        max_size_mb: Some(u64::MAX),
+        ..file_only("/var/log/contextos.log")
+    };
+
+    let result = document.set_logging(&logging);
+
+    assert!(matches!(result, Err(ConfigWriterError::NumberOutOfRange { .. })));
+    assert_eq!(document.render(), before);
+    Ok(())
+}
+
 #[test]
 fn server_settings_reports_schema_defaults_for_an_empty_document() {
     let document = ConfigDocument::new();
@@ -391,7 +496,7 @@ fn server_settings_reports_schema_defaults_for_an_empty_document() {
 
     assert_eq!(settings.transports, vec!["stdio".to_owned()]);
     assert_eq!(settings.log_level, "info");
-    assert_eq!(settings.log_file, "");
+    assert_eq!(settings.logging, LogSettings::default());
 }
 
 #[test]
@@ -403,7 +508,7 @@ fn set_server_settings_writes_non_default_values() -> Result<(), Box<dyn std::er
     document.set_server_settings(
         &["stdio".to_owned(), "http".to_owned()],
         "debug",
-        "/var/log/contextos.log",
+        &file_only("/var/log/contextos.log"),
     )?;
 
     let config = Config::try_from(document.render().as_str())?;
@@ -412,7 +517,7 @@ fn set_server_settings_writes_non_default_values() -> Result<(), Box<dyn std::er
     let settings = document.server_settings();
     assert_eq!(settings.transports, vec!["stdio".to_owned(), "http".to_owned()]);
     assert_eq!(settings.log_level, "debug");
-    assert_eq!(settings.log_file, "/var/log/contextos.log");
+    assert_eq!(settings.logging.file, "/var/log/contextos.log");
     Ok(())
 }
 
@@ -421,9 +526,9 @@ fn set_server_settings_omits_keys_equal_to_the_schema_default() -> Result<(), Bo
     let vault_dir = tempdir()?;
     let mut document = ConfigDocument::new();
     document.add_vault("mine", vault_dir.path(), true)?;
-    document.set_server_settings(&["http".to_owned()], "debug", "/var/log/contextos.log")?;
+    document.set_server_settings(&["http".to_owned()], "debug", &file_only("/var/log/contextos.log"))?;
 
-    document.set_server_settings(&["stdio".to_owned()], "info", "")?;
+    document.set_server_settings(&["stdio".to_owned()], "info", &LogSettings::default())?;
 
     let rendered = document.render();
     assert!(!rendered.contains("[server]"));
@@ -438,7 +543,7 @@ fn set_server_settings_rejects_an_invalid_log_level_and_leaves_the_document_unch
     document.add_vault("mine", vault_dir.path(), true)?;
     let before = document.render();
 
-    let result = document.set_server_settings(&["stdio".to_owned()], "verbose", "");
+    let result = document.set_server_settings(&["stdio".to_owned()], "verbose", &LogSettings::default());
 
     assert!(matches!(result, Err(ConfigWriterError::Invalid { .. })));
     assert_eq!(document.render(), before);
@@ -458,7 +563,7 @@ fn set_server_settings_rejects_an_empty_transports_list_and_leaves_the_document_
     document.add_vault("mine", vault_dir.path(), true)?;
     let before = document.render();
 
-    let result = document.set_server_settings(&[], "info", "");
+    let result = document.set_server_settings(&[], "info", &LogSettings::default());
 
     assert!(matches!(result, Err(ConfigWriterError::Invalid { .. })));
     assert_eq!(document.render(), before);

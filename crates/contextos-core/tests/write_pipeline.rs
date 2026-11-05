@@ -112,7 +112,7 @@ fn pipeline_persists_then_emits_one_operation_event() -> Result<(), Box<dyn std:
 
     let result = pipeline.write(&WriteMutation {
         path: note.clone(),
-        content: "hello".to_owned(),
+        content: "hello".to_owned().into(),
         expected_hash: None,
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -124,7 +124,11 @@ fn pipeline_persists_then_emits_one_operation_event() -> Result<(), Box<dyn std:
     assert_eq!(event.paths, vec![note]);
     assert_eq!(event.origin, Origin::Tool("fs_write_file".to_owned()));
     assert_eq!(event.at, datetime!(2026-07-18 10:11:12 +10:00));
-    assert!(result.warnings.is_empty());
+    assert!(
+        result.warnings.is_empty(),
+        "`result.warnings` should be empty, got {:?}",
+        result.warnings
+    );
     Ok(())
 }
 
@@ -140,7 +144,7 @@ fn phase_2_secondary_failures_warn_without_failing_a_completed_write() -> Result
 
     let result = pipeline.write(&WriteMutation {
         path: note,
-        content: "persisted".to_owned(),
+        content: "persisted".to_owned().into(),
         expected_hash: None,
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),

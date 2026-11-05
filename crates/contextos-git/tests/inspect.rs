@@ -6,7 +6,43 @@ use time::macros::datetime;
 mod support;
 
 #[test]
-fn to_fr_32_status_log_and_diff_report_owned_and_worktree_state() -> Result<(), Box<dyn std::error::Error>> {
+fn a_nested_pending_path_is_reported_with_forward_slashes_on_every_platform() -> Result<(), Box<dyn std::error::Error>>
+{
+    let vault = tempdir()?;
+    std::fs::create_dir_all(vault.path().join("notes/deep"))?;
+    std::fs::write(vault.path().join("notes/deep/note.md"), "initial\n")?;
+    let root = VaultRoot::try_from(VaultRootInput {
+        path: vault.path().to_path_buf(),
+        managed: true,
+        name: Some("vault".to_owned()),
+    })?;
+    let writer = support::writer(&root)?;
+    let git = Git2Vault::try_from(Git2VaultConfig {
+        root: root.clone(),
+        roots: contextos_core::VaultSet::try_from(vec![root.clone()])?,
+        clock: support::FixedClock,
+        author_name: "Context OS MCP".to_owned(),
+        author_email: "mcp@contextos.local".to_owned(),
+        allow_destructive_restore: false,
+        protected_restore_paths: Vec::new(),
+    })?;
+    git.initialise(&writer)?;
+    std::fs::write(vault.path().join("notes/deep/note.md"), "changed\n")?;
+    git.stage(&OperationEvent {
+        kind: OpKind::Modify,
+        paths: vec![support::vault_path(&root, "notes/deep/note.md")?],
+        origin: Origin::Tool("fs_write_file".to_owned()),
+        summary: "Changed the note".to_owned(),
+        at: datetime!(2026-07-18 18:30:00 +10:00),
+    })
+    .map_err(|warning| warning.message)?;
+
+    assert_eq!(git.status()?.pending_paths, vec!["notes/deep/note.md"]);
+    Ok(())
+}
+
+#[test]
+fn status_log_and_diff_report_owned_and_worktree_state() -> Result<(), Box<dyn std::error::Error>> {
     let vault = tempdir()?;
     std::fs::write(vault.path().join("note.md"), "initial\n")?;
     let root = VaultRoot::try_from(VaultRootInput {

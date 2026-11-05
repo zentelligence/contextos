@@ -1,0 +1,22 @@
+<section class="panel job-release" id="job-release">
+  <header class="panel-header"><h2>Release</h2></header>
+{% for problem in file_problems %}  <p role="alert"><span class="badge attention">Job file cannot be used</span> {{ problem }}</p>
+{% endfor %}{% if let Some(why) = link_mismatch %}  <p role="alert"><span class="badge attention">Link mismatch</span> {{ why }}</p>
+{% endif %}{% if needs_successor %}  <p role="alert"><span class="badge attention">Needs a successor</span> This job keeps running on a release that is no longer current.</p>
+{% endif %}{% if let Some(release) = release %}  <p>{{ release.summary }}</p>
+{% if !release.problems.is_empty() %}  <div role="alert">
+    <p><span class="badge attention">{{ release.problem_kind }}</span> This release cannot be relied on, and scheduled runs on it are refused.</p>
+    <ul>
+{% for problem in release.problems %}      <li>{{ problem }}</li>
+{% endfor %}    </ul>
+  </div>
+{% endif %}  <dl class="job-properties">
+    <div><dt>Version</dt><dd>{{ release.version }}</dd></div>
+    <div><dt>Libraries</dt><dd>{% if release.no_lock_yet %}No lock yet{% else if release.lock.is_empty() %}None{% else %}{{ release.lock.join(", ") }}{% endif %}</dd></div>
+  </dl>
+{% else if let Some(why) = no_release %}  <p class="hint">{{ why }}</p>
+{% endif %}  <dl class="job-properties">
+    <div><dt>Succeeds</dt><dd>{% if let Some(job) = predecessor %}<a href="{{ job.href }}">{{ job.name }}</a>{% else %}No job{% endif %}</dd></div>
+    <div><dt>Succeeded by</dt><dd>{% if let Some(job) = successor %}<a href="{{ job.href }}">{{ job.name }}</a>{% else %}No job{% endif %}</dd></div>
+  </dl>
+</section>

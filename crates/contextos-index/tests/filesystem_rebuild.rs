@@ -1,5 +1,6 @@
 use contextos_core::{
-    MaintainsIndexes, OpKind, OperationEvent, Origin, VaultPath, VaultPathInput, VaultRoot, VaultRootInput, VaultSet,
+    MaintainsIndexes, NoSubstrateServices, OpKind, OperationEvent, Origin, VaultPath, VaultPathInput, VaultRoot,
+    VaultRootInput, VaultSet,
 };
 use contextos_fs::{
     Filesystem, FilesystemConfig, FilesystemService, FilesystemServiceConfig, FsLimits, default_hidden_patterns,
@@ -19,7 +20,7 @@ impl contextos_core::Clock for FixedClock {
 }
 
 #[test]
-fn to_fr_22_rebuilds_a_real_directory_through_the_write_pipeline() -> Result<(), Box<dyn std::error::Error>> {
+fn rebuilds_a_real_directory_through_the_write_pipeline() -> Result<(), Box<dyn std::error::Error>> {
     let vault = tempdir()?;
     let notes = vault.path().join("notes");
     std::fs::create_dir(&notes)?;
@@ -63,24 +64,37 @@ fn to_fr_22_rebuilds_a_real_directory_through_the_write_pipeline() -> Result<(),
         reader: filesystem,
         writer,
         excluded: Vec::new(),
+        clock: FixedClock,
+        creation: contextos_core::NoCreationReports,
     })?;
     let directory = VaultPath::try_from(VaultPathInput {
         roots: &roots,
         raw: "notes",
     })?;
 
-    let events = service.rebuild(&directory, Origin::Tool("vault_index_rebuild".to_owned()))?;
+    let events = service.rebuild(
+        &directory,
+        Origin::Tool("vault_index_rebuild".to_owned()),
+        &NoSubstrateServices,
+    )?;
     let rebuilt = std::fs::read_to_string(notes.join("index.md"))?;
 
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].origin, Origin::Internal("index".to_owned()));
-    assert!(rebuilt.starts_with("# Bespoke Notes\n\nOperator introduction.\n\n"));
+    assert_eq!(events[0].origin, Origin::Internal("vault_index_rebuild".to_owned()));
+    assert!(rebuilt.starts_with("---\n"));
+    assert!(rebuilt.contains("type: index\n"));
+    assert!(rebuilt.contains("# Bespoke Notes\n\nOperator introduction.\n\n"));
     assert!(rebuilt.ends_with("\n\nOperator footer.\n"));
-    assert!(rebuilt.contains("| [keep.md](keep.md) | Hand summary |"));
-    assert!(rebuilt.contains("| [new-note.md](new-note.md) | New Note: A new note exists. <!-- auto --> |"));
-    assert!(!rebuilt.contains("| [index.md](index.md)"));
+    assert!(rebuilt.contains("| [[notes/keep.md|Keep]] | Hand summary |"));
+    assert!(rebuilt.contains("| [[notes/new-note.md|New Note]] |  |"));
+    assert!(!rebuilt.contains("index.md](index.md)"));
     std::fs::rename(notes.join("index.md"), notes.join("_index.md"))?;
-    let preview = service.rebuild_report(&directory, Origin::Tool("vault_index_rebuild".to_owned()), true)?;
+    let preview = service.rebuild_report(
+        &directory,
+        Origin::Tool("vault_index_rebuild".to_owned()),
+        true,
+        &NoSubstrateServices,
+    )?;
     assert_eq!(preview.indexes_updated, 1);
     assert!(notes.join("_index.md").exists());
     assert!(!notes.join("index.md").exists());
@@ -129,20 +143,26 @@ fn rebuild_renames_legacy_underscore_index_before_reconciliation() -> Result<(),
         reader: filesystem,
         writer,
         excluded: Vec::new(),
+        clock: FixedClock,
+        creation: contextos_core::NoCreationReports,
     })?;
     let directory = VaultPath::try_from(VaultPathInput {
         roots: &roots,
         raw: "notes",
     })?;
 
-    let events = service.rebuild(&directory, Origin::Tool("vault_index_rebuild".to_owned()))?;
+    let events = service.rebuild(
+        &directory,
+        Origin::Tool("vault_index_rebuild".to_owned()),
+        &NoSubstrateServices,
+    )?;
     let rebuilt = std::fs::read_to_string(notes.join("index.md"))?;
 
     assert!(!notes.join("_index.md").exists());
-    assert!(rebuilt.starts_with("# Bespoke Notes\n\nOperator introduction.\n\n"));
+    assert!(rebuilt.contains("# Bespoke Notes\n\nOperator introduction.\n\n"));
     assert!(rebuilt.ends_with("\n\nOperator footer.\n"));
-    assert!(rebuilt.contains("| [keep.md](keep.md) | Hand summary |"));
-    assert!(rebuilt.contains("| [new-note.md](new-note.md) | New Note <!-- auto --> |"));
+    assert!(rebuilt.contains("| [[notes/keep.md|Keep]] | Hand summary |"));
+    assert!(rebuilt.contains("| [[notes/new-note.md|New Note]] |  |"));
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].kind, OpKind::Move);
     assert_eq!(events[0].paths[0].relative(), std::path::Path::new("notes/_index.md"));
@@ -150,7 +170,7 @@ fn rebuild_renames_legacy_underscore_index_before_reconciliation() -> Result<(),
     assert!(
         events
             .iter()
-            .all(|event| event.origin == Origin::Internal("index".to_owned()))
+            .all(|event| event.origin == Origin::Internal("vault_index_rebuild".to_owned()))
     );
     Ok(())
 }
@@ -187,13 +207,19 @@ fn rebuild_rejects_legacy_index_collision_without_changing_either_file() -> Resu
         reader: filesystem,
         writer,
         excluded: Vec::new(),
+        clock: FixedClock,
+        creation: contextos_core::NoCreationReports,
     })?;
     let directory = VaultPath::try_from(VaultPathInput {
         roots: &roots,
         raw: "notes",
     })?;
 
-    let Err(error) = service.rebuild(&directory, Origin::Tool("vault_index_rebuild".to_owned())) else {
+    let Err(error) = service.rebuild(
+        &directory,
+        Origin::Tool("vault_index_rebuild".to_owned()),
+        &NoSubstrateServices,
+    ) else {
         return Err(std::io::Error::other("colliding index names did not require operator resolution").into());
     };
 
@@ -234,6 +260,8 @@ fn completed_file_event_reconciles_its_parent_and_returns_internal_event() -> Re
         reader: filesystem,
         writer,
         excluded: Vec::new(),
+        clock: FixedClock,
+        creation: contextos_core::NoCreationReports,
     })?;
     std::fs::write(notes.join("added.md"), "# Added\n")?;
     let added = VaultPath::try_from(VaultPathInput {
@@ -258,8 +286,8 @@ fn completed_file_event_reconciles_its_parent_and_returns_internal_event() -> Re
             .iter()
             .all(|event| event.origin == Origin::Internal("index".to_owned()))
     );
-    assert!(rebuilt.contains("| [added.md](added.md) | Added <!-- auto --> |"));
-    assert!(rebuilt.contains("| [existing.md](existing.md) | Existing <!-- auto --> |"));
+    assert!(rebuilt.contains("| [[notes/added.md|Added]] |  |"));
+    assert!(rebuilt.contains("| [[notes/existing.md|Existing]] |  |"));
     Ok(())
 }
 
@@ -304,6 +332,8 @@ fn rebuild_uses_the_selected_identity_in_a_multi_vault_set() -> Result<(), Box<d
         reader: filesystem,
         writer,
         excluded: Vec::new(),
+        clock: FixedClock,
+        creation: contextos_core::NoCreationReports,
     })?;
     let absolute = second.path().to_string_lossy().into_owned();
     let directory = VaultPath::try_from(VaultPathInput {
@@ -311,7 +341,11 @@ fn rebuild_uses_the_selected_identity_in_a_multi_vault_set() -> Result<(), Box<d
         raw: &absolute,
     })?;
 
-    service.rebuild(&directory, Origin::Tool("vault_index_rebuild".to_owned()))?;
+    service.rebuild(
+        &directory,
+        Origin::Tool("vault_index_rebuild".to_owned()),
+        &NoSubstrateServices,
+    )?;
 
     assert!(!first.path().join("index.md").exists());
     assert!(second.path().join("index.md").exists());
@@ -357,13 +391,19 @@ fn a_frontmatter_parse_failure_during_rebuild_names_the_offending_file() -> Resu
         reader: filesystem,
         writer,
         excluded: Vec::new(),
+        clock: FixedClock,
+        creation: contextos_core::NoCreationReports,
     })?;
     let directory = VaultPath::try_from(VaultPathInput {
         roots: &roots,
         raw: "notes",
     })?;
 
-    let Err(error) = service.rebuild(&directory, Origin::Tool("vault_index_rebuild".to_owned())) else {
+    let Err(error) = service.rebuild(
+        &directory,
+        Origin::Tool("vault_index_rebuild".to_owned()),
+        &NoSubstrateServices,
+    ) else {
         return Err("broken.md's frontmatter should fail the rebuild".into());
     };
     let IndexServiceError::Index(IndexError::Frontmatter { path, .. }) = error else {
@@ -421,6 +461,8 @@ fn manages_directory_reports_index_maintenance_scope() -> Result<(), Box<dyn std
         reader: filesystem,
         writer,
         excluded: vec!["archive".to_owned()],
+        clock: FixedClock,
+        creation: contextos_core::NoCreationReports,
     })?;
 
     let managed = VaultPath::try_from(VaultPathInput {

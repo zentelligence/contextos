@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 80d3017c2f28adc2ad65bd05023abeef1318f3e40afce35c344ac079d7e6d172 # shrinks to rest = ["acme", "acme"], first = "memory", pick_entity = false

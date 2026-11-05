@@ -1,7 +1,6 @@
 //! `FastembedLocal`: an [`EmbedsText`] provider running local ONNX
 //! inference via fastembed's user-defined model API, behind the
-//! default-on `semantic-local` Cargo feature
-//! (phase-5-decision-addendum.md A1).
+//! default-on `semantic-local` Cargo feature.
 //!
 //! This module only ever calls
 //! [`fastembed::TextEmbedding::try_new_from_user_defined`], never
@@ -9,8 +8,8 @@
 //! constructor). `semantic-local` does not enable fastembed's `hf-hub`
 //! feature at all, so that constructor is not even compiled into this
 //! build: there is no code path here that can trigger a model download.
-//! The model directory is always supplied by the caller (platform app-data,
-//! per the addendum); this module never derives it from the current
+//! The model directory is always supplied by the caller (platform app-data);
+//! this module never derives it from the current
 //! working directory or the operator's home directory.
 
 use std::path::{Path, PathBuf};
@@ -22,8 +21,8 @@ use crate::{Chunk, EmbedsText, SearchError};
 
 /// Expected file names inside an injected model directory, mirroring the
 /// Hugging Face repository layout for a sentence-transformers model (the
-/// addendum's default is `sentence-transformers/all-MiniLM-L6-v2`). Later
-/// pre-fetch tooling is responsible for populating a directory with
+/// default is `sentence-transformers/all-MiniLM-L6-v2`). `contextos model
+/// download` is responsible for populating a directory with
 /// exactly these files.
 const ONNX_FILE: &str = "model.onnx";
 const TOKENIZER_FILE: &str = "tokenizer.json";

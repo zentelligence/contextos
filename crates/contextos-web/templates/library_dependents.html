@@ -1,0 +1,19 @@
+<div class="library-dependents" id="{{ id }}">
+{% if let Some(notice) = notice %}  <p class="hint" role="alert">{{ notice }}</p>
+{% endif %}{% if !results.is_empty() %}  <ul class="library-dependent-results" role="status">
+{% for result in results %}    <li class="{% if result.skipped %}check-skipped{% else if result.ok %}check-passed{% else %}check-failed{% endif %}">{% if let Some(href) = result.href %}<a href="{{ href }}">{{ result.label }}</a>{% else %}{{ result.label }}{% endif %}: {{ result.text }}
+{% if !result.failures.is_empty() %}      <ul>
+{% for failure in result.failures %}        <li>{{ failure }}</li>
+{% endfor %}      </ul>
+{% endif %}    </li>
+{% endfor %}  </ul>
+{% endif %}{% if jobs.is_empty() %}  <p class="hint">No job is on a workflow release locked to it.</p>
+{% else %}  <form class="library-dependent-jobs" hx-ext="json-enc" hx-put="{{ base }}/execute/resume-dependents" hx-target="#{{ id }}" hx-swap="outerHTML">
+    <span class="hint">Jobs on the workflow releases locked to it</span>
+    <ul>
+{% for job in jobs %}      <li>{% if job.pickable %}<label><input type="checkbox" name="{{ job.field }}" value="on"> <a href="{{ job.href }}">{{ job.label }}</a></label>{% else %}<a href="{{ job.href }}">{{ job.label }}</a>{% endif %} <span class="badge">{{ job.lifecycle }}</span></li>
+{% endfor %}    </ul>
+    <button type="button" class="btn small" hx-put="{{ base }}/execute/validate-dependents" hx-target="#{{ id }}" hx-swap="outerHTML">Validate every job</button>
+    <button type="submit" class="btn small primary">Resume picked jobs</button>
+  </form>
+{% endif %}</div>

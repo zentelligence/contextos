@@ -4,10 +4,11 @@
 //! independently.
 
 use std::fs;
-use std::io::{self, Write as _};
+use std::io;
 use std::path::{Path, PathBuf};
 
-use tempfile::NamedTempFile;
+use contextos_fs::FsError;
+use contextos_fs::host_file;
 use thiserror::Error;
 
 use crate::{ConfigDocument, ConfigWriterError};
@@ -50,7 +51,7 @@ pub fn write_config_document(path: &Path, document: &ConfigDocument) -> Result<(
 /// file outside every vault root. Shared by [`write_config_document`]
 /// (`config.toml`) and `host_registration.rs` (an external MCP host's own
 /// config file), the one atomic-write primitive this workspace uses for any
-/// non-vault file.
+/// non-vault file, now `contextos_fs::host_file::write_file_atomically`.
 ///
 /// # Errors
 ///
@@ -58,41 +59,7 @@ pub fn write_config_document(path: &Path, document: &ConfigDocument) -> Result<(
 /// be created, the temporary file cannot be written or flushed, or the
 /// rename fails.
 pub(crate) fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<(), ConfigIoError> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .ok_or_else(|| ConfigIoError::NoParentDirectory {
-            path: path.to_path_buf(),
-        })?;
-    fs::create_dir_all(parent).map_err(|source| ConfigIoError::CreateParent {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-
-    let mut temporary = NamedTempFile::new_in(parent).map_err(|source| ConfigIoError::CreateTemporary {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    temporary
-        .write_all(contents)
-        .map_err(|source| ConfigIoError::WriteTemporary {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|source| ConfigIoError::FlushTemporary {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    temporary
-        .persist(path)
-        .map_err(|error| ConfigIoError::PersistTemporary {
-            path: path.to_path_buf(),
-            source: error.error,
-        })?;
-    Ok(())
+    host_file::write_file_atomically(path, contents).map_err(ConfigIoError::from)
 }
 
 /// Typed failures reading or writing a `config.toml` document.
@@ -109,38 +76,8 @@ pub enum ConfigIoError {
         #[source]
         source: ConfigWriterError,
     },
-    #[error("{} has no parent directory", path.display())]
-    NoParentDirectory { path: PathBuf },
-    #[error("could not create {}: {source}", path.display())]
-    CreateParent {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("could not create a temporary file next to {}: {source}", path.display())]
-    CreateTemporary {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("could not write a temporary file for {}: {source}", path.display())]
-    WriteTemporary {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("could not flush a temporary file for {}: {source}", path.display())]
-    FlushTemporary {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("could not persist the temporary file to {}: {source}", path.display())]
-    PersistTemporary {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
+    #[error("{0}")]
+    AtomicWrite(#[from] FsError),
 }
 
 #[cfg(test)]

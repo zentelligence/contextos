@@ -1,13 +1,14 @@
 //! MCP dispatch-and-error contract tests: unknown/missing/incompatible
 //! tool arguments, structured tool-error shape and remediation, batch
 //! per-item failure isolation, and the ordered whole-catalogue dispatch
-//! matrices for every Phase 1 tool's representative input/output and
-//! every documented Phase 1 error path. Shares its `call_tool`/
+//! matrices for every currently delivered tool's representative
+//! input/output and every documented error path. Shares its `call_tool`/
 //! `assert_tool_success`/`assert_tool_error` helpers with every sibling
 //! `*_contract.rs` file in this directory (each keeps its own copy,
 //! matching this codebase's existing per-file pattern).
 
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use serde_json::{Map, json};
@@ -38,7 +39,7 @@ async fn assert_tool_success(
     arguments: Map<String, serde_json::Value>,
     expected_fields: &[&str],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config = Config::try_from(vec![vault.to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
     let result = call_tool(server, name, arguments).await?;
     let structured = result
@@ -58,7 +59,7 @@ async fn assert_tool_error(
     arguments: Map<String, serde_json::Value>,
     expected_code: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config = Config::try_from(vec![vault.to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
     let result = call_tool(server, name, arguments).await?;
     let structured = result
@@ -71,7 +72,7 @@ async fn assert_tool_error(
 
     assert_eq!(result.is_error, Some(true), "{name} did not mark its error");
     assert_eq!(structured.get("code"), Some(&json!(expected_code)));
-    assert!(!remediation.is_empty());
+    assert!(!remediation.is_empty(), "`remediation` should not be empty");
     Ok(())
 }
 
@@ -79,7 +80,7 @@ async fn assert_tool_error(
 async fn missing_file_is_a_structured_tool_error_with_remediation()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
     let arguments = Map::from_iter([("path".to_owned(), json!("missing.md"))]);
 
@@ -118,7 +119,7 @@ async fn fs_list_directory_with_sizes_reports_entries_and_rejects_sort_by_withou
     std::fs::write(vault.path().join("large.md"), "a much longer file body")?;
 
     let plain = call_tool(
-        ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?,
+        ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?,
         "fs_list_directory",
         Map::from_iter([("path".to_owned(), json!("."))]),
     )
@@ -135,7 +136,7 @@ async fn fs_list_directory_with_sizes_reports_entries_and_rejects_sort_by_withou
     );
 
     let with_sizes_result = call_tool(
-        ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?,
+        ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?,
         "fs_list_directory",
         Map::from_iter([
             ("path".to_owned(), json!(".")),
@@ -177,7 +178,7 @@ async fn fs_list_directory_with_sizes_reports_entries_and_rejects_sort_by_withou
 async fn unknown_tool_arguments_are_rejected() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("note.md"), "content")?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
     let arguments = Map::from_iter([
         ("path".to_owned(), json!("note.md")),
@@ -202,7 +203,7 @@ async fn missing_and_incompatible_tool_arguments_are_rejected() -> Result<(), Bo
 {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("note.md"), "content")?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
 
     let missing = call_tool(server, "fs_read_text_file", Map::new()).await?;
@@ -231,7 +232,7 @@ async fn batch_path_validation_failures_are_isolated_per_item() -> Result<(), Bo
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     let outside = tempdir()?;
     std::fs::write(vault.path().join("present.md"), "present")?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(config)?;
     let arguments = serde_json::from_value(json!({
         "paths": ["present.md", outside.path().join("secret.md")]

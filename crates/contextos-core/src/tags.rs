@@ -129,6 +129,10 @@ mod tests {
     #[test]
     fn extract_tags_ignores_a_missing_or_non_string_tags_key() {
         let frontmatter = frontmatter(json!({ "tags": 42 }));
-        assert!(extract_tags(&frontmatter, "no inline tags here").is_empty());
+        assert!(
+            extract_tags(&frontmatter, "no inline tags here").is_empty(),
+            "`extract_tags(&frontmatter, \"no inline tags here\")` should be empty, got {:?}",
+            extract_tags(&frontmatter, "no inline tags here")
+        );
     }
 }

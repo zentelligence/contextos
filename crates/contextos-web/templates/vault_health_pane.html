@@ -1,0 +1,54 @@
+<div class="vault-health" id="vault-health" hx-ext="ignore:json-enc">
+  <div class="vault-health-head">
+    <div>
+      <h2>Vault health</h2>
+{% if let Some(report) = report %}
+      <p class="vault-health-summary {{ report.css_class }}"><span class="status-dot" aria-hidden="true"></span> {{ report.headline }} <span class="hint">{{ report.checked }}</span></p>
+{% endif %}
+    </div>
+    <button type="button" class="btn small" hx-post="/{{ vault }}/health/execute/refresh" hx-target="#vault-health" hx-swap="outerHTML"><span class="ic ic-rescan" aria-hidden="true"></span> Check again</button>
+  </div>
+  <p class="hint">
+    The ContextOS server runs these checks, apart from those of the vault's workflow releases, which this interface makes from the vault's package store. Each shows what is wrong and what to do. A finding marked
+    <strong>Fixable automatically</strong> can be repaired for you, after you review exactly what would change.
+  </p>
+{% if let Some(notice) = notice %}
+  <div class="vault-health-notice {{ notice.tone }}" role="status">
+    <strong>{{ notice.title }}</strong>
+{% if !notice.lines.is_empty() %}
+    <ul>{% for line in notice.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+{% endif %}
+  </div>
+{% endif %}
+{% if let Some(message) = unavailable %}
+  <p class="hint error" role="alert">{{ message }}</p>
+{% endif %}
+{% if let Some(report) = report %}
+{% if report.fixable > 0 %}
+  <div id="vault-health-repair" class="vault-health-repair">
+    <p>{{ report.fixable }} {% if report.fixable == 1 %}finding{% else %}findings{% endif %} can be repaired automatically.</p>
+    <button type="button" class="btn small primary" hx-post="/{{ vault }}/health/execute/repair-preview" hx-target="#vault-health-repair" hx-swap="outerHTML">Review automatic repair</button>
+  </div>
+{% endif %}
+{% for group in report.groups %}
+  <section class="vault-health-group">
+    <h3>{{ group.title }}</h3>
+    <ul class="vault-health-checks">
+{% for check in group.checks %}
+      <li class="vault-health-check {% if check.passing %}pass{% else %}fail{% endif %}">
+        <span class="ic {% if check.passing %}ic-check{% else %}ic-circle-alert{% endif %}" aria-hidden="true"></span>
+        <div>
+          <p class="vault-health-check-title"><strong>{{ check.label }}</strong> <span class="sr-only">{% if check.passing %}passed{% else %}needs attention{% endif %}</span>
+{% if check.fixable %}<span class="badge working">Fixable automatically</span>{% else if !check.passing %}<span class="badge blocked">Needs you</span>{% endif %}</p>
+          <p class="vault-health-check-message">{{ check.message }}</p>
+{% if let Some(action) = check.action %}
+          <p class="hint">{{ action }}</p>
+{% endif %}
+        </div>
+      </li>
+{% endfor %}
+    </ul>
+  </section>
+{% endfor %}
+{% endif %}
+</div>

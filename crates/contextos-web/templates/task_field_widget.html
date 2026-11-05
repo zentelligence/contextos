@@ -1,0 +1,14 @@
+{% macro widget(field) %}
+{% match field.widget %}
+{% when FieldWidget::Text %}
+<input type="text" name="{{ field.key }}" data-field="{{ field.key }}" value="{{ field.value }}">
+{% when FieldWidget::Date %}
+<input type="date" name="{{ field.key }}" data-field="{{ field.key }}" value="{{ field.value }}">
+{% when FieldWidget::Select with (options) %}
+<select name="{{ field.key }}" data-field="{{ field.key }}">
+{% for option in options %}
+  <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+{% endfor %}
+</select>
+{% endmatch %}
+{% endmacro %}

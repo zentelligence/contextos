@@ -1,6 +1,7 @@
 //! `POST /mcp/{server_name}/{tool_name}` against a real
 //! `contextos-mcp` stdio session. Covers success, an MCP-level tool error
-//! (still `200`), an unconfigured `server_name` (`404`), and a killed
+//! (still `200`), a call the server refuses with a protocol error (`502`,
+//! `mcp/refused`), an unconfigured `server_name` (`404`), and a killed
 //! `contextos-mcp` process mid-session (`502`), the required cases for a
 //! proxy that must never hang or silently swallow a downstream failure.
 
@@ -32,12 +33,7 @@ async fn a_successful_tool_call_returns_200_with_the_real_tool_result() -> Resul
     let config_path = support::write_vault_config(dir.path(), &vault)?;
     let entry = support::real_contextos_entry("contextos", &config_path)?;
     let clients = connected_clients(&[entry]).await?;
-    let router = contextos_web::build_router(
-        clients,
-        Some(dir.path()),
-        &dir.path().join("web.toml"),
-        "contextos".to_owned(),
-    );
+    let router = contextos_web::build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
 
     let response = router
         .oneshot(
@@ -68,12 +64,7 @@ async fn an_mcp_level_tool_error_is_still_a_200() -> Result<(), BoxError> {
     let config_path = support::write_vault_config(dir.path(), &vault)?;
     let entry = support::real_contextos_entry("contextos", &config_path)?;
     let clients = connected_clients(&[entry]).await?;
-    let router = contextos_web::build_router(
-        clients,
-        Some(dir.path()),
-        &dir.path().join("web.toml"),
-        "contextos".to_owned(),
-    );
+    let router = contextos_web::build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
 
     let response = router
         .oneshot(
@@ -93,6 +84,46 @@ async fn an_mcp_level_tool_error_is_still_a_200() -> Result<(), BoxError> {
     Ok(())
 }
 
+/// A server that receives the call but answers with a protocol error (here,
+/// for a tool it does not have) is still reachable: the proxy says it refused
+/// the call, distinct from a server it could not reach at all.
+#[tokio::test]
+async fn a_call_the_server_refuses_with_a_protocol_error_is_reported_as_refused() -> Result<(), BoxError> {
+    let dir = tempfile::tempdir()?;
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(&vault)?;
+    let server_log = dir.path().join("server.log");
+    let config_path = support::write_vault_config_logging_to(dir.path(), &vault, Some(&server_log))?;
+    let entry = support::real_contextos_entry("contextos", &config_path)?;
+    let clients = connected_clients(&[entry]).await?;
+    let router = contextos_web::build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp/contextos/no_such_tool")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let json: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(json["error"], "mcp/refused");
+    assert_eq!(json["server"], "contextos");
+    // The refusal is the server's own, logged as a warning by it: read it back from the server's log rather than let
+    // it reach the test output.
+    let log = std::fs::read_to_string(&server_log)?;
+    assert!(
+        log.lines()
+            .any(|line| line.contains("WARN") && line.contains("tool not found")),
+        "the server logs a warning that the tool was not found: {log}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn an_unconfigured_server_name_is_a_404_against_a_real_session() -> Result<(), BoxError> {
     let dir = tempfile::tempdir()?;
@@ -101,12 +132,7 @@ async fn an_unconfigured_server_name_is_a_404_against_a_real_session() -> Result
     let config_path = support::write_vault_config(dir.path(), &vault)?;
     let entry = support::real_contextos_entry("contextos", &config_path)?;
     let clients = connected_clients(&[entry]).await?;
-    let router = contextos_web::build_router(
-        clients,
-        Some(dir.path()),
-        &dir.path().join("web.toml"),
-        "contextos".to_owned(),
-    );
+    let router = contextos_web::build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
 
     let response = router
         .oneshot(
@@ -137,12 +163,7 @@ async fn a_killed_contextos_mcp_process_is_a_502_not_a_hang() -> Result<(), BoxE
         .pid()
         .ok_or("a stdio client reports its child PID")?;
     let clients = Arc::new(clients);
-    let router = contextos_web::build_router(
-        Arc::clone(&clients),
-        Some(dir.path()),
-        &dir.path().join("web.toml"),
-        "contextos".to_owned(),
-    );
+    let router = contextos_web::build_router(Arc::clone(&clients), Some(dir.path()), &dir.path().join("web.toml"));
 
     std::process::Command::new("kill")
         .args(["-KILL", &pid.to_string()])
@@ -181,5 +202,33 @@ async fn a_killed_contextos_mcp_process_is_a_502_not_a_hang() -> Result<(), BoxE
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let json: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(json["error"], "mcp/unreachable");
+    Ok(())
+}
+
+/// The proxy carries a tool call as large as `contextos-mcp` accepts: a write
+/// well above axum's own 2 MB default body limit reaches the tool.
+#[tokio::test]
+async fn a_tool_call_larger_than_two_megabytes_is_relayed_to_the_tool() -> Result<(), BoxError> {
+    let dir = tempfile::tempdir()?;
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(&vault)?;
+    let config_path = support::write_vault_config(dir.path(), &vault)?;
+    let entry = support::real_contextos_entry("contextos", &config_path)?;
+    let clients = connected_clients(&[entry]).await?;
+    let router = contextos_web::build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
+    let content = "x".repeat(5 * 1024 * 1024);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp/contextos/fs_write_file")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"path": "large.md", "content": content}).to_string()))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(std::fs::metadata(vault.join("large.md"))?.len(), 5 * 1024 * 1024);
     Ok(())
 }

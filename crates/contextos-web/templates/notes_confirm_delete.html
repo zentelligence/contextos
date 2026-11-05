@@ -1,0 +1,20 @@
+<div class="notes-main-body" id="notes-main-body">
+  <p class="hint">Delete &quot;{{ title }}&quot; ({{ filename }})? It will be moved to the vault's trash.</p>
+  <div class="notes-delete-confirm-actions">
+    <button
+      type="button"
+      class="btn small"
+      hx-delete="{{ urls.notes(relative_path) }}"
+      hx-target="closest .notes-screen"
+      hx-swap="outerHTML"
+    >Confirm delete</button>
+    <button
+      type="button"
+      class="btn small"
+      hx-get="{{ urls.notes(relative_path) }}"
+      hx-select="#notes-main-body"
+      hx-target="#notes-main-body"
+      hx-swap="outerHTML"
+    >Cancel</button>
+  </div>
+</div>

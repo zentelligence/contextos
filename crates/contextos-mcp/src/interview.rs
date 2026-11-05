@@ -29,10 +29,14 @@
 //! step runs.
 
 use std::fmt::{self, Display, Formatter};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use inquire::{Confirm, Select, Text};
 use thiserror::Error;
+
+mod logging;
+pub use logging::default_log_file;
 
 use crate::{
     Config, ConfigDocument, ConfigError, ConfigIoError, ConfigWriterError, DetectsRunningProcesses, HostPathError,
@@ -63,7 +67,8 @@ pub trait Interviewer {
     fn ask(&mut self, prompt: &str) -> Result<String, InterviewError>;
 
     /// Asks a free-text question prefilled with `default`, returning
-    /// `default` unchanged when the operator accepts it as-is.
+    /// `default` unchanged when the operator accepts it as-is. The prefill is
+    /// editable text, so deleting it answers blank.
     ///
     /// # Errors
     ///
@@ -82,6 +87,9 @@ pub trait Interviewer {
     /// rather than a panic here regardless) the selection cannot be matched
     /// back to one of `options`.
     fn choose(&mut self, prompt: &str, options: &[&str]) -> Result<usize, InterviewError>;
+
+    /// Shows a one-line status message between prompts, such as why an answer was rejected.
+    fn notify(&mut self, message: &str);
 }
 
 /// The real [`Interviewer`], backed by `inquire`'s terminal prompts.
@@ -98,7 +106,13 @@ impl Interviewer for TerminalInterviewer {
     }
 
     fn ask_with_default(&mut self, prompt: &str, default: &str) -> Result<String, InterviewError> {
-        Ok(Text::new(prompt).with_default(default).prompt()?.trim().to_owned())
+        // An initial value, not a default: the operator sees it typed in and can edit or delete it, so a question
+        // whose blank answer means something ("blank for stderr") can still be answered blank once prefilled.
+        Ok(Text::new(prompt)
+            .with_initial_value(default)
+            .prompt()?
+            .trim()
+            .to_owned())
     }
 
     fn choose(&mut self, prompt: &str, options: &[&str]) -> Result<usize, InterviewError> {
@@ -108,6 +122,15 @@ impl Interviewer for TerminalInterviewer {
                 "selected option not found among the offered choices".into(),
             ))
         })
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the interview speaks to the operator on standard output, an interactive stream that is not a run result"
+    )]
+    fn notify(&mut self, message: &str) {
+        // Deliberate operator-facing output on the same stream the closing report uses.
+        let _ignored = writeln!(std::io::stdout().lock(), "{message}");
     }
 }
 
@@ -148,6 +171,10 @@ pub struct InterviewEnvironment<'a> {
     /// `command` (mirrors `contextos config mcp register`'s own
     /// construction in `main.rs`).
     pub server_command: String,
+    /// The log file offered while `config.toml` sets none, with a short rotation
+    /// ([`contextos_logging::OFFERED_MAX_SIZE_MB`], [`contextos_logging::OFFERED_RETENTION_DAYS`]): [`default_log_file`]
+    /// in production. `None` offers stderr.
+    pub default_log_file: Option<PathBuf>,
 }
 
 /// The outcome of the interview's optional "register with Claude Desktop"
@@ -260,6 +287,7 @@ pub fn run_interview(
     let mut edited_vaults = Vec::new();
     let mut removed_vaults = Vec::new();
     let mut server_settings_changed = false;
+    let mut log_directory = None;
 
     match existing.len() {
         0 => {}
@@ -275,6 +303,7 @@ pub fn run_interview(
                 &mut edited_vaults,
                 &mut removed_vaults,
                 &mut server_settings_changed,
+                &mut log_directory,
             )?;
         }
     }
@@ -293,6 +322,13 @@ pub fn run_interview(
         }
     }
 
+    // A fresh or single-vault configuration goes straight to the logging questions; with several vaults the focus
+    // menu offers them.
+    if existing.len() <= 1 {
+        log_directory =
+            logging::configure_logging(interviewer, &mut document, environment.default_log_file.as_deref())?;
+    }
+
     let semantic_model_directory = if !added_vaults.is_empty()
         && interviewer.confirm("Enable semantic search for the vault(s) you just added?", false)?
     {
@@ -309,6 +345,13 @@ pub fn run_interview(
         None
     };
 
+    // Created only once every answer is in, so a cancelled interview leaves nothing behind.
+    if let Some(directory) = log_directory {
+        std::fs::create_dir_all(&directory).map_err(|source| InterviewError::LogDirectory {
+            path: directory,
+            source,
+        })?;
+    }
     write_config_document(&environment.config_path, &document)?;
 
     let config = Config::try_from(document.render().as_str())?;
@@ -397,13 +440,14 @@ fn focus_on_existing_configuration(
     edited_vaults: &mut Vec<String>,
     removed_vaults: &mut Vec<String>,
     server_settings_changed: &mut bool,
+    log_directory: &mut Option<PathBuf>,
 ) -> Result<(), InterviewError> {
     let focus_options = ["General (server) settings", "All vaults", "A specific vault"];
     loop {
         let focus = interviewer.choose("What would you like to focus on?", &focus_options)?;
         match focus {
             0 => {
-                edit_server_settings(interviewer, document)?;
+                *log_directory = edit_server_settings(interviewer, document, environment.default_log_file.as_deref())?;
                 *server_settings_changed = true;
             }
             1 => {
@@ -461,12 +505,13 @@ fn focus_on_one_vault(
     Ok(())
 }
 
-/// The "general (server) settings" focus: prefills the current
-/// `transports`/`log_level`/`log_file` values as defaults.
+/// The "general (server) settings" focus: prefills the current `transports` and `log_level`, then asks the logging
+/// questions. Returns the folder of the offered default log file when it was chosen, for the caller to create.
 fn edit_server_settings(
     interviewer: &mut dyn Interviewer,
     document: &mut ConfigDocument,
-) -> Result<(), InterviewError> {
+    default_log_file: Option<&Path>,
+) -> Result<Option<PathBuf>, InterviewError> {
     let current = document.server_settings();
     let transports_raw = interviewer.ask_with_default(
         "Transports (comma-separated: stdio, http):",
@@ -480,9 +525,8 @@ fn edit_server_settings(
     let log_level = interviewer
         .ask_with_default("Log level (error, warn, info, debug, trace):", &current.log_level)?
         .to_ascii_lowercase();
-    let log_file = interviewer.ask_with_default("Log file path (blank for stderr):", &current.log_file)?;
-    document.set_server_settings(&transports, &log_level, &log_file)?;
-    Ok(())
+    document.set_server_settings(&transports, &log_level, &current.logging)?;
+    logging::configure_logging(interviewer, document, default_log_file)
 }
 
 /// Resolves Claude Desktop's config path (auto-discovery, falling back to a
@@ -585,6 +629,16 @@ pub enum InterviewError {
     HostPath(#[from] HostPathError),
     #[error(transparent)]
     HostRegistration(#[from] HostRegistrationError),
+    #[error("could not create the log folder {}", path.display())]
+    LogDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("too many invalid answers for the {section}; nothing was written")]
+    TooManyAttempts { section: &'static str },
+    #[error("{value} is too large for this setting")]
+    NumberOutOfRange { value: u64 },
 }
 
 #[cfg(test)]

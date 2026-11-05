@@ -1,0 +1,19 @@
+<div class="notes-main-body" id="wiki-main-body">
+  <p class="hint">Delete {{ kind }} &quot;{{ label }}&quot;? It will be moved to the vault's trash.</p>
+  <div class="notes-delete-confirm-actions">
+    <button
+      type="button"
+      class="btn small"
+      hx-delete="{{ urls.wiki(path) }}"
+      hx-target="closest .wiki-screen"
+      hx-swap="outerHTML"
+    >Confirm delete</button>
+    <button
+      type="button"
+      class="btn small"
+      hx-get="{{ urls.wiki(path) }}"
+      hx-target="closest .wiki-screen"
+      hx-swap="outerHTML"
+    >Cancel</button>
+  </div>
+</div>

@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use contextos_core::{VaultPath, VaultPathInput, VaultRoot, VaultRootInput, VaultSet};
 use contextos_fs::{
-    DirectoryTreeRequest, EntryKind, FileInfoRequest, Filesystem, FilesystemConfig, FsError, FsLimits,
-    ListDirectoryRequest, ListDirectoryWithSizesRequest, ReadTextRequest, SearchFilesRequest, SortBy,
-    default_hidden_patterns,
+    DirectoryTreeRequest, EntryKind, FileInfoRequest, Filesystem, FilesystemConfig, FsError, FsLimits, HiddenPaths,
+    HiddenPathsInput, ListDirectoryRequest, ListDirectoryWithSizesRequest, ListFilesRequest, ReadTextRequest,
+    SearchFilesRequest, SortBy, default_hidden_patterns,
 };
 use tempfile::tempdir;
 
@@ -273,5 +273,147 @@ fn hidden_count_mismatch_is_rejected_at_construction() -> Result<(), Box<dyn std
     });
 
     assert!(matches!(result, Err(FsError::HiddenCountMismatch { .. })));
+    Ok(())
+}
+
+#[test]
+fn require_directory_accepts_a_folder_and_refuses_a_file_or_a_missing_path_with_stable_codes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    std::fs::create_dir(vault.path().join("wiki"))?;
+    std::fs::write(vault.path().join("wiki/note.md"), "note")?;
+    let (filesystem, roots) = filesystem(vault.path().to_path_buf(), true)?;
+
+    filesystem.require_directory(&path(&roots, "wiki")?)?;
+    filesystem.require_directory(&path(&roots, ".")?)?;
+    let file = filesystem.require_directory(&path(&roots, "wiki/note.md")?);
+    let missing = filesystem.require_directory(&path(&roots, "wikis")?);
+
+    assert_eq!(file.map_err(|error| error.code()), Err("path/not-a-directory"));
+    assert_eq!(missing.map_err(|error| error.code()), Err("path/not-found"));
+    Ok(())
+}
+
+#[test]
+fn is_file_is_true_only_for_an_existing_regular_file() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    std::fs::create_dir(vault.path().join("wiki"))?;
+    std::fs::write(vault.path().join("wiki/note.md"), "note")?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(vault.path().join("wiki/note.md"), vault.path().join("alias.md"))?;
+    let (filesystem, roots) = filesystem(vault.path().to_path_buf(), true)?;
+
+    assert!(filesystem.is_file(&path(&roots, "wiki/note.md")?)?);
+    assert!(
+        !filesystem.is_file(&path(&roots, "wiki")?)?,
+        "a directory is not a file"
+    );
+    assert!(!filesystem.is_file(&path(&roots, "wiki/missing.md")?)?);
+    #[cfg(unix)]
+    assert!(
+        filesystem.is_file(&path(&roots, "alias.md")?)?,
+        "a link that stays inside the vault"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_files_returns_every_file_but_no_directory_hidden_path_or_symlink() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    std::fs::create_dir_all(vault.path().join("wiki/deep"))?;
+    std::fs::create_dir(vault.path().join("secret"))?;
+    std::fs::create_dir(vault.path().join(".git"))?;
+    std::fs::write(vault.path().join("b.md"), "b")?;
+    std::fs::write(vault.path().join("wiki/deep/A.png"), "a")?;
+    std::fs::write(vault.path().join("secret/note.md"), "hidden")?;
+    std::fs::write(vault.path().join(".git/config"), "hidden")?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(vault.path().join("b.md"), vault.path().join("link.md"))?;
+    let mut hidden = default_hidden_patterns();
+    hidden.push("secret/**".to_owned());
+    let (filesystem, roots) = filesystem_with_hidden(vault.path().to_path_buf(), true, hidden)?;
+
+    let files = filesystem.list_files(&ListFilesRequest {
+        path: path(&roots, ".")?,
+        max_files: 100,
+    })?;
+
+    assert_eq!(files, vec!["b.md", "wiki/deep/A.png"]);
+    Ok(())
+}
+
+#[test]
+fn list_files_fails_rather_than_truncating_when_the_vault_holds_more_files_than_the_cap()
+-> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    std::fs::write(vault.path().join("a.md"), "a")?;
+    std::fs::write(vault.path().join("b.md"), "b")?;
+    let (filesystem, roots) = filesystem(vault.path().to_path_buf(), true)?;
+
+    let error = filesystem
+        .list_files(&ListFilesRequest {
+            path: path(&roots, ".")?,
+            max_files: 1,
+        })
+        .err()
+        .ok_or("listing above the cap must fail")?;
+
+    assert!(matches!(error, FsError::TooManyFiles { maximum: 1, .. }), "{error:?}");
+    assert_eq!(error.code(), "io/too-many-files");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn list_files_skips_a_directory_it_may_not_read_instead_of_failing() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let vault = tempdir()?;
+    std::fs::create_dir(vault.path().join("locked"))?;
+    std::fs::write(vault.path().join("locked/inside.md"), "x")?;
+    std::fs::write(vault.path().join("open.md"), "x")?;
+    std::fs::set_permissions(vault.path().join("locked"), std::fs::Permissions::from_mode(0o000))?;
+    let restricted = std::fs::read_dir(vault.path().join("locked")).is_err();
+    let (filesystem, roots) = filesystem(vault.path().to_path_buf(), true)?;
+
+    let outcome = filesystem.list_files(&ListFilesRequest {
+        path: path(&roots, ".")?,
+        max_files: 100,
+    });
+    std::fs::set_permissions(vault.path().join("locked"), std::fs::Permissions::from_mode(0o755))?;
+
+    if restricted {
+        assert_eq!(outcome?, vec!["open.md"]);
+    }
+    Ok(())
+}
+
+#[test]
+fn hidden_paths_hide_what_the_listing_tools_hide_and_nothing_else() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    let hidden = HiddenPaths::try_from(HiddenPathsInput {
+        root: vault.path(),
+        patterns: &["secret/**".to_owned(), "*.tmp".to_owned(), ".git/".to_owned()],
+    })?;
+
+    assert!(hidden.hides("secret/plan.md", false));
+    assert!(hidden.hides("secret", true));
+    assert!(hidden.hides("notes/scratch.tmp", false));
+    assert!(hidden.hides(".git/config", false));
+    assert!(!hidden.hides("notes/plan.md", false));
+    assert!(!hidden.hides("secretive.md", false));
+    Ok(())
+}
+
+#[test]
+fn hidden_paths_reject_a_pattern_the_listing_tools_would_reject() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+
+    let result = HiddenPaths::try_from(HiddenPathsInput {
+        root: vault.path(),
+        patterns: &["[z-a]".to_owned()],
+    });
+
+    assert!(matches!(result, Err(FsError::InvalidExclude { .. })));
     Ok(())
 }

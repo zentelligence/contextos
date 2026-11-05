@@ -1,4 +1,4 @@
-//! Vault content rendering pipeline (`web-rendering.md`): Markdown/OFM,
+//! Vault content rendering pipeline: Markdown/OFM,
 //! triple-colon fences, wikilinks/embeds, callouts, `.base` HTMX views,
 //! `.canvas` SVG, and Mermaid SVG.
 //!
@@ -12,19 +12,14 @@
 //! [`mcp_client::McpClient`](crate::mcp_client::McpClient).
 
 pub mod base;
-pub mod block_ids;
-pub mod callouts;
 pub mod canvas;
-pub mod comments;
+pub mod code;
 pub mod diagnostics;
-pub mod fences;
-pub mod frontmatter;
-pub mod highlight;
-pub mod markdown;
+pub mod favourite_toggle;
 pub mod page;
 pub mod shell;
-pub mod tags;
-pub mod wikilinks;
+pub mod system_status;
+pub mod title_action;
 
 pub use diagnostics::Diagnostic;
 

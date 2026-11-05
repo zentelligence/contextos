@@ -11,12 +11,7 @@ use crate::mcp_client::McpClientSet;
 async fn the_proxy_route_is_reachable_through_the_assembled_router() -> Result<(), Box<dyn std::error::Error>> {
     let clients = Arc::new(McpClientSet::connect(&[]).await?);
     let dir = tempfile::tempdir()?;
-    let router = build_router(
-        clients,
-        Some(dir.path()),
-        &dir.path().join("web.toml"),
-        "contextos".to_owned(),
-    );
+    let router = build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
 
     let response = router
         .oneshot(
@@ -40,12 +35,7 @@ async fn the_static_route_is_reachable_through_the_assembled_router() -> Result<
     let clients = Arc::new(McpClientSet::connect(&[]).await?);
     let dir = tempfile::tempdir()?;
     std::fs::write(dir.path().join("app.js"), b"console.log('hi');")?;
-    let router = build_router(
-        clients,
-        Some(dir.path()),
-        &dir.path().join("web.toml"),
-        "contextos".to_owned(),
-    );
+    let router = build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
 
     let response = router
         .oneshot(Request::builder().uri("/static/app.js").body(Body::empty())?)

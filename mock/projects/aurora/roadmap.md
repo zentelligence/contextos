@@ -16,4 +16,5 @@ tags:
 
 ## Milestone Reviews
 
-Each milestone closes with a short review meeting and a go or no-go decision recorded in the journal.
+Each milestone closes with a short review meeting and a go or no-go
+decision recorded in the journal.

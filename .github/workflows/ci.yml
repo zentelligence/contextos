@@ -1,9 +1,13 @@
 name: CI
 
-# Packaging and release, delivery-plan.md: "CI: fmt, clippy -D warnings,
-# audit, test matrix (Windows, macOS, Linux)." Mirrors `just ci` (justfile)
+# Formatting, clippy with warnings denied, dependency audit, and the test
+# matrix on Windows, macOS, and Linux. Mirrors `just ci` (justfile)
 # so a green run here is the same gate contributors run locally, just
-# across all three target operating systems instead of one.
+# across all three target operating systems instead of one. The one exception
+# is the plugin skill check (`just plugin-skill`): it needs a checkout of the
+# separate plugin repository, so it runs only where that checkout exists. The
+# licence check (`just licences-check`) runs once, on Linux: the attribution
+# file covers every release target from any one platform.
 
 on:
   push:
@@ -22,7 +26,32 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # No debug info or symbol table in CI: over 400 test binaries each link much of the search stack, and the symbol
+    # tables alone took them from 24GB to 37GB, which filled the Ubuntu runner's disk mid-link. A failed assertion
+    # still reports its file and line; a backtrace no longer names its functions, so reproduce one locally.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "false"
+      CARGO_PROFILE_DEV_STRIP: symbols
     steps:
+      # `ubuntu-latest` ships ~30GB of preinstalled toolchains this repo
+      # never touches (Android SDK, .NET, GHC, CodeQL); the full workspace
+      # build links many separate contextos-mcp integration test binaries,
+      # each statically pulling in contextos-search's own heavy dependency
+      # stack (tantivy, the bundled ONNX runtime, fastembed), which has
+      # exhausted the runner's remaining disk mid-link. Reclaim the unused
+      # space before the build starts rather than after it fails. /mnt is no
+      # way out: it is on the same disk as /. Node stays, because tests run it.
+      # Free space is printed so a full disk shows in the log.
+      - name: free up disk space
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/go /opt/hostedtoolcache/PyPy \
+            /opt/hostedtoolcache/Python /opt/hostedtoolcache/Ruby /usr/share/swift /usr/lib/jvm \
+            /usr/local/share/powershell /usr/local/share/chromium /opt/microsoft /opt/google || true
+          sudo docker image prune --all --force || true
+          df -h /
+
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
@@ -34,16 +63,26 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
-      # `--features semantic-local` rather than `--all-features`, matching
-      # `justfile`'s own `clippy` recipe: the workspace's only other feature
-      # is contextos-search's embedvec-unreleased-flush-sync, deliberately
-      # off by default (calls a method that only exists on an unmerged,
-      # unpublished embedvec checkout).
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --features semantic-local -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --no-fail-fast
+
+      # The test executables have run and the release build below needs their room.
+      - name: remove the test executables
+        if: matrix.os == 'ubuntu-latest'
+        run: find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -delete
+
+      # The note page's latency budget is the shipped product's, so it is measured in a release build (`just performance`),
+      # and only here: shared macOS and Windows runners are too noisy for a wall-clock budget.
+      - name: note page latency budget (release)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --release -p contextos-web --test performance
+
+      - name: disk space after the build
+        if: always() && matrix.os == 'ubuntu-latest'
+        run: df -h /
 
   audit:
     name: audit
@@ -56,3 +95,20 @@ jobs:
       - uses: taiki-e/install-action@cargo-audit
 
       - run: cargo audit
+
+  # `just licences-check`: fails when a dependency's licence is outside about.toml's accepted list, or when the
+  # committed THIRD_PARTY_LICENSES.md no longer matches the dependency tree. cargo-about is pinned so its own output
+  # format cannot change under the committed file; move the pin together with a regenerated file.
+  licences:
+    name: licences
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2,just
+
+      - run: just licences-check

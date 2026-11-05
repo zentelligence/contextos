@@ -1,10 +1,13 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
-use tantivy::collector::TopDocs;
-use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
+use tantivy::directory::Directory as _;
+use tantivy::directory::error::LockError;
+use tantivy::query::{Occur, Query, TermQuery};
 use tantivy::schema::{
     FAST, Facet, FacetOptions, Field, IndexRecordOption, JsonObjectOptions, OwnedValue, STORED, STRING, Schema, TEXT,
     TantivyDocument, Term, TextFieldIndexing, Value as _,
@@ -13,8 +16,11 @@ use tantivy::snippet::SnippetGenerator;
 use tantivy::{DateTime, Index, IndexReader, IndexWriter, ReloadPolicy};
 use time::OffsetDateTime;
 
+mod query;
+
 use crate::document::strip_closing_hashes;
-use crate::{IndexedDocument, SearchError};
+use crate::store::{DerivedStore, StoreFailure, StoreHealth, StoreInspection};
+use crate::{CANDIDATE_WINDOW, IndexedDocument, ResultControls, SearchError};
 
 /// One ranked full-text search request.
 #[derive(Clone, Copy, Debug)]
@@ -36,10 +42,22 @@ pub struct TextQuery<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextHit {
     pub path: String,
+    /// The raw full-text score, comparable only within one result set.
     pub score: f32,
+    /// The score as a fraction of the best hit for the same query, from 0
+    /// to 1, so a threshold means the same thing for every query.
+    pub relevance: f32,
     pub title: String,
     pub snippet: String,
     pub modified: OffsetDateTime,
+}
+
+/// One page of ranked hits with the exact number of matches behind it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextPage {
+    pub hits: Vec<TextHit>,
+    /// Every note matching the query and controls, not only this page.
+    pub total: usize,
 }
 
 /// Stored identity of one indexed document for freshness comparison.
@@ -49,6 +67,13 @@ pub struct IndexEntry {
     /// Lowercase SHA-256 hex of the complete source content.
     pub content_hash: String,
     pub modified: OffsetDateTime,
+}
+
+/// Documents to upsert and paths to remove in one committed write to the text index.
+#[derive(Debug, Default)]
+pub struct TextBatch {
+    pub upserts: Vec<IndexedDocument>,
+    pub removals: Vec<String>,
 }
 
 /// Port for the ranked full-text index.
@@ -67,6 +92,28 @@ pub trait IndexesText: Send + Sync {
     /// Returns a storage error when the index cannot be written.
     fn remove(&self, path: &str) -> Result<(), SearchError>;
 
+    /// Removes the documents stored under each of `paths` in one committed batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when the index cannot be written.
+    fn remove_all(&self, paths: &[String]) -> Result<(), SearchError> {
+        for path in paths {
+            self.remove(path)?;
+        }
+        Ok(())
+    }
+
+    /// Applies the batch `build` produces in one committed write, calling `build` only once this index's writer lock
+    /// is held, so what it reads from the vault cannot be overtaken by another writer before the commit. A rebuild
+    /// uses it to check, at commit, that each file it read earlier is still as it read it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `build`'s own error, a busy failure when another instance holds the writer lock past the configured
+    /// wait, and a storage error when the index cannot be written.
+    fn apply_checked(&self, build: &mut dyn FnMut() -> Result<TextBatch, SearchError>) -> Result<(), SearchError>;
+
     /// Returns ranked hits for the request.
     ///
     /// # Errors
@@ -74,6 +121,26 @@ pub trait IndexesText: Send + Sync {
     /// Returns an invalid-query error for unparsable syntax or filter
     /// values, and a storage error when the index cannot be read.
     fn query(&self, request: &TextQuery<'_>) -> Result<Vec<TextHit>, SearchError>;
+
+    /// Returns the [`CANDIDATE_WINDOW`] most relevant hits, best first, with
+    /// the exact match count, ignoring the request's `limit`. This is the
+    /// text candidate pool that rank fusion draws from.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-query error for unparsable syntax or filter
+    /// values, and a storage error when the index cannot be read.
+    fn query_window(&self, request: &TextQuery<'_>, note_type: Option<&str>) -> Result<TextPage, SearchError>;
+
+    /// Returns one page of ranked hits with the exact match count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-page error when the page is outside the bounds
+    /// [`ResultControls::ensure_within`] enforces, an invalid-query error
+    /// for unparsable syntax or filter values, and a storage error when the
+    /// index cannot be read.
+    fn query_page(&self, request: &TextQuery<'_>, controls: &ResultControls<'_>) -> Result<TextPage, SearchError>;
 
     /// Returns every stored document identity for freshness comparison.
     ///
@@ -83,10 +150,80 @@ pub trait IndexesText: Send + Sync {
     fn entries(&self) -> Result<Vec<IndexEntry>, SearchError>;
 }
 
-/// Trusted location of the tantivy index directory.
+/// The store failure tantivy's `error` amounts to for the index at `location`, when it is damage: a file tantivy reports
+/// as corrupt, an index format it cannot read, or a stored schema that does not match this build's. Any other error is
+/// not the index's files' fault.
+#[must_use]
+pub(crate) fn tantivy_damage(location: &str, error: &tantivy::TantivyError) -> Option<StoreFailure> {
+    match error {
+        tantivy::TantivyError::DataCorruption(_)
+        | tantivy::TantivyError::IncompatibleIndex(_)
+        | tantivy::TantivyError::SchemaError(_) => {
+            Some(StoreFailure::corrupt(DerivedStore::Text, location, error.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// Inspects the text index in `directory` without writing: whether it has been built, whether every file it lists
+/// passes its checksum, and how many documents it holds. Opening an index takes no lock and writes nothing; only a
+/// writer does.
+#[must_use]
+pub fn inspect_text_index(directory: &Path) -> StoreInspection {
+    let location = directory.display().to_string();
+    let inspection = |health, records| StoreInspection {
+        store: DerivedStore::Text,
+        location: directory.to_path_buf(),
+        health,
+        records,
+    };
+    let unreadable = |error: &tantivy::TantivyError| {
+        let failure = tantivy_damage(&location, error)
+            .unwrap_or_else(|| StoreFailure::io(DerivedStore::Text, location.clone(), error.to_string()));
+        inspection(Some(StoreHealth::Unreadable(failure)), 0)
+    };
+    if !directory.join("meta.json").exists() {
+        return inspection(None, 0);
+    }
+    let index = match Index::open_in_dir(directory) {
+        Ok(index) => index,
+        Err(error) => return unreadable(&error),
+    };
+    match index.validate_checksum() {
+        Ok(damaged) if !damaged.is_empty() => {
+            let failure = StoreFailure::corrupt(
+                DerivedStore::Text,
+                location.clone(),
+                format!("{} index files fail their checksum", damaged.len()),
+            );
+            return inspection(Some(StoreHealth::Unreadable(failure)), 0);
+        }
+        Ok(_) => {}
+        Err(error) => return unreadable(&error),
+    }
+    let reader: Result<IndexReader, _> = index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into();
+    match reader {
+        Ok(reader) => inspection(
+            Some(StoreHealth::Ready),
+            usize::try_from(reader.searcher().num_docs()).unwrap_or(usize::MAX),
+        ),
+        Err(error) => unreadable(&error),
+    }
+}
+
+/// Trusted location of the tantivy index directory, and how long a write waits for another writer.
 #[derive(Clone, Debug)]
 pub struct TextIndexConfig {
     pub directory: PathBuf,
+    /// How long a write waits for the index's writer lock while another instance holds it, before failing as
+    /// a busy store failure (`index/busy`).
+    pub writer_lock_wait: Duration,
+}
+
+impl TextIndexConfig {
+    /// The writer-lock wait every server and CLI instance uses: the same budget the link graph's `sqlite` store
+    /// gives a busy database.
+    pub const DEFAULT_WRITER_LOCK_WAIT: Duration = Duration::from_secs(5);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -102,20 +239,34 @@ struct TextFields {
     content_hash: Field,
 }
 
-/// Default `IndexesText` implementation over a tantivy directory.
+/// Default `IndexesText` implementation over a tantivy directory, shared by every `contextos` instance on the vault.
 ///
-/// The exclusive tantivy `IndexWriter` lock is acquired only for the
-/// duration of a write (`index`/`remove`), never held for the lifetime of
-/// this handle: an MCP stdio connection is inherently one process per
-/// client, so a permanently-held writer lock serves no exclusion purpose
-/// while idle and only prevents a second, otherwise independent connection
-/// to the same vault from starting at all.
+/// The exclusive tantivy `IndexWriter` lock is acquired only for the duration of a write (`index`/`remove`), never
+/// held for the lifetime of this handle, so any number of instances can open the same index. A write that finds
+/// another instance writing waits up to [`TextIndexConfig::writer_lock_wait`] for it, and every read first reloads
+/// the reader, so a commit from any instance is visible to the next query here.
 pub struct TantivyIndex {
     index: Index,
     reader: IndexReader,
     write_gate: Mutex<()>,
     fields: TextFields,
+    directory: PathBuf,
+    writer_lock_wait: Duration,
+    /// Whether this handle has already removed the segment files earlier abandoned merges left behind; done once,
+    /// on its first write, since a write that waits for its merges leaves none of its own.
+    orphans_removed: AtomicBool,
 }
+
+/// The memory arena one write's `IndexWriter` indexes into.
+const WRITER_ARENA_BYTES: usize = 32_000_000;
+
+/// How long a write pauses between attempts at a writer lock another instance holds.
+const WRITER_LOCK_RETRY: Duration = Duration::from_millis(20);
+
+/// How old an unlisted segment file must be before the sweep removes it. A build older than this one drops its
+/// writer before its merges finish, releasing the writer lock while its merge threads may still be writing, so a
+/// segment file written in the last few minutes may still be in use by such an instance.
+const ORPHAN_GRACE: Duration = Duration::from_secs(600);
 
 impl TryFrom<TextIndexConfig> for TantivyIndex {
     type Error = SearchError;
@@ -135,6 +286,9 @@ impl TryFrom<TextIndexConfig> for TantivyIndex {
             reader,
             write_gate: Mutex::new(()),
             fields,
+            directory: value.directory,
+            writer_lock_wait: value.writer_lock_wait,
+            orphans_removed: AtomicBool::new(false),
         })
     }
 }
@@ -150,73 +304,67 @@ impl IndexesText for TantivyIndex {
                 writer.add_document(stored_document(self.fields, document))?;
             }
             Ok(())
-        })?;
-        self.reader.reload()?;
-        Ok(())
+        })
     }
 
     fn remove(&self, path: &str) -> Result<(), SearchError> {
         self.with_writer(|writer| {
             writer.delete_term(Term::from_field_text(self.fields.path, path));
             Ok(())
-        })?;
-        self.reader.reload()?;
-        Ok(())
+        })
+    }
+
+    fn remove_all(&self, paths: &[String]) -> Result<(), SearchError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        self.with_writer(|writer| {
+            for path in paths {
+                writer.delete_term(Term::from_field_text(self.fields.path, path));
+            }
+            Ok(())
+        })
+    }
+
+    fn apply_checked(&self, build: &mut dyn FnMut() -> Result<TextBatch, SearchError>) -> Result<(), SearchError> {
+        self.with_writer(|writer| {
+            let batch = build()?;
+            for path in &batch.removals {
+                writer.delete_term(Term::from_field_text(self.fields.path, path));
+            }
+            for document in &batch.upserts {
+                writer.delete_term(Term::from_field_text(self.fields.path, document.path()));
+                writer.add_document(stored_document(self.fields, document))?;
+            }
+            Ok(())
+        })
     }
 
     fn query(&self, request: &TextQuery<'_>) -> Result<Vec<TextHit>, SearchError> {
-        let searcher = self.reader.searcher();
-        let mut parser = QueryParser::for_index(
-            &self.index,
-            vec![self.fields.title, self.fields.headings, self.fields.body],
-        );
-        parser.set_field_boost(self.fields.title, 2.0);
-        parser.set_field_boost(self.fields.headings, 1.5);
-        let parsed = parser
-            .parse_query(request.query)
-            .map_err(|error| SearchError::InvalidQuery {
-                query: request.query.to_owned(),
-                reason: error.to_string(),
-            })?;
+        Ok(self.run_query(request, &ResultControls::default())?.hits)
+    }
 
-        let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(Occur::Must, parsed)];
-        if let Some(prefix) = request.path_prefix {
-            clauses.push(facet_clause(self.fields.path_facet, prefix, Occur::Must));
-        }
-        for excluded in request.exclude_paths {
-            clauses.push(facet_clause(self.fields.path_facet, excluded, Occur::MustNot));
-        }
-        for tag in request.tags {
-            clauses.push(facet_clause(self.fields.tags, tag, Occur::Must));
-        }
-        for (field, value) in request.fields {
-            let term = json_term(self.fields.frontmatter, field, value)?;
-            clauses.push((Occur::Must, Box::new(TermQuery::new(term, IndexRecordOption::Basic))));
-        }
-        let query: Box<dyn Query> = Box::new(BooleanQuery::new(clauses));
+    fn query_window(&self, request: &TextQuery<'_>, note_type: Option<&str>) -> Result<TextPage, SearchError> {
+        let windowed = TextQuery {
+            limit: CANDIDATE_WINDOW,
+            ..*request
+        };
+        self.run_query(
+            &windowed,
+            &ResultControls {
+                note_type,
+                ..ResultControls::default()
+            },
+        )
+    }
 
-        let collector = TopDocs::with_limit(request.limit.max(1)).order_by_score();
-        let top_docs = searcher.search(&query, &collector)?;
-        let mut generator = SnippetGenerator::create(&searcher, &*query, self.fields.body)?;
-        generator.set_max_num_chars(240);
-
-        let mut hits = Vec::with_capacity(top_docs.len());
-        for (score, address) in top_docs {
-            let stored: TantivyDocument = searcher.doc(address)?;
-            let body = stored_text(&stored, self.fields.body);
-            hits.push(TextHit {
-                path: stored_text(&stored, self.fields.path),
-                score,
-                title: stored_text(&stored, self.fields.title),
-                snippet: render_snippet(&generator, &body),
-                modified: stored_date(&stored, self.fields.modified),
-            });
-        }
-        Ok(hits)
+    fn query_page(&self, request: &TextQuery<'_>, controls: &ResultControls<'_>) -> Result<TextPage, SearchError> {
+        controls.ensure_within(request.limit)?;
+        self.run_query(request, controls)
     }
 
     fn entries(&self) -> Result<Vec<IndexEntry>, SearchError> {
-        let searcher = self.reader.searcher();
+        let searcher = self.current_searcher()?;
         let addresses = searcher.search(&tantivy::query::AllQuery, &tantivy::collector::DocSetCollector)?;
         let mut entries = Vec::with_capacity(addresses.len());
         for address in addresses {
@@ -233,19 +381,140 @@ impl IndexesText for TantivyIndex {
 }
 
 impl TantivyIndex {
-    /// Acquires the exclusive tantivy `IndexWriter` lock, runs `mutate`,
-    /// commits, then drops the writer before returning: the OS-level lock
-    /// is held only for this call, not for the life of `self`. `write_gate`
-    /// serialises acquisition attempts from other threads in this same
-    /// process; it does not itself provide cross-process exclusion, tantivy's
-    /// own directory lock does that.
+    /// Acquires the exclusive tantivy `IndexWriter` lock, runs `mutate`, commits, and lets every merge the commit
+    /// started finish before releasing the lock. Waiting for the merges is what keeps the index compact: dropping a
+    /// writer abandons its in-flight merges, so a writer per write that is simply dropped adds one segment per write
+    /// that is never merged, and every later commit and reload slows with the segment count. Tantivy collects the files
+    /// a finished merge no longer needs as part of it.
+    ///
+    /// `write_gate` serialises this process's own threads; tantivy's directory lock excludes every other instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a busy store failure (`index/busy`) when another instance still holds the writer lock after
+    /// `writer_lock_wait`, and a storage error when the write, commit, or merge fails.
     fn with_writer(&self, mutate: impl FnOnce(&mut IndexWriter) -> Result<(), SearchError>) -> Result<(), SearchError> {
         let _gate = self.write_gate.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut writer = self.index.writer_with_num_threads(1, 32_000_000)?;
+        let mut writer = self.acquire_writer()?;
+        if !self.orphans_removed.swap(true, Ordering::Relaxed) {
+            self.remove_orphaned_segment_files();
+        }
         mutate(&mut writer)?;
         writer.commit()?;
+        writer.wait_merging_threads()?;
         Ok(())
     }
+
+    /// Opens a writer, retrying while another instance holds the writer lock, for up to `writer_lock_wait` (a wait
+    /// too long to represent waits without limit).
+    fn acquire_writer(&self) -> Result<IndexWriter, SearchError> {
+        let deadline = Instant::now().checked_add(self.writer_lock_wait);
+        loop {
+            match self.index.writer_with_num_threads(1, WRITER_ARENA_BYTES) {
+                Ok(writer) => return Ok(writer),
+                Err(tantivy::TantivyError::LockFailure(LockError::LockBusy, _)) => {
+                    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                        return Err(StoreFailure::busy(
+                            DerivedStore::Text,
+                            self.directory.display().to_string(),
+                            format!(
+                                "another instance held the writer lock for longer than the {} ms a write waits",
+                                self.writer_lock_wait.as_millis()
+                            ),
+                        )
+                        .into());
+                    }
+                    std::thread::sleep(WRITER_LOCK_RETRY);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    /// Deletes the files of every segment that no commit lists and that has not been written for [`ORPHAN_GRACE`]:
+    /// the output of a merge abandoned before it finished, by a writer dropped mid-merge or a process that exited.
+    ///
+    /// Tantivy's own garbage collection does not remove them. Tantivy records every file it creates in the index's
+    /// managed list, but each handle loads that list once, when it opens, and later rewrites it from its own copy.
+    /// A file registered by a handle that then abandoned its merge is dropped from the list by the next handle to
+    /// rewrite it, and nothing ever collects it.
+    ///
+    /// Called only while this handle holds the writer lock and before it writes anything, so no writer of this build
+    /// has a merge in flight; the grace period covers an older build's merge threads, which outlive its lock.
+    /// Tantivy's meta lock is held throughout, as its own garbage collection holds it, so no reader reloads
+    /// mid-sweep. Only files named for a tantivy segment (a 32-character hexadecimal segment id, then an extension)
+    /// are considered. A file that cannot be removed (on Windows, one another process still has mapped) is left for
+    /// a later instance, never failing the write.
+    fn remove_orphaned_segment_files(&self) {
+        let _meta_lock = match self.index.directory().acquire_lock(&tantivy::directory::META_LOCK) {
+            Ok(lock) => lock,
+            Err(error) => {
+                tracing::warn!(code = "index/storage", %error, "text index meta lock unavailable; abandoned segment files are kept");
+                return;
+            }
+        };
+        let live = match self.index.searchable_segment_ids() {
+            Ok(ids) => ids
+                .iter()
+                .map(tantivy::index::SegmentId::uuid_string)
+                .collect::<HashSet<_>>(),
+            Err(error) => {
+                tracing::warn!(code = "index/storage", %error, "text index segments could not be listed; abandoned segment files are kept");
+                return;
+            }
+        };
+        let entries = match std::fs::read_dir(&self.directory) {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::warn!(code = "index/storage", %error, "text index directory could not be listed; abandoned segment files are kept");
+                return;
+            }
+        };
+        let mut removed = 0_usize;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(segment) = name.to_str().and_then(segment_id_of) else {
+                continue;
+            };
+            if live.contains(segment) || !is_older_than(&entry, ORPHAN_GRACE) {
+                continue;
+            }
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => removed = removed.saturating_add(1),
+                Err(error) => tracing::debug!(%error, "abandoned text index segment file kept for a later instance"),
+            }
+        }
+        if removed > 0 {
+            tracing::info!(removed, "removed text index files left by abandoned merges");
+        }
+    }
+
+    /// The searcher over the index as it now stands on disk, including every other instance's commits.
+    pub(super) fn current_searcher(&self) -> Result<tantivy::Searcher, SearchError> {
+        self.reader.reload()?;
+        Ok(self.reader.searcher())
+    }
+}
+
+/// Whether `entry` was last modified more than `age` ago; `false` when that cannot be told, so the file is kept.
+fn is_older_than(entry: &std::fs::DirEntry, age: Duration) -> bool {
+    entry
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|elapsed| elapsed > age)
+}
+
+/// The segment id a tantivy segment file is named for (`<32 hexadecimal characters>.<extension>`), or `None` for any
+/// other file.
+fn segment_id_of(file_name: &str) -> Option<&str> {
+    let (id, extension) = file_name.split_once('.')?;
+    let is_segment_id = id.len() == 32
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    (is_segment_id && !extension.is_empty()).then_some(id)
 }
 
 fn build_schema() -> (Schema, TextFields) {

@@ -19,7 +19,36 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use thiserror::Error;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, Value as TomlValue};
 
-use crate::config::{WebConfig, WebConfigError};
+use crate::config::{McpServerConfig, WebConfig, WebConfigError};
+
+/// A snapshot of `[server]`'s scalar values, for `contextos-web config` to
+/// offer as editable defaults on a re-run. Integer and boolean keys keep
+/// TOML's own `i64`/`bool` types.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WebServerSettingsView {
+    pub bind: Option<String>,
+    pub static_dir: Option<String>,
+    pub log_level: Option<String>,
+    pub log_file: Option<String>,
+    pub log_max_size_mb: Option<i64>,
+    pub log_rotate_daily: Option<bool>,
+    pub log_retention_days: Option<i64>,
+    pub log_retention_files: Option<i64>,
+}
+
+/// The `[server]` scalar values to write. Every optional field left `None`
+/// removes its key rather than leaving a stale value behind.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebServerSettingsInput {
+    pub bind: String,
+    pub static_dir: Option<String>,
+    pub log_level: String,
+    pub log_file: String,
+    pub log_max_size_mb: Option<u64>,
+    pub log_rotate_daily: bool,
+    pub log_retention_days: Option<u32>,
+    pub log_retention_files: Option<u32>,
+}
 
 /// A `web.toml` document under edit, preserving comments and formatting for
 /// everything this type's methods do not themselves touch.
@@ -100,7 +129,9 @@ impl WebConfigDocument {
 
     /// Merges `patch`'s keys into the `[[mcp_server]]` entry currently named
     /// `name` (`PATCH /settings/`, `target: "mcp_server"`), leaving every
-    /// other key on that entry untouched.
+    /// other key on that entry untouched, except that a patch carrying an
+    /// `auth` table and no `token_env` removes the entry's top-level
+    /// `token_env`, which the table supersedes.
     ///
     /// # Errors
     ///
@@ -117,6 +148,11 @@ impl WebConfigDocument {
         let backup = self.document.clone();
         let table = self.find_mcp_server_table_mut(name)?;
         merge_patch(table, patch)?;
+        // Once an `[mcp_server.auth]` table supplies the token, the entry's top-level `token_env` no longer applies; a
+        // stale one left behind would quietly apply again if the table were later removed by hand.
+        if patch.contains_key("auth") && !patch.contains_key("token_env") {
+            table.remove("token_env");
+        }
         self.validate_or_rollback(backup)
     }
 
@@ -177,8 +213,7 @@ impl WebConfigDocument {
 
     /// Merges `patch`'s keys into `[server.ui]` (`PATCH /settings/`,
     /// `target: "ui"`); `[server.ui]`'s own key set is intentionally
-    /// unenumerated (`config.rs`: "a rendering/theme concern deferred to
-    /// web-rendering.md"), so any JSON-representable value is accepted
+    /// unenumerated (it belongs to the rendering and theme code), so any JSON-representable value is accepted
     /// here.
     ///
     /// # Errors
@@ -191,19 +226,154 @@ impl WebConfigDocument {
     /// hand-corrupted `web.toml`).
     pub fn patch_ui(&mut self, patch: &JsonMap<String, JsonValue>) -> Result<(), WebConfigWriterError> {
         let backup = self.document.clone();
+        let ui = self.server_ui_table_mut()?;
+        merge_patch(ui, patch)?;
+        self.validate_or_rollback(backup)
+    }
+
+    /// The current `[server]` scalar values, each `None` when its key is
+    /// absent, for `contextos-web config` to offer back as editable defaults
+    /// on a re-run. Integer and boolean keys keep TOML's own `i64`/`bool`
+    /// types; the wizard narrows them to its own field types.
+    #[must_use]
+    pub fn server_settings(&self) -> WebServerSettingsView {
+        let server = self.document.get("server").and_then(Item::as_table);
+        let string = |key: &str| {
+            server
+                .and_then(|table| table.get(key))
+                .and_then(Item::as_str)
+                .map(str::to_owned)
+        };
+        let integer = |key: &str| server.and_then(|table| table.get(key)).and_then(Item::as_integer);
+        let boolean = |key: &str| server.and_then(|table| table.get(key)).and_then(Item::as_bool);
+        WebServerSettingsView {
+            bind: string("bind"),
+            static_dir: string("static_dir"),
+            log_level: string("log_level"),
+            log_file: string("log_file"),
+            log_max_size_mb: integer("log_max_size_mb"),
+            log_rotate_daily: boolean("log_rotate_daily"),
+            log_retention_days: integer("log_retention_days"),
+            log_retention_files: integer("log_retention_files"),
+        }
+    }
+
+    /// Writes `input` into `[server]`: `bind`, `log_level`, and `log_file`
+    /// are always set, and every optional key `input` leaves unset is
+    /// removed rather than left stale. Re-validates the whole document and
+    /// rolls back on any failure (a non-loopback `bind`, an unsatisfiable
+    /// log-rotation combination, and so on), exactly as
+    /// [`Self::add_mcp_server`] does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebConfigWriterError::ServerNotATable`] when a pre-existing
+    /// `[server]` is not a table, [`WebConfigWriterError::UnsupportedValue`]
+    /// when a size or retention count exceeds TOML's signed-integer range,
+    /// or [`WebConfigWriterError::Invalid`] (document unchanged) when the
+    /// result would fail to re-load.
+    pub fn set_server_settings(&mut self, input: &WebServerSettingsInput) -> Result<(), WebConfigWriterError> {
+        let backup = self.document.clone();
         let server = self
             .document
             .entry("server")
             .or_insert_with(|| Item::Table(Table::new()))
             .as_table_mut()
             .ok_or(WebConfigWriterError::ServerNotATable)?;
-        let ui = server
+        server.insert("bind", string_item(&input.bind));
+        server.insert("log_level", string_item(&input.log_level));
+        server.insert("log_file", string_item(&input.log_file));
+        set_or_remove_string(server, "static_dir", input.static_dir.as_deref());
+        set_or_remove_integer(server, "log_max_size_mb", input.log_max_size_mb)?;
+        set_or_remove_integer(server, "log_retention_days", input.log_retention_days.map(u64::from))?;
+        set_or_remove_integer(server, "log_retention_files", input.log_retention_files.map(u64::from))?;
+        if input.log_rotate_daily {
+            server.insert("log_rotate_daily", Item::Value(TomlValue::from(true)));
+        } else {
+            server.remove("log_rotate_daily");
+        }
+        // A scalar inserted after `[server.ui]` has already been emitted
+        // would render inside that sub-table; moving `ui` to the end of
+        // `[server]` keeps every scalar above the sub-table header.
+        if let Some(ui) = server.remove("ui") {
+            server.insert("ui", ui);
+        }
+        self.validate_or_rollback(backup)
+    }
+
+    /// The current `[server.ui]` string value for `key`, if present and a
+    /// string (a non-string value under an appearance key has no rendered
+    /// meaning, matching [`crate::config::current_appearance`]'s own stance).
+    #[must_use]
+    pub fn ui_string(&self, key: &str) -> Option<String> {
+        self.document
+            .get("server")
+            .and_then(Item::as_table)
+            .and_then(|server| server.get("ui"))
+            .and_then(Item::as_table)
+            .and_then(|ui| ui.get(key))
+            .and_then(Item::as_str)
+            .map(str::to_owned)
+    }
+
+    /// Sets or clears individual `[server.ui]` string keys: `Some` writes
+    /// the value, `None` removes the key. The shape `contextos-web config`
+    /// needs for the appearance keys that have operator-visible effect,
+    /// with the same validation and rollback as [`Self::patch_ui`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WebConfigWriterError::ServerNotATable`] or
+    /// [`WebConfigWriterError::UiNotATable`] when a pre-existing
+    /// `[server]`/`[server.ui]` is not a table, or
+    /// [`WebConfigWriterError::Invalid`] when the result would fail to
+    /// re-load.
+    pub fn set_ui_strings(&mut self, values: &[(&str, Option<&str>)]) -> Result<(), WebConfigWriterError> {
+        let backup = self.document.clone();
+        let ui = self.server_ui_table_mut()?;
+        for (key, value) in values {
+            match value {
+                Some(text) => {
+                    ui.insert(key, string_item(text));
+                }
+                None => {
+                    ui.remove(key);
+                }
+            }
+        }
+        self.validate_or_rollback(backup)
+    }
+
+    /// Every configured `[[mcp_server]]` entry as a validated
+    /// [`McpServerConfig`], for the wizard to prefill an edit from. Returns
+    /// an empty vector when the document has none, or (a hand-corrupted
+    /// file) when its `[[mcp_server]]` array does not parse against the
+    /// schema; the wizard re-validates the whole document on its next write
+    /// regardless.
+    #[must_use]
+    pub fn mcp_server_entries(&self) -> Vec<McpServerConfig> {
+        #[derive(serde::Deserialize)]
+        struct Entries {
+            #[serde(default, rename = "mcp_server")]
+            entries: Vec<McpServerConfig>,
+        }
+        toml::from_str::<Entries>(&self.document.to_string())
+            .map(|parsed| parsed.entries)
+            .unwrap_or_default()
+    }
+
+    fn server_ui_table_mut(&mut self) -> Result<&mut Table, WebConfigWriterError> {
+        let server = self
+            .document
+            .entry("server")
+            .or_insert_with(|| Item::Table(Table::new()))
+            .as_table_mut()
+            .ok_or(WebConfigWriterError::ServerNotATable)?;
+        server
             .entry("ui")
             .or_insert_with(|| Item::Table(Table::new()))
             .as_table_mut()
-            .ok_or(WebConfigWriterError::UiNotATable)?;
-        merge_patch(ui, patch)?;
-        self.validate_or_rollback(backup)
+            .ok_or(WebConfigWriterError::UiNotATable)
     }
 
     fn find_mcp_server_index(&self, name: &str) -> Result<usize, WebConfigWriterError> {
@@ -304,6 +474,37 @@ fn json_to_toml_item(value: &JsonValue) -> Result<Item, WebConfigWriterError> {
         }
         JsonValue::Object(nested) => Ok(Item::Table(json_object_to_table(nested)?)),
     }
+}
+
+/// A TOML string item with default decoration, the value shape every scalar
+/// `web.toml` key this module writes takes.
+fn string_item(value: &str) -> Item {
+    Item::Value(TomlValue::from(value))
+}
+
+/// Inserts `key = value` when `value` is `Some`, otherwise removes `key`.
+fn set_or_remove_string(table: &mut Table, key: &str, value: Option<&str>) {
+    match value {
+        Some(text) => {
+            table.insert(key, string_item(text));
+        }
+        None => {
+            table.remove(key);
+        }
+    }
+}
+
+/// Inserts `key = value` (as a TOML signed integer) when `value` is `Some`,
+/// otherwise removes `key`. Rejects a value beyond TOML's `i64` range rather
+/// than truncating it.
+fn set_or_remove_integer(table: &mut Table, key: &str, value: Option<u64>) -> Result<(), WebConfigWriterError> {
+    if let Some(number) = value {
+        let signed = i64::try_from(number).map_err(|_source| WebConfigWriterError::UnsupportedValue)?;
+        table.insert(key, Item::Value(TomlValue::from(signed)));
+    } else {
+        table.remove(key);
+    }
+    Ok(())
 }
 
 fn merge_patch(table: &mut Table, patch: &JsonMap<String, JsonValue>) -> Result<(), WebConfigWriterError> {

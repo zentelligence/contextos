@@ -10,21 +10,13 @@
 //! fake tool), neither of which this black-box HTTP suite can measure
 //! honestly. Left as a residual follow-up rather than a fabricated pass.
 //!
-//! The 200 ms assertion below only gates on Linux. GitHub-hosted macOS and
-//! Windows runners are shared, oversubscribed hosts whose wall-clock
-//! latency for a process-spawning, stdio-IPC-heavy workload like this one
-//! (a real `contextos-mcp` child process per test run, debug build) varies
-//! far more than the budget's own margin: this exact assertion has been
-//! observed failing on `macos-latest` (264 ms) and, in a separate run, on
-//! `windows-latest` (217 ms), while remaining consistently well under
-//! budget on `ubuntu-latest` and on this author's own hardware. Neither
-//! failure coincided with a code change, and the same commit passed the
-//! other platform each time, so these are shared-runner noise, not a
-//! regression. The test still compiles and runs everywhere (`--ignored`
-//! opts back into the strict budget for a manual spot check on real
-//! hardware); only the CI-gating assertion is Linux-only, matching the
-//! evidence already on record for NFR-W03's "Automated Linux gate green"
-//! status.
+//! The budget is the shipped product's, so it is measured in a release build: `just performance`, which `just ci` and
+//! CI's Linux job run. An unoptimised test build serves the same note in about 160 ms, against about 40 ms optimised,
+//! so a debug run skips it rather than measure a build nobody ships.
+//!
+//! It gates on Linux only. GitHub-hosted macOS and Windows runners are shared, oversubscribed hosts whose wall-clock
+//! latency for a process-spawning, stdio-heavy workload like this one (a real `contextos-mcp` child per run) has varied
+//! far more than any margin a fixed budget can allow. `--ignored` runs it anywhere for a spot check on real hardware.
 
 mod support;
 
@@ -61,7 +53,6 @@ async fn router_over(vault_dir: &Path, config_dir: &Path) -> Result<Router, BoxE
         clients,
         Some(config_dir),
         &config_dir.join("web.toml"),
-        "contextos".to_owned(),
     ))
 }
 
@@ -75,7 +66,11 @@ fn p95(mut samples: Vec<Duration>) -> Duration {
 
 #[tokio::test]
 #[cfg_attr(
-    not(target_os = "linux"),
+    debug_assertions,
+    ignore = "the latency budget is the shipped product's, measured in a release build by `just performance`"
+)]
+#[cfg_attr(
+    all(not(debug_assertions), not(target_os = "linux")),
     ignore = "wall-clock p95 budget is Linux-only in CI; shared macOS/Windows runners are too noisy \
               for this absolute-latency assertion, see this file's module documentation"
 )]
@@ -91,8 +86,9 @@ async fn a_small_note_with_no_diagram_dependency_serves_under_200ms_p95() -> Res
         let _ = writeln!(body, "Paragraph {i} of ordinary prose with a [[target-note]] link.\n");
     }
     assert!(body.len() < 50 * 1024, "fixture note must stay under 50 KB");
-    write(vault_dir.path(), "target-note.md", "# Target\n")?;
-    write(vault_dir.path(), "note.md", &body)?;
+    // A wiki note, served by the wiki screen: notes are only ever shown inside their section.
+    write(vault_dir.path(), "memory/wiki/target-note.md", "# Target\n")?;
+    write(vault_dir.path(), "memory/wiki/note.md", &body)?;
 
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
@@ -103,7 +99,7 @@ async fn a_small_note_with_no_diagram_dependency_serves_under_200ms_p95() -> Res
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri(format!("/{VAULT_NAME}/note.md"))
+                    .uri(format!("/{VAULT_NAME}/wiki/note.md"))
                     .body(Body::empty())?,
             )
             .await?;

@@ -1,0 +1,123 @@
+{% import "profile_edit_form.html" as edit %}
+{% macro group_header(title, new_href, field_id) %}
+<div class="notes-sidebar-group-header">
+  <div class="section-label">{{ title }}</div>
+  <details class="header-disclosure">
+    <summary class="btn small" title="New {{ title }} document" aria-label="New {{ title }} document">
+      <span class="ic ic-square-pen" aria-hidden="true"></span> New
+    </summary>
+    <form
+      class="header-disclosure-body"
+      hx-post="{{ new_href }}"
+      hx-target="closest .profile-screen"
+      hx-swap="outerHTML"
+      hx-vals="js:{title: document.getElementById('{{ field_id }}').value}"
+    >
+      <input id="{{ field_id }}" type="text" placeholder="Title" required autofocus>
+      <button type="submit" class="btn primary small">Create</button>
+    </form>
+  </details>
+</div>
+{% endmacro %}
+
+{% macro sidebar(identity_rows, identity_new_href, operating_rows, operating_new_href, entity_rows, entity_orphan_rows) %}
+<aside class="notes-sidebar">
+  {% call group_header("Identity", identity_new_href, "profile-identity-new-title") %}{% endcall %}
+  <div class="tree-nest">
+  {% for row in identity_rows %}
+    <a class="notes-list-item{% if row.active %} active{% endif %}" href="{{ row.href }}">
+      <span class="ic ic-file-text" aria-hidden="true"></span>
+      <span class="notes-list-item-title">{{ row.label }}</span>
+    </a>
+  {% endfor %}
+  {% if identity_rows.is_empty() %}
+    <p class="hint italic">Nothing here.</p>
+  {% endif %}
+  </div>
+
+  {% call group_header("Operating", operating_new_href, "profile-operating-new-title") %}{% endcall %}
+  <div class="tree-nest">
+  {% for row in operating_rows %}
+    <a class="notes-list-item{% if row.active %} active{% endif %}" href="{{ row.href }}">
+      <span class="ic ic-file-text" aria-hidden="true"></span>
+      <span class="notes-list-item-title">{{ row.label }}</span>
+    </a>
+  {% endfor %}
+  {% if operating_rows.is_empty() %}
+    <p class="hint italic">Nothing here.</p>
+  {% endif %}
+  </div>
+
+  <div class="section-label">Entities</div>
+  <div class="tree-nest">
+  {% for row in entity_rows %}
+    <a class="notes-list-item{% if row.active %} active{% endif %}" href="{{ row.href }}">
+      <span class="ic {% if row.needs_provisioning %}ic-circle-alert{% else %}ic-user-round{% endif %}" aria-hidden="true"></span>
+      <span class="notes-list-item-title">{{ row.label }}</span>
+    </a>
+  {% endfor %}
+  {% for row in entity_orphan_rows %}
+    <a class="notes-list-item{% if row.active %} active{% endif %}" href="{{ row.href }}">
+      <span class="ic ic-file-text" aria-hidden="true"></span>
+      <span class="notes-list-item-title">{{ row.label }}</span>
+    </a>
+  {% endfor %}
+  {% if entity_rows.is_empty() && entity_orphan_rows.is_empty() %}
+    <p class="hint italic">Nothing here.</p>
+  {% endif %}
+  </div>
+</aside>
+{% endmacro %}
+
+<div class="profile-screen" hx-ext="json-enc">
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+  <div class="notes-layout{% if !side_is_left %} notes-layout-panel-right{% endif %}">
+  {% if side_is_left %}
+    {% call sidebar(identity_rows, identity_new_href, operating_rows, operating_new_href, entity_rows, entity_orphan_rows) %}{% endcall %}
+  {% endif %}
+    <div class="notes-main">
+    {% if let Some(selected) = selected %}
+      <div class="notes-main-header">
+        <span class="ic ic-file-text" aria-hidden="true"></span>
+        <span class="notes-title">{{ selected.label }}</span>
+      {% if editing.is_none() %}
+        <span class="header-actions">
+        <button
+          type="button"
+          class="btn small"
+          title="Edit document"
+          aria-label="Edit document"
+          hx-get="{{ selected.edit_href }}"
+          hx-target="closest .profile-screen"
+          hx-swap="outerHTML"
+        >Edit</button>
+        </span>
+      {% endif %}
+      </div>
+      <div class="notes-main-body" id="profile-main-body">
+      {% if let Some(editing) = editing %}
+        {% call edit::form(selected.save_href, editing.edit_body, editing.edit_expected_hash) %}{% endcall %}
+      {% else %}
+        <div class="profile-rendered">{{ selected.rendered_html|safe }}</div>
+      {% endif %}
+      </div>
+    {% else if let Some(provisioning) = provisioning %}
+      <p class="hint italic">{{ provisioning.label }} has not been set up yet.</p>
+      <form
+        hx-post="{{ provisioning.provision_href }}"
+        hx-target="closest .profile-screen"
+        hx-swap="outerHTML"
+      >
+        <button type="submit" class="btn primary small">Set up {{ provisioning.label }}</button>
+      </form>
+    {% else %}
+      <p class="hint italic">Select a document.</p>
+    {% endif %}
+    </div>
+  {% if !side_is_left %}
+    {% call sidebar(identity_rows, identity_new_href, operating_rows, operating_new_href, entity_rows, entity_orphan_rows) %}{% endcall %}
+  {% endif %}
+  </div>
+</div>

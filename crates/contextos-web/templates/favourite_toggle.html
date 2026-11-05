@@ -1,0 +1,3 @@
+<form hx-patch="{{ action_href }}" hx-ext="json-enc" hx-vals='{"favourite": {% if favourite %}false{% else %}true{% endif %}}' hx-target="this" hx-swap="outerHTML" class="app-favourite-form">
+  <button type="submit" class="icon-button favourite-toggle {% if favourite %}active{% endif %}" aria-label="{% if favourite %}Remove {{ name }} from favourites{% else %}Add {{ name }} to favourites{% endif %}" aria-pressed="{{ favourite }}" title="{% if favourite %}Favourited{% else %}Not favourited{% endif %}"><span class="ic ic-star" aria-hidden="true"></span></button>
+</form>

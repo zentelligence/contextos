@@ -1,52 +1,30 @@
-filters:
-  and:
-    - 'file.ext == "md"'
-    - or:
-        - 'status == "active"'
-        - not:
-            - 'file.hasTag("archived")'
+filters: 'status != "archived"'
 formulas:
-  display_status: 'if(status == "active", "Status: active", "Status # other")'
-  quoted_cost: 'if(price, price.toFixed(2) + " AUD", "n/a")'
+  display_status: 'if(status == "done", "done", "open: " + status)'
+  days_open: '(now() - created).days'
 properties:
   status:
-    displayName: "Status: current"
+    displayName: Status
   formula.display_status:
     displayName: Display status
-  file.ext:
-    displayName: Extension
 summaries:
-  precise_average: 'values.mean().round(3)'
+  total_days: 'values.sum()'
 views:
   - type: table
-    name: Active table
-    limit: 25
-    groupBy:
-      property: status
-      direction: ASC
-    filters:
-      and:
-        - 'formula.display_status != ""'
+    name: All
     order:
       - file.name
       - status
       - formula.display_status
-      - formula.quoted_cost
+    groupBy:
+      property: status
+      direction: ASC
     sort:
-      - property: file.mtime
-        direction: DESC
+      - property: file.name
+        direction: ASC
     summaries:
-      price: precise_average
+      days_open: Sum
   - type: cards
-    name: Gallery
-    order:
-      - file.name
-      - cover
-  - type: list
-    name: Compact
-    order:
-      - file.name
-  - type: map
-    name: Locations
-    latitudeProperty: latitude
-    longitudeProperty: longitude
+    name: By status
+    filters: 'formula.days_open > 0'
+    limit: 20

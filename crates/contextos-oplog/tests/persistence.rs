@@ -1,6 +1,6 @@
 use contextos_core::{
-    Clock, LogsOperations, OpKind, OperationEvent, Origin, VaultPath, VaultPathInput, VaultRoot, VaultRootInput,
-    VaultSet,
+    Clock, LogsOperations, NoSubstrateServices, OpKind, OperationEvent, Origin, VaultPath, VaultPathInput, VaultRoot,
+    VaultRootInput, VaultSet,
 };
 use contextos_fs::{
     Filesystem, FilesystemConfig, FilesystemService, FilesystemServiceConfig, FsLimits, default_hidden_patterns,
@@ -124,11 +124,15 @@ fn manual_append_uses_manual_origin_and_log_operation() -> Result<(), Box<dyn st
         }),
     })?;
 
-    log.append_manual(&ManualLogInput {
-        entry: "Reviewed priorities | retained operator intent".to_owned(),
-        files: vec![path(&roots, "note.md")?],
-        at: datetime!(2026-07-18 18:32:00 +10:00),
-    })?;
+    log.append_manual(
+        &ManualLogInput {
+            entry: "Reviewed priorities | retained operator intent".to_owned(),
+            files: vec![path(&roots, "note.md")?],
+            at: datetime!(2026-07-18 18:32:00 +10:00),
+            requested_by: "vault_log_append".to_owned(),
+        },
+        &NoSubstrateServices,
+    )?;
 
     let persisted = std::fs::read_to_string(vault.path().join("memory/log/2026/07/2026-07-18.md"))?;
     assert!(

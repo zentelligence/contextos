@@ -1,0 +1,17 @@
+<div class="jobs-screen">
+  <a href="{{ back.href }}">{{ back.label }}</a>
+  <section class="panel workflow-section">
+    <header class="panel-header"><h1>{{ workflow.name }}</h1>{% if let Some(problem) = workflow.problem %}<span class="badge attention">{{ problem.badge }}</span>{% endif %}</header>
+{% if let Some(problem) = workflow.problem %}    <p role="alert">{{ problem.detail }}</p>
+{% endif %}{% if !workflow.facts.is_empty() %}    <dl class="job-properties">
+{% for fact in workflow.facts %}      <div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>
+{% endfor %}    </dl>
+{% endif %}  </section>
+{{ releases|safe }}
+  <section class="panel">
+    <header class="panel-header"><h2>Jobs</h2></header>
+{% if workflow.jobs.is_empty() %}    <p class="hint">This workflow has no jobs.</p>
+{% else %}    <div class="jobs-grid">
+{% for job in workflow.jobs %}{% include "job_card.html" %}{% endfor %}    </div>
+{% endif %}  </section>
+</div>

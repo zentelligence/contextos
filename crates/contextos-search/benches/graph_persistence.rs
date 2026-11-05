@@ -1,22 +1,14 @@
-//! Performance evidence for the Phase 11 graph-backend benchmark notes
-//! (location recorded in `CLAUDE.local.md`).
+//! Performance measurements of the graph backends.
 //!
-//! Unlike `embedvec_prototype.rs` (a throwaway trait implementation used to
-//! evaluate a dependency before committing to it), this benchmark exercises
-//! the real, shipped `LinkGraph`/`StoresGraph` implementations in `src/`
-//! directly: `GraphBackend::Serde`, `Fjall`, and `Sqlite`. Phase 11's own
-//! gate (its change brief, location recorded in `CLAUDE.local.md`) covered
-//! correctness
-//! only (round trips, the concurrency-open proof); this file measures what
-//! that gate left open: bulk-load, reopen, and incremental-write latency per
-//! backend at a realistic vault scale, on-disk size, whether query latency
-//! is genuinely backend-independent (it should be, by construction: every
-//! `LinkGraph` query method reads only the in-memory `petgraph` structure,
-//! never the store), and — the one thing no prior test measured — actual
-//! throughput and correctness under sustained concurrent writes from two
-//! independent `sqlite`-backed instances, plus an empirical demonstration of
-//! the `serde` backend's documented lost-update hazard under the same
-//! access pattern.
+//! Unlike `embedvec_prototype.rs` (a throwaway trait implementation used to evaluate a dependency before
+//! committing to it), this benchmark exercises the real, shipped `LinkGraph`/`StoresGraph` implementations in
+//! `src/` directly: `GraphBackend::Serde`, `Fjall`, and `Sqlite`. The graph backend's own tests cover correctness only (round trips, the
+//! concurrency-open proof); this file measures what they leave open: bulk-load, reopen, and incremental-write
+//! latency per backend at a realistic vault scale, on-disk size, whether query latency is genuinely
+//! backend-independent (it should be, by construction: every `LinkGraph` query method reads only the in-memory
+//! `petgraph` structure, never the store), and — the one thing no prior test measured — actual throughput and
+//! correctness under sustained concurrent writes from two independent `sqlite`-backed instances, plus an empirical
+//! demonstration of the `serde` backend's documented lost-update hazard under the same access pattern.
 //!
 //! `unwrap`/`expect`/`panic` are allowed only in this file, matching
 //! `embedvec_prototype.rs`'s precedent: the workspace's `[lints]` table
@@ -42,7 +34,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use contextos_obsidian::ObsidianLink;
+use contextos_obsidian::{LinkForm, ObsidianLink};
 use contextos_search::{GraphBackend, GraphDirection, LinkGraph, LinkGraphConfig};
 
 /// Deterministic xorshift64 PRNG, reproducible run to run, matching
@@ -87,11 +79,13 @@ fn dir_size_bytes(path: &Path) -> u64 {
 
 fn link_to(target: &str) -> ObsidianLink {
     ObsidianLink {
+        form: LinkForm::Wikilink,
         target: target.to_owned(),
         display: None,
         heading: None,
         block: None,
-        embed: false,
+        line: 1,
+        raw: format!("[[{target}]]"),
     }
 }
 
@@ -138,6 +132,7 @@ fn open(store_directory: &Path, backend: GraphBackend) -> LinkGraph {
     LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.to_path_buf(),
         backend,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })
     .expect("graph opens")
 }
@@ -290,7 +285,7 @@ fn print_result(result: &BackendResult) {
 /// Sustained concurrent writes from two independent `sqlite`-backed
 /// instances against the same store directory, the real-world multi-writer
 /// scenario, rather than the correctness-only "both opens succeed" proof
-/// `fr_108_two_sqlite_backed_instances_open_concurrently` already covers.
+/// `two_sqlite_backed_instances_open_concurrently` already covers.
 /// Measures actual throughput and confirms every write from
 /// both threads survives, then compares against a single-writer baseline
 /// performing the same total write count to quantify WAL/busy-timeout

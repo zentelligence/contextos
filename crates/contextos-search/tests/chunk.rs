@@ -20,7 +20,7 @@ fn chunks_for(
 fn empty_document_produces_no_chunks() -> Result<(), Box<dyn std::error::Error>> {
     let vault = tempfile::tempdir()?;
     let chunks = chunks_for(&vault, "empty.md", "")?;
-    assert!(chunks.is_empty());
+    assert!(chunks.is_empty(), "`chunks` should be empty, got {chunks:?}");
     Ok(())
 }
 
@@ -28,7 +28,7 @@ fn empty_document_produces_no_chunks() -> Result<(), Box<dyn std::error::Error>>
 fn whitespace_only_document_produces_no_chunks() -> Result<(), Box<dyn std::error::Error>> {
     let vault = tempfile::tempdir()?;
     let chunks = chunks_for(&vault, "blank.md", "\n\n   \n\t\n")?;
-    assert!(chunks.is_empty());
+    assert!(chunks.is_empty(), "`chunks` should be empty, got {chunks:?}");
     Ok(())
 }
 
@@ -40,7 +40,11 @@ fn document_with_no_headings_yields_one_chunk_with_empty_heading_context() -> Re
 
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0].ordinal(), 0);
-    assert!(chunks[0].heading_context().is_empty());
+    assert!(
+        chunks[0].heading_context().is_empty(),
+        "`chunks[0].heading_context()` should be empty, got {:?}",
+        chunks[0].heading_context()
+    );
     assert_eq!(chunks[0].path(), "plain.md");
     assert_eq!(chunks[0].text(), "Plain prose with no structure at all.");
     Ok(())
@@ -65,7 +69,11 @@ fn preamble_before_first_heading_forms_its_own_chunk() -> Result<(), Box<dyn std
     let chunks = chunks_for(&vault, "preamble.md", content)?;
 
     assert_eq!(chunks.len(), 2);
-    assert!(chunks[0].heading_context().is_empty());
+    assert!(
+        chunks[0].heading_context().is_empty(),
+        "`chunks[0].heading_context()` should be empty, got {:?}",
+        chunks[0].heading_context()
+    );
     assert_eq!(chunks[0].text(), "Preamble text.");
     assert_eq!(chunks[0].ordinal(), 0);
     assert_eq!(chunks[1].heading_context(), ["First Heading"]);
@@ -222,7 +230,11 @@ fn setext_style_titles_are_treated_as_plain_text() -> Result<(), Box<dyn std::er
     let chunks = chunks_for(&vault, "setext.md", content)?;
 
     assert_eq!(chunks.len(), 1);
-    assert!(chunks[0].heading_context().is_empty());
+    assert!(
+        chunks[0].heading_context().is_empty(),
+        "`chunks[0].heading_context()` should be empty, got {:?}",
+        chunks[0].heading_context()
+    );
     assert!(chunks[0].text().contains("Setext Title"));
     assert!(chunks[0].text().contains("============"));
     Ok(())

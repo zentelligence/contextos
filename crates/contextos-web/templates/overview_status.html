@@ -1,0 +1,31 @@
+<section class="settings-section overview-panel" hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-swap="outerHTML">
+  <div class="tasks-dashboard-header">
+    <h2><span class="ic ic-activity" aria-hidden="true"></span> System status</h2>
+    <span class="hint">last 24 hours</span>
+  </div>
+  <div class="overview-status-grid">
+    <a class="overview-kpi" href="{{ settings_href }}">
+      <span class="overview-kpi-label"><span class="status-dot {{ status.state().dot_class() }}" aria-hidden="true"></span> MCP servers</span>
+      <span class="overview-kpi-value">{{ status.connected }} of {{ status.total }}</span>
+      <span class="overview-kpi-meta">{{ status.tools }} tools</span>
+    </a>
+    <div class="overview-kpi">
+      <span class="overview-kpi-label">Vault health</span>
+      <a class="status-bar-item health-chip health-unknown" href="{{ health_href }}" hx-get="{{ health_summary_href }}" hx-trigger="load, vault-health-changed from:body" hx-swap="outerHTML" title="Vault health: checking"><span class="status-dot" aria-hidden="true"></span> <span class="status-bar-meta">Checking&hellip;</span></a>
+    </div>
+    <div class="overview-kpi">
+      <span class="overview-kpi-label"><span class="ic ic-radio" aria-hidden="true"></span> Live stream</span>
+      {% let connected = true %}{% include "stream_state.html" %}
+    </div>
+    <a class="overview-kpi" href="{{ signals_href }}">
+      <span class="overview-kpi-label">Events</span>
+    {% if let Some(tally) = tally %}
+      <span class="overview-kpi-value">{{ tally.total() }}{% if truncated %}+{% endif %}</span>
+      <span class="overview-kpi-meta">{{ tally.error }} errors &middot; {{ tally.warning }} warnings &middot; {{ tally.info }} info</span>
+    {% else %}
+      <span class="overview-kpi-value">&mdash;</span>
+      <span class="overview-kpi-meta">Events could not be read</span>
+    {% endif %}
+    </a>
+  </div>
+</section>

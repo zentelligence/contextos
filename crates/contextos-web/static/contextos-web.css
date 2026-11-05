@@ -1,252 +1,526 @@
-/* contextos-web (Phases 14 to 17): design tokens and layout adapted from
-   outbox/2026-09-04-contextos-web-mock.html (descriptive, not prescriptive,
-   per delivery-plan.md's Phase 14 note). Covers the shared nav shell and
-   every class this crate's own rendering pipeline (rendering/*.rs,
-   templates/*.html) actually emits; no class here stands in for a feature
-   that does not yet render real content. */
+/* Entry point: tokens, shared shell/components, then screen-specific rules. */
+@import url("contextos-tokens.css");
+@import url("contextos-shell.css");
+@import url("contextos-vault-management.css");
 
-:root{
-  --bg:#f6f5f2; --panel:#ffffff; --border:#d9d5cc; --border-strong:#b8b2a5;
-  --text:#232019; --text-dim:#6b665c; --text-faint:#9a9488;
-  --accent:#5b6b4f; --accent-bg:#eef1e9; --accent-strong:#3f4c37;
-  --warn:#a5651f; --warn-bg:#fbeee0;
-  --danger:#a13a3a; --danger-bg:#f8e8e8;
-  /* Remaining canonical callout colours (`CALLOUTS.md`'s colour/icon
-     column): note/info/todo share `--link`'s own blue, warning/danger
-     already exist above, and failure/bug share `--danger`. */
-  --abstract:#2f7a6e; --abstract-bg:#e6f2ef;
-  --tip:#2a7d90; --tip-bg:#e3f2f5;
-  --success:#3f7a45; --success-bg:#e9f2e9;
-  --question:#8a7a1f; --question-bg:#f5f0dc;
-  --example:#6a4a8a; --example-bg:#f0e9f5;
-  --quote:#6b665c; --quote-bg:#eeece5;
-  --link:#3f5a7a; --code-bg:#eeece5; --shell-w:230px; --header-h:52px;
-  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  --serif:Georgia,"Iowan Old Style","Palatino Linotype",Palatino,serif;
-  --font-family:var(--sans);
-  --font-size-base:14px;
+/* ---------- tasks dashboard ---------- */
+.tasks-dashboard-header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+.tasks-view-toggle{display:flex;gap:6px;align-items:center;}
+.tasks-display-toggle{display:flex;gap:2px;padding-left:6px;margin-left:2px;border-left:1px solid var(--border);}
+.tasks-display-toggle .btn{padding-left:8px;padding-right:8px;}
+.task-stage-strip{display:flex;align-items:stretch;border:1px solid var(--border);border-radius:var(--radius-nested);overflow:hidden;flex-wrap:wrap;margin-bottom:16px;background:var(--bg-panel);}
+.task-stage-tile{flex:1 1 0;min-width:100px;display:flex;flex-direction:column;gap:2px;padding:10px 14px;border-right:1px solid var(--border);color:var(--fg);text-decoration:none;}
+.task-stage-tile:last-child{border-right:none;}
+.task-stage-tile:hover{background:var(--bg-panel-raised);text-decoration:none;}
+.task-stage-tile.active{background:var(--tint-primary);}
+.task-stage-tile-disabled{opacity:0.55;cursor:default;pointer-events:none;flex:0 0 auto;}
+.task-stage-count{font-size:calc(20rem / 14);font-weight:var(--fw-light);line-height:1;}
+.task-stage-label{font-size:calc(10rem / 14);text-transform:uppercase;letter-spacing:0.04em;color:var(--fg-faint);}
+.task-stage-group{display:flex;flex-direction:column;flex:1 1 auto;border-right:1px solid var(--border);}
+.task-stage-group-label{padding:8px 14px 0;font-size:calc(11rem / 14);font-weight:var(--fw-semibold);color:var(--fg-muted);}
+.task-stage-group-tiles{display:flex;flex:1 1 auto;flex-wrap:wrap;}
+.task-table{width:100%;border-collapse:collapse;font-size:calc(12.5rem / 14);}
+.task-table th{text-align:left;font-size:calc(10.5rem / 14);text-transform:uppercase;letter-spacing:0.04em;color:var(--fg-faint);padding:6px 10px;border-bottom:1px solid var(--border);}
+.task-table td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+.task-table tr:last-child td{border-bottom:none;}
+.task-depth-label{display:block;font-size:calc(10rem / 14);text-transform:uppercase;letter-spacing:0.04em;color:var(--fg-faint);}
+/* A task state's chip, in the colour its stage is configured with (`.contextos/tasks.toml`'s `colour`). */
+.status-chip.colour-grey{background:var(--bg-panel-raised);color:var(--fg-muted);}
+.status-chip.colour-faint{background:var(--bg-panel-raised);color:var(--fg-faint);}
+.status-chip.colour-blue{background:var(--tint-primary);color:var(--accent-primary);border-color:var(--tint-primary);}
+.status-chip.colour-green{background:var(--tint-analytics);color:var(--accent-analytics);border-color:var(--tint-analytics);}
+.status-chip.colour-amber{background:var(--tint-warning);color:var(--accent-warning);border-color:var(--tint-warning);}
+.status-chip.colour-red{background:var(--tint-blocked);color:var(--status-blocked);border-color:var(--tint-blocked);}
+.status-chip.colour-purple{background:var(--tint-relational);color:var(--accent-relational);border-color:var(--tint-relational);}
+.status-chip.colour-teal{background:var(--tint-surface);color:var(--accent-surface);border-color:var(--tint-surface);}
+.stage-colour-field{display:flex;align-items:center;gap:6px;}
+.mono{font-family:var(--font-mono,monospace);font-size:calc(11.5rem / 14);}
+.task-detail-header{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:16px;}
+.task-detail-header h1{margin:0;font-size:calc(16rem / 14);}
+.task-close-actions{display:flex;gap:6px;align-items:center;}
+.vault-settings h1{margin-top:0;}
+.settings-section{border:1px solid var(--border);border-radius:var(--radius-nested);background:var(--bg-panel);padding:12px 14px;box-shadow:var(--inset-top);}
+.settings-section + .settings-section{margin-top:14px;}
+
+/* ---------- Inbox/Outbox item rows ---------- */
+.inbox-outbox-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+.inbox-outbox-row{display:flex;align-items:center;gap:12px;padding:8px 10px;}
+.inbox-outbox-row form{margin:0;}
+.inbox-outbox-item-meta{flex:1;min-width:0;}
+.inbox-outbox-item-name{font-weight:var(--fw-medium);font-size:calc(13rem / 14);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.inbox-outbox-folder-link{display:flex;align-items:center;gap:8px;flex:1;min-width:0;font-weight:var(--fw-medium);font-size:calc(13rem / 14);color:var(--fg);}
+.inbox-outbox-folder-link:hover{color:var(--accent-primary);text-decoration:none;}
+.inbox-outbox-ancestors{display:flex;flex-direction:column;margin-bottom:10px;}
+.inbox-outbox-ancestor-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:calc(12.5rem / 14);color:var(--fg-muted);}
+a.inbox-outbox-ancestor-row:hover{color:var(--accent-primary);text-decoration:none;}
+.inbox-outbox-ancestor-row.current{color:var(--fg);font-weight:var(--fw-semibold);}
+.settings-toml-editor{width:100%;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-panel-raised);color:var(--fg);padding:8px;font-size:calc(12.5rem / 14);font-family:var(--font-mono);margin-bottom:10px;resize:vertical;}
+.hint.error{color:var(--accent-warning);}
+.dashboard-task-widgets{display:flex;flex-direction:column;gap:12px;margin-bottom:0;}
+.dashboard-task-widgets h2{margin:0 0 10px;font-size:calc(13rem / 14);}
+.dashboard-task-widgets .tasks-dashboard-header{margin-bottom:10px;}
+
+/* ---------- vault root Overview dashboard ---------- */
+.overview-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:var(--grid-gap);align-items:start;}
+.overview-main,.overview-rail{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.overview-panel-placeholder{opacity:0.65;}
+.overview-panel-placeholder h2{display:flex;align-items:center;gap:8px;margin:0;font-size:calc(13rem / 14);flex:1;}
+.overview-panel-placeholder .hint{margin:0;}
+@media (max-width: 900px){
+  .overview-grid{grid-template-columns:1fr;}
 }
-/* `[server.ui].font` (`/settings/`'s Appearance pane): `"serif"` and
-   `"monospace"` are the two named alternatives to the default sans stack;
-   any other value (including one this crate has no defined mapping for)
-   leaves `--font-family` at its `:root` default rather than guessing. */
-:root[data-font="serif"]{--font-family:var(--serif);}
-:root[data-font="monospace"]{--font-family:var(--mono);}
-/* `[server.ui].size`: `"small"`/`"large"` around the `14px` default. */
-:root[data-size="small"]{--font-size-base:12.5px;}
-:root[data-size="large"]{--font-size-base:15.5px;}
-/* System default (no `[server.ui].theme` set): follows the reader's own
-   `prefers-color-scheme`. Guarded by `:not([data-theme="light"])` so an
-   explicit light choice below always wins over a dark system setting. */
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#1c1b18; --panel:#242320; --border:#3a382f; --border-strong:#4c4a3f;
-    --text:#e8e5dc; --text-dim:#a6a193; --text-faint:#79756a;
-    --accent:#93a884; --accent-bg:#2b3227; --accent-strong:#b7c9a9;
-    --warn:#d69a5b; --warn-bg:#3a2d1c;
-    --danger:#d98080; --danger-bg:#3a2323;
-    --abstract:#7fc9b8; --abstract-bg:#1c2e29;
-    --tip:#7fc4d1; --tip-bg:#1c2c30;
-    --success:#93c99a; --success-bg:#243024;
-    --question:#d1c07f; --question-bg:#332e1c;
-    --example:#c0a0d9; --example-bg:#2c2333;
-    --quote:#a6a193; --quote-bg:#2a2924;
-    --link:#8aa8c9; --code-bg:#2a2924;
-  }
+.task-field-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:12px;}
+.task-field{display:flex;flex-direction:column;gap:3px;font-size:calc(12rem / 14);}
+.task-field-value{font-size:calc(12.5rem / 14);color:var(--fg);}
+.task-body-rendered{flex:1;min-height:0;overflow-y:auto;font-size:calc(13rem / 14);line-height:1.6;}
+.task-body-rendered>:first-child{margin-top:0;}
+.task-field-label{font-size:calc(10rem / 14);text-transform:uppercase;letter-spacing:0.04em;color:var(--fg-faint);}
+.task-field input,.task-field select{border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-panel);color:var(--fg);padding:5px 8px;font-size:calc(12.5rem / 14);font:inherit;}
+.task-frontmatter-form,.task-body-form{border:1px solid var(--border);border-radius:var(--radius-nested);background:var(--bg-panel);padding:12px 14px;box-shadow:var(--inset-top);margin-bottom:16px;}
+/* Unlike `.task-frontmatter-form` (ordinary block flow in the sidebar's own
+   scroll region below), the body pane grows to fill the row `.task-detail`
+   establishes (see that rule's own comment): the same flex-column-stretch
+   treatment `.notes-body-form`/`.wiki-edit-form` already use, so the body
+   textarea - not the metadata sidebar - gets the page's spare height. */
+.task-body-form{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;}
+/* The body editor itself: a dedicated class (mirroring `.notes-body-textarea`'s
+   own flex-fill/min-height mechanics) rather than a bare `<textarea>`, which
+   is what left this box at the browser's own tiny intrinsic default size
+   regardless of the `rows` attribute's nominal height. Kept visually
+   distinct from `.notes-body-textarea` (solid border, monospace, full
+   foreground) since a task body is structured note content, not free
+   prose. */
+.task-body-textarea{width:100%;flex:1;min-height:320px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-panel-raised);color:var(--fg);padding:8px;font-size:calc(12.5rem / 14);font-family:var(--font-mono);resize:vertical;}
+
+/* ---------- task detail: two-column layout (primary content in a wide
+   main column, structured metadata in a narrower sidebar, matching the
+   Focus view's own established grid-with-a-narrow-breakpoint pattern) */
+/* `height:100%` down this chain (`.task-detail` -> `.task-detail-layout`)
+   is the same fix `.notes-screen`'s own comment documents: without a real,
+   viewport-bound height to stretch against, the grid row sizes to its own
+   tallest item's *content* height, and the body pane's flex-fill above does
+   nothing. The header stays its own natural content height (no `flex`
+   property, so it never grows); the layout row takes what remains. */
+.task-detail{height:100%;display:flex;flex-direction:column;gap:16px;}
+.task-detail-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;align-items:stretch;gap:24px;flex:1;min-height:0;}
+.task-detail-main{min-width:0;min-height:0;display:flex;flex-direction:column;}
+.task-title-field input{font-size:calc(14.5rem / 14);font-weight:var(--fw-medium);padding:7px 9px;}
+/* The metadata sidebar keeps its own natural block flow (fields, not a body
+   editor) but scrolls independently within the stretched row
+   (`overflow-y:auto`/`min-height:0`) rather than stretching the whole page
+   to its own content height as it did before `.task-detail` above gained a
+   bounded height - twenty-plus fields is legitimately long, and the body
+   pane's own `Create`/`Save` action must stay reachable without scrolling
+   past them (`.save-bar`/`.save-bar-top` around the body textarea covers
+   that; see `task_create.html`/`task_detail.html`). */
+.task-detail-sidebar{display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0;overflow-y:auto;border-left:1px solid var(--border);padding-left:20px;}
+.task-detail-sidebar .task-field-grid{grid-template-columns:1fr;margin-bottom:0;}
+.task-field-group{display:flex;flex-direction:column;gap:10px;padding-bottom:16px;border-bottom:1px solid var(--border);}
+.task-field-group:last-child{border-bottom:0;padding-bottom:0;}
+/* Narrow-viewport override for the two-column layout above: kept here,
+   after the base rules it overrides, rather than in the shared narrow-
+   viewport block near the top of this file - an `@media` rule is no higher
+   priority than an ordinary one, so a same-specificity override earlier in
+   source order loses the cascade to a later unconditional rule regardless
+   of which viewport is active, exactly the failure mode this narrow layout
+   silently had before this comment (`.notes-layout`'s own equivalent media
+   query is likewise kept below its base rules for the same reason). */
+@media (max-width: 900px){
+  .task-detail-layout{grid-template-columns:1fr;}
+  .task-detail-sidebar{border-left:0;border-top:1px solid var(--border);padding-left:0;padding-top:16px;}
 }
-/* Explicit `[server.ui].theme = "dark"` (`/settings/`'s Appearance pane):
-   wins over the system setting in both directions. */
-:root[data-theme="dark"]{
-  --bg:#1c1b18; --panel:#242320; --border:#3a382f; --border-strong:#4c4a3f;
-  --text:#e8e5dc; --text-dim:#a6a193; --text-faint:#79756a;
-  --accent:#93a884; --accent-bg:#2b3227; --accent-strong:#b7c9a9;
-  --warn:#d69a5b; --warn-bg:#3a2d1c;
-  --danger:#d98080; --danger-bg:#3a2323;
-  --abstract:#7fc9b8; --abstract-bg:#1c2e29;
-  --tip:#7fc4d1; --tip-bg:#1c2c30;
-  --success:#93c99a; --success-bg:#243024;
-  --question:#d1c07f; --question-bg:#332e1c;
-  --example:#c0a0d9; --example-bg:#2c2333;
-  --quote:#a6a193; --quote-bg:#2a2924;
-  --link:#8aa8c9; --code-bg:#2a2924;
+
+/* ---------- task detail: link field search-and-pick widget ---------- */
+.task-link-field{grid-column:1/-1;}
+.link-chip-list{display:flex;flex-wrap:wrap;gap:6px;min-height:22px;margin-bottom:6px;}
+.link-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 6px 2px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-pill);background:var(--bg-panel-raised);color:var(--fg);font-size:calc(11rem / 14);text-decoration:none;}
+a.link-chip:hover{text-decoration:none;border-color:var(--accent-primary);}
+.link-chip-title{color:var(--fg-muted);}
+.link-chip-title.link-chip-dangling{color:var(--accent-warning);}
+.link-chip-remove{border:none;background:none;color:var(--fg-faint);cursor:pointer;font:inherit;font-size:calc(13rem / 14);line-height:1;padding:0 2px;}
+.link-chip-remove:hover{color:var(--accent-warning);}
+.link-search{position:relative;}
+.link-search-input{width:100%;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-panel);color:var(--fg);padding:5px 8px;font-size:calc(12.5rem / 14);}
+.link-search-results{position:absolute;z-index:5;left:0;right:0;margin-top:2px;max-height:220px;overflow-y:auto;background:var(--bg-panel);border-radius:var(--radius-nested);}
+.link-search-results:not(:empty){border:1px solid var(--border-strong);box-shadow:var(--inset-top);}
+.link-search-result-list{list-style:none;margin:0;padding:4px;}
+.link-search-result-list li{margin:0;}
+.link-search-result{display:block;width:100%;border:none;background:none;padding:6px 8px;border-radius:var(--radius-control);color:var(--fg);font:inherit;font-size:calc(12rem / 14);text-align:left;cursor:pointer;}
+.link-search-result:hover{background:var(--bg-panel-raised);}
+.link-search-results .hint{margin:0;padding:6px 8px;}
+
+/* ---------- tasks: Focus view (search/assignee filter row, section
+   headers, task cards, and the Backlog/Done side panels) ---------- */
+.task-filter-row{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:16px;}
+.task-search-wrap{display:flex;align-items:center;gap:6px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg-panel);padding:5px 8px;}
+.task-search-wrap .ic{color:var(--fg-faint);}
+.task-search-wrap input{border:0;background:none;color:var(--fg);font:inherit;font-size:calc(12.5rem / 14);min-width:180px;}
+.task-search-wrap input:focus{outline:none;}
+.task-filter-row select{border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg-panel);color:var(--fg);padding:6px 8px;font:inherit;font-size:calc(12.5rem / 14);}
+.section-label{font-size:calc(11rem / 14);font-weight:var(--fw-semibold);text-transform:uppercase;letter-spacing:0.04em;color:var(--fg-muted);}
+.task-section-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 2px 8px;}
+.task-focus-section{margin-bottom:20px;}
+.task-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;}
+.task-card-grid-hierarchy{grid-template-columns:1fr;}
+.task-card-wrap{display:flex;flex-direction:column;gap:2px;}
+.task-card{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--border);border-left-width:3px;border-left-style:solid;border-radius:var(--radius-nested);background:var(--bg-panel);box-shadow:var(--inset-top);}
+.task-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.task-card-title{color:var(--fg);font-size:calc(13rem / 14);font-weight:var(--fw-medium);}
+.task-card-title:hover{color:var(--accent-primary);text-decoration:none;}
+.task-card-meta{display:flex;align-items:center;gap:12px;font-size:calc(11rem / 14);color:var(--fg-faint);}
+.task-card-meta-item{display:flex;align-items:center;gap:4px;}
+.task-card-due{margin-left:auto;}
+.task-focus-overflow{display:inline-block;margin-top:8px;font-size:calc(11.5rem / 14);color:var(--accent-warning);background:none;border:0;padding:0;cursor:pointer;}
+.task-focus-panels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;}
+.task-panel{border:1px solid var(--border);border-radius:var(--radius-nested);background:var(--bg-panel-raised);padding:12px 14px;}
+.task-panel-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.task-panel-header .section-label{flex:1;}
+.task-pull-next{display:flex;align-items:center;gap:8px;width:100%;justify-content:center;margin-bottom:10px;}
+.task-mini-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-left-width:2px;border-left-style:solid;border-radius:var(--radius-control);color:var(--fg);text-decoration:none;margin-bottom:4px;}
+.task-mini-row:hover{background:var(--bg-panel);text-decoration:none;}
+.task-mini-row-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:calc(12.5rem / 14);}
+
+/* ---------- Journal: date nav, calendar popover, section panels, and
+   the sidebar's own year/month/day tree (a `<details>` popover needs no
+   script of its own: opening/closing is native, and every date link is a
+   plain navigation, matching every other date-partitioned tree in this
+   crate) ---------- */
+.hint.italic{font-style:italic;}
+.journal-header{display:flex;align-items:center;gap:8px;margin-bottom:16px;}
+.journal-calendar-toggle{position:relative;}
+.journal-calendar-toggle summary{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;
+  background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius-control);
+  color:var(--fg);font-size:calc(12.5rem / 14);cursor:pointer;list-style:none;}
+.journal-calendar-toggle summary::-webkit-details-marker{display:none;}
+.journal-calendar-toggle .ic{color:var(--accent-primary);}
+.journal-calendar-popover{position:absolute;z-index:20;top:calc(100% + 4px);left:0;padding:10px;width:216px;
+  background:var(--bg-panel);border:1px solid var(--border-strong);border-radius:var(--radius-panel);box-shadow:var(--shadow-overlay,var(--inset-top));}
+.journal-calendar-month-label{font-size:calc(11rem / 14);font-weight:var(--fw-semibold);text-transform:uppercase;
+  letter-spacing:0.04em;color:var(--fg-faint);margin-bottom:8px;}
+.journal-calendar-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px;}
+.journal-calendar-weekdays span{text-align:center;font-size:calc(10.5rem / 14);color:var(--fg-faint);}
+.journal-calendar-week{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+.journal-calendar-day{display:flex;align-items:center;justify-content:center;height:26px;border-radius:var(--radius-nested);
+  color:var(--fg);font-size:calc(12rem / 14);position:relative;border:1px solid transparent;}
+a.journal-calendar-day:hover{background:var(--bg-panel-raised);text-decoration:none;}
+.journal-calendar-day.selected{background:var(--bg-panel-raised);}
+.journal-calendar-day.today{border-color:var(--accent-primary);}
+.journal-calendar-day.has-entry::after{content:"";position:absolute;bottom:3px;left:50%;transform:translateX(-50%);
+  width:3px;height:3px;border-radius:var(--radius-pill);background:var(--accent-primary);}
+.journal-calendar-day.empty{cursor:default;}
+/* `height:100%`/`flex:1;min-height:0` down this whole chain (`.journal-screen`
+   -> `.journal-layout`) gives the row a real, viewport-bounded height to
+   stretch against, the same way `.notes-screen` does below - `.content`'s
+   own box (`page_shell.html`'s direct parent) is already exactly the
+   page's available height. Without it, a grid row sizes to its tallest
+   item's own *content* height, and `align-items:start` then leaves every
+   pane only as tall as its own content demanded, however much taller the
+   browser window itself actually was. */
+.journal-screen{height:100%;display:flex;flex-direction:column;}
+.journal-layout{flex:1;min-height:0;display:grid;grid-template-columns:200px minmax(0,1fr) 300px;align-items:stretch;gap:24px;}
+/* `JournalConfig::date_structure_side`: a plain layout preference (Journal
+   has no dated/regular split for a "which pane" question to apply to -
+   this only moves where the existing date tree itself sits). The
+   template emits the sidebar as the layout's first child instead of its
+   last when this is active, so the column widths themselves - not just
+   source order - need to swap; the sidebar's own divider moves from its
+   left edge to its right for the same reason. */
+.journal-layout.journal-layout-folder-pane-left{grid-template-columns:300px 200px minmax(0,1fr);}
+.journal-layout-folder-pane-left .journal-sidebar{border-left:0;border-right:1px solid var(--border);padding-left:0;padding-right:20px;}
+.journal-nav{min-width:0;min-height:0;overflow-y:auto;}
+.journal-main{min-width:0;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;}
+/* `flex:1` here, not just the pre-existing `min-height:360px` floor, is
+   what actually lets the one visible section fill `.journal-main`'s own
+   stretched height - a lone flex child otherwise sizes to its own content
+   (the 360px floor) and leaves the rest of the pane blank, the same
+   "vertically constrained" symptom the surrounding grid-stretch fix (just
+   above) solves one level up. Setting `min-height` explicitly (rather than
+   leaving it `auto`) is what lets the box shrink below its own textarea's
+   intrinsic content height on a short viewport instead of forcing
+   `.journal-main` taller than the row it must stay inside; `overflow-y:auto`
+   then clips and scrolls whatever content still exceeds that. */
+.journal-section{border:1px solid var(--border);border-radius:var(--radius-nested);background:var(--bg-panel);
+  padding:12px 14px;box-shadow:var(--inset-top);min-height:360px;flex:1;overflow-y:auto;
+  display:flex;flex-direction:column;}
+/* An author style's own `display` always beats the UA stylesheet's default
+   `[hidden]{display:none}`, `display` origin, not selector specificity,
+   decides that fight - so giving this class its own `display:flex` above
+   silently un-hides every inactive section (the tab-switch script above
+   only ever toggles the `hidden` attribute, never a class) unless this
+   rule restates `display:none` for it explicitly. */
+.journal-section[hidden]{display:none;}
+.journal-section .section-label{margin-bottom:8px;}
+.journal-section form{flex:1;min-height:0;display:flex;flex-direction:column;}
+.journal-section form textarea{width:100%;flex:1;min-height:260px;border:1px solid var(--border);border-radius:var(--radius-control);
+  background:var(--bg-panel-raised);color:var(--fg);padding:8px;font-family:var(--font-mono);font-size:calc(12.5rem / 14);
+  margin-bottom:8px;resize:vertical;}
+.journal-text-body{font-size:calc(12.5rem / 14);color:var(--fg-muted);}
+.journal-text-body p:last-child{margin-bottom:0;}
+/* The template's own guidance for a section, shown above it: its block quotes
+   read as plain hint text rather than as quoted content. */
+.journal-guidance{margin-bottom:8px;}
+.journal-guidance blockquote{margin:0;padding:0;border:none;}
+.journal-guidance p{margin:0 0 4px;}
+.journal-sidebar{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;overflow-y:auto;border-left:1px solid var(--border);padding-left:20px;}
+/* A nested `<details>` tree's own indented run of children: one level
+   under a year, one level under a month - shared by Journal's date tree
+   (`.journal-tree-day` leaves) and the Notes sidebar's identical year/month
+   nesting (`.notes-list-item` leaves), so the two screens' near-identical
+   date-partition trees do not carry two copies of the same layout rule. */
+.tree-nest{display:flex;flex-direction:column;gap:1px;padding-left:14px;}
+.journal-tree-day{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:var(--radius-nested);
+  color:var(--fg-muted);font-size:calc(12.5rem / 14);}
+.journal-tree-day:hover{background:var(--bg-panel-raised);color:var(--fg);text-decoration:none;}
+.journal-tree-day.active{background:var(--bg-panel-raised);color:var(--fg);}
+.journal-tree-day .hint{margin-left:auto;}
+@media (max-width: 900px){
+  .journal-layout,.journal-layout.journal-layout-folder-pane-left{grid-template-columns:1fr;}
+  .journal-nav{position:static;flex-direction:row;flex-wrap:wrap;}
+  .journal-sidebar,.journal-layout-folder-pane-left .journal-sidebar{
+    border-left:0;border-right:0;border-top:1px solid var(--border);padding-left:0;padding-right:0;padding-top:16px;}
 }
 
-*{box-sizing:border-box;}
-html,body{margin:0;background:var(--bg);color:var(--text);font:var(--font-size-base)/1.55 var(--font-family);}
-a{color:var(--link);}
-button,.btn{font:inherit;}
-.hint{font-size:11.5px;color:var(--text-faint);}
-.app{display:flex;min-height:calc(100vh - var(--header-h));}
-
-/* ---------- header ---------- */
-.shell-header{
-  height:var(--header-h);flex:0 0 var(--header-h);display:flex;align-items:center;gap:10px;
-  padding:0 16px;background:var(--panel);border-bottom:1px solid var(--border);
-  position:sticky;top:0;z-index:10;
+/* ---------- Notes: the sidebar list of unique notes plus the selected
+   one's own header, rename form, and free-flow body textarea ---------- */
+/* `height:100%`/`flex:1;min-height:0` down this whole chain (`.notes-screen`
+   -> `.notes-layout`) gives the row a real, viewport-bounded height to
+   stretch against - `.content`'s own box (`page_shell.html`'s direct
+   parent) is already exactly the page's available height. Without it, a
+   grid row sizes to its tallest item's own *content* height, and
+   `align-items:start` (this rule's own previous value) then left the main
+   panel - and its `flex:1` body textarea - only as tall as its own content
+   demanded, however much taller the browser window itself actually was. */
+.notes-screen{height:100%;display:flex;flex-direction:column;gap:10px;}
+/* Wiki, Insights, Entity folders, and Profile each render the identical
+   `.notes-layout` below (`flex:1`), which does nothing unless its own
+   parent is itself a flex container with a real, viewport-bound height to
+   stretch against - exactly what `.notes-screen` above already gives
+   Notes. None of these four screens' own root ever carried that fix, so
+   `.notes-main` (and its own `flex:1` body textarea) sized to content
+   alone and left dead space below whenever a vault had not yet filled the
+   viewport with real content. */
+.wiki-screen,.insights-screen,.entity-docs-screen,.profile-screen{height:100%;display:flex;flex-direction:column;gap:10px;}
+.notes-header-row{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.notes-header-row form{margin:0;}
+.notes-layout{flex:1;min-height:0;display:grid;grid-template-columns:280px minmax(0,1fr);align-items:stretch;gap:24px;}
+/* The dated/regular split (`NotesConfig::date_structure_active`) adds a
+   third column - the dated pane, on whichever side
+   `date_structure_side_is_left` puts it (the template always emits the two
+   sidebar columns in source order left-then-right, so no extra grid
+   ordering rule is needed here). */
+.notes-layout.notes-layout-split{grid-template-columns:220px minmax(0,1fr) 220px;}
+/* The metadata panel's own side (`NotesConfig::metadata_panel_side`), when
+   the dated/regular split is off, so the panel still gets a column even
+   though there is only ever one folder-navigation pane (always on the
+   left - see `notes.html`'s own module doc) for it to stack above; a
+   `metadata_panel_side` of `left` needs no such column, since the panel
+   then stacks inside the one folder-navigation column the base rule above
+   already renders. */
+.notes-layout.notes-layout-metadata-right{grid-template-columns:280px minmax(0,1fr) 220px;}
+/* The Knowledge/Profile screens' own single mirrorable side panel (Wiki's
+   folder tree, Insights' shard picker, Entity folders' own identical
+   accordion tree, Profile's sidebar): a genuinely different axis from
+   `.notes-layout-split`
+   above - one narrow panel on either side of one wide main pane, never
+   three columns at once - so it needs its own two-column grid rather than
+   reusing that one. The base `.notes-layout` rule already renders this
+   correctly when the panel is the first (left) child; this modifier
+   mirrors the same two columns for when the panel is instead the second
+   (right) child in source order, so the narrow column still lands under
+   the narrow panel rather than under whichever child happens to render
+   first. */
+.notes-layout.notes-layout-panel-right{grid-template-columns:minmax(0,1fr) 280px;}
+/* Wiki's own metadata panel and folder-tree pane are both independently placeable
+   (`WikiConfig::metadata_panel_side`, `WikiConfig::tree_side`), unlike Notes' own
+   `.notes-layout-metadata-right` above (whose one navigation pane is always on the left when
+   the dated/regular split is off) - so when an operator puts the metadata panel on the left
+   while moving the folder tree to the right, neither of the two rules above fits: this is the
+   one remaining combination, the metadata panel's own dedicated narrow column on the left,
+   mirrored onto the folder tree's own dedicated wide column on the right. */
+.notes-layout.notes-layout-metadata-left-panel-right{grid-template-columns:220px minmax(0,1fr) 280px;}
+/* `min-height:0` overrides a grid item's own implicit `min-height:auto`,
+   which would otherwise let a long note list grow past the stretched row
+   height rather than actually respecting it - the one thing that makes
+   `overflow-y:auto` clip (and therefore scroll) instead of doing nothing. */
+.notes-sidebar{min-width:0;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
+/* One grid column's own worth of content: the metadata panel (when
+   `NotesConfig::metadata_panel_side` names this side), stacked above the
+   folder-navigation pane(s) that already render there - never a second grid
+   column of its own, matching the operator's own choice of "above the
+   folder sidebar" over "a separate column" (`notes_config.rs`'s own doc for
+   `metadata_panel_side`). `.notes-sidebar` still owns its own scroll region
+   once nested here, via `flex:1;min-height:0` below - the metadata panel's
+   own height is never fixed, so without that the sidebar's note list would
+   be squeezed to nothing rather than the metadata panel simply taking
+   whatever height its own fields need. */
+.notes-side-column{min-width:0;min-height:0;display:flex;flex-direction:column;gap:16px;}
+.notes-side-column .notes-sidebar{flex:1;min-height:0;}
+.notes-metadata-panel{flex:0 0 auto;min-width:0;max-height:50%;overflow-y:auto;display:flex;flex-direction:column;
+  gap:4px;border:1px solid var(--border);border-radius:var(--radius-panel);background:var(--bg-panel);padding:12px;
+  box-shadow:var(--inset-top);}
+.notes-metadata-form{display:flex;flex-direction:column;gap:4px;}
+.notes-metadata-form .field-row{margin-bottom:10px;}
+/* Local extension (no kit component): a link field's chips in the metadata panel; a dead one takes the wikilink dead-link
+   indicator's muted colour and dotted edge. */
+.metadata-links{list-style:none;margin:0 0 4px;padding:0;display:flex;flex-wrap:wrap;gap:4px 6px;}
+.metadata-link{display:inline-block;padding:1px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-control);font-size:calc(12rem / 14);text-decoration:none;color:var(--fg);}
+.metadata-link.dead{color:var(--fg-faint);border-style:dotted;cursor:help;}
+.metadata-link-edit summary{cursor:pointer;font-size:calc(12rem / 14);color:var(--fg-muted, var(--fg));}
+/* A sidebar group's own label plus that group's "New" disclosure, side by
+   side (Profile's Identity/Operating groups) - the disclosure itself never
+   renders an always-open form; see `.header-disclosure` below. */
+.notes-sidebar-group-header{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+/* Two or more related header-row actions (e.g. Wiki's "New" plus its own
+   "New folder" disclosure), kept together as one visual group rather than
+   spread apart by `.notes-header-row`'s own `justify-content:space-between`. */
+.header-actions{display:flex;align-items:center;gap:8px;}
+/* A header action that only reveals its own form once clicked, rather than
+   rendering that form always-open: a plain `<details>`/`<summary>` styled
+   as an ordinary `.btn`, with the marker triangle stripped so it reads as a
+   button, not an accordion. The form renders in normal flow directly below
+   its own summary once opened - a real in-place expansion, not a popover -
+   so it never overlaps sibling content. */
+.header-disclosure > summary{list-style:none;cursor:pointer;}
+.header-disclosure > summary::-webkit-details-marker{display:none;}
+.header-disclosure-body{display:flex;align-items:center;gap:8px;margin-top:8px;}
+.header-disclosure-body input[type=text]{padding:6px 8px;border:1px solid var(--border-strong);
+  border-radius:var(--radius-control);background:var(--bg);color:var(--fg);font:inherit;font-size:calc(12.5rem / 14);min-width:0;}
+/* Insights' own shard picker: a fixed 36-key `a`-`z`/`0`-`9` grid, every
+   key always rendered and selectable regardless of which currently hold a
+   real note (`insights::list_shards`'s own fixed keyspace, never a
+   listing of what a vault happens to already contain on disk). */
+.insights-shard-grid{display:flex;flex-wrap:wrap;gap:4px;}
+.insights-shard-key{display:flex;align-items:center;justify-content:center;width:26px;height:26px;flex:0 0 auto;
+  border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-panel-raised);
+  color:var(--fg-muted);font-family:var(--font-mono);font-size:calc(11.5rem / 14);text-transform:uppercase;}
+.insights-shard-key:hover{background:var(--bg-panel);color:var(--fg);text-decoration:none;border-color:var(--border-strong);}
+.insights-shard-key.active{background:var(--tint-primary);border-color:var(--border-glow);color:var(--accent-primary);}
+/* Row layout is the default: an icon plus a single-line title (Wiki,
+   Insights, Profile, entity-docs rows) stay one line tall regardless of an
+   icon being present. Only Notes' own rows carry a second meta line
+   (date/time), so `.has-meta` switches those specific rows back to a
+   stacked column instead of every screen paying for Notes' own shape. */
+.notes-list-item{display:flex;flex-direction:row;align-items:center;gap:8px;padding:6px 8px;
+  border-left:2px solid transparent;border-radius:var(--radius-nested);color:var(--fg);}
+.notes-list-item.has-meta{flex-direction:column;align-items:stretch;gap:1px;}
+.notes-list-item:hover{background:var(--bg-panel-raised);text-decoration:none;}
+.notes-list-item.active{background:var(--bg-panel-raised);border-left-color:var(--accent-primary);}
+.notes-list-item-title{font-size:calc(12.5rem / 14);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.notes-list-item .ic{flex:0 0 auto;color:var(--fg-faint);}
+.notes-main{min-width:0;display:flex;flex-direction:column;gap:14px;border:1px solid var(--border);
+  border-radius:var(--radius-panel);background:var(--bg-panel);padding:16px;min-height:440px;box-shadow:var(--inset-top);}
+.notes-main-header{display:flex;align-items:center;flex-wrap:wrap;gap:10px;}
+.notes-title{font-weight:var(--fw-semibold);font-size:calc(13rem / 14);color:var(--fg);}
+.notes-meta{margin-left:auto;}
+/* A selected item's own Rename/Edit/Delete cluster (Wiki, Insights, Entity
+   folders, Profile), pinned to the header row's own right edge the same way
+   `.notes-meta` already pins Notes' own trailing timestamp - grouped in one
+   `.header-actions` span (already used for the screen-level New/New folder
+   cluster in `.notes-header-row`) rather than left-clustered immediately
+   after the title, which is where every one of these buttons rendered
+   before this rule existed. */
+.notes-main-header .header-actions{margin-left:auto;}
+.notes-rename-row{display:flex;align-items:center;gap:8px;}
+.notes-rename-row input[type=text]{padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-control);
+  background:var(--bg);color:var(--fg);font:inherit;font-size:calc(12.5rem / 14);min-width:0;flex:1;}
+/* Wraps the rename and body forms as one swappable unit
+   (`routes::notes::delete`'s own confirm-delete step swaps this whole
+   container for a confirmation fragment carrying the identical id, then
+   back), so it must keep `.notes-main`'s own flex-column/grow behaviour
+   rather than only the plain block layout a bare wrapper `div` defaults to. */
+.notes-main-body{display:flex;flex-direction:column;gap:14px;flex:1;min-height:0;}
+/* Knowledge/Profile's own edit forms (Wiki, Insights, Profile share
+   `.wiki-edit-form`; entity-folders its own `.entity-docs-edit-form`): the
+   same flex-column stretch as `.notes-body-form` below, so their own
+   `.notes-body-textarea` fills the available panel instead of falling back
+   to a bare `<textarea>`'s own small intrinsic size - this rule never
+   existed for either class before, so every one of these edit views has
+   rendered undersized since Wiki's own `/edit` fragment first shipped. */
+.wiki-edit-form,.entity-docs-edit-form{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;}
+.notes-body-form{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;}
+.notes-body-textarea{flex:1;min-height:320px;resize:vertical;border:1px dashed var(--border-strong);
+  border-radius:var(--radius-nested);background:var(--bg-panel-raised);color:var(--fg-muted);padding:12px;
+  font:inherit;font-size:calc(12.5rem / 14);}
+.notes-delete-confirm-actions{display:flex;align-items:center;gap:8px;}
+@media (max-width: 860px){
+  .notes-layout,.notes-layout.notes-layout-split,.notes-layout.notes-layout-metadata-right,
+  .notes-layout.notes-layout-panel-right,.notes-layout.notes-layout-metadata-left-panel-right{grid-template-columns:1fr;}
 }
-.shell-logo{height:28px;width:28px;object-fit:contain;border-radius:4px;flex:0 0 auto;}
-.shell-title{font-size:15px;font-weight:600;letter-spacing:.01em;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-/* ---------- shell / nav ---------- */
-.shell-nav{
-  width:var(--shell-w);flex:0 0 var(--shell-w);background:var(--panel);
-  border-right:1px solid var(--border);display:flex;flex-direction:column;
-  padding:14px 0;position:sticky;top:var(--header-h);height:calc(100vh - var(--header-h));overflow-y:auto;
-}
-.vault-switcher{padding:0 14px 12px;border-bottom:1px solid var(--border);margin-bottom:10px;}
-.vault-switcher label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:5px;}
-.vault-switcher select{width:100%;padding:6px 8px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg);color:var(--text);font-size:13px;}
-.nav-section{padding:0 14px;margin-bottom:16px;}
-.nav-section h3{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin:0 0 6px;font-weight:600;word-break:break-word;}
-.nav-tree{list-style:none;margin:0;padding:0;font-size:13px;}
-.nav-tree li{margin:1px 0;}
-.nav-tree a{
-  display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;color:var(--text);
-  text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.nav-tree a:hover{background:var(--accent-bg);}
-.nav-primary{list-style:none;margin:0;padding:0 8px;}
-.nav-primary li{margin:1px 0;}
-.nav-primary a,.nav-primary .nav-dir{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:5px;color:var(--text);text-decoration:none;font-size:13px;}
-.nav-primary .nav-dir{color:var(--text-faint);}
-.nav-primary a:hover{background:var(--accent-bg);}
-.nav-primary a.active{background:var(--accent-strong);color:#fff;}
-.shell-footer{margin-top:auto;padding:10px 14px 0;border-top:1px solid var(--border);}
-.link-button{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;color:var(--text-dim);background:none;border:none;cursor:pointer;font-size:13px;width:100%;text-align:left;}
-.link-button:hover{background:var(--accent-bg);color:var(--text);}
+/* Jobs use the Command Centre panel, badge, avatar, and status primitives. */
+.jobs-screen{display:flex;flex-direction:column;gap:var(--space-4,16px);}
+.panel{padding:16px;border:1px solid var(--border);border-radius:var(--radius-panel);background:var(--bg-panel);box-shadow:var(--inset-top);min-width:0;}
+.panel-header{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+.panel-header h1,.panel-header h2{margin:0;flex:1;min-width:0;overflow-wrap:anywhere;}
+.panel-header h2{font:var(--fw-medium) var(--fs-sm,1rem)/1.3 var(--font-ui);}
+.jobs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:12px;}
+.job-avatar{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;flex:0 0 36px;border-radius:50%;border:1px solid var(--job-accent,var(--accent-primary));color:var(--job-accent,var(--accent-primary));box-shadow:0 0 14px -4px var(--job-accent,var(--accent-primary));}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid var(--border);border-radius:var(--radius-badge);font-size:calc(11rem / 14);color:var(--fg-muted);}
+.job-status,.job-detail-summary,.job-card-meta,.job-run-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.job-card-meta{justify-content:space-between;margin:12px 0;}
+.job-schedule,.job-run-times{font-family:var(--font-mono);font-size:calc(11rem / 14);color:var(--fg-muted);overflow-wrap:anywhere;}
+.job-properties{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0;}
+.job-properties dt{font-size:calc(11rem / 14);color:var(--fg-muted);}
+.job-properties dd{margin:4px 0 0;overflow-wrap:anywhere;}
+.job-run-log{list-style:none;margin:0;padding:0;}
+.job-run-log li{padding:12px 0;border-bottom:1px solid var(--border);}
+.job-run-log li:last-child{border-bottom:0;}
+.job-run-times{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;}
+.job-run-error{color:var(--status-blocked);white-space:pre-wrap;overflow-wrap:anywhere;}
+.status-dot.idle{background:var(--fg-faint);box-shadow:none;animation:none;}
+.status-dot.done{background:var(--accent-analytics);box-shadow:none;animation:none;}
+.status-dot.working{background:var(--accent-primary);}
+.status-dot.blocked,.status-dot.error{background:var(--status-blocked);box-shadow:none;animation:none;}
+.status-dot.warning{background:var(--accent-warning);box-shadow:none;animation:none;}
+.badge.blocked{color:var(--status-blocked);background:var(--tint-blocked);}
+.badge.done{color:var(--accent-analytics);background:var(--tint-analytics);}
+.badge.working{color:var(--accent-primary);background:var(--tint-primary);}
+.badge.attention{color:var(--status-attention);background:var(--tint-warning);}
 
-/* ---------- main column ---------- */
-.shell-main{flex:1;min-width:0;display:flex;flex-direction:column;}
-.topbar{display:flex;align-items:center;gap:10px;padding:10px 22px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:var(--header-h);z-index:5;}
-.breadcrumb{font-size:13px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.breadcrumb a,.nav-section h3.breadcrumb-tree a{color:inherit;text-decoration:none;}
-.breadcrumb a:hover,.nav-section h3.breadcrumb-tree a:hover{text-decoration:underline;}
-.breadcrumb-sep{margin:0 4px;color:var(--text-faint);}
-.breadcrumb-current{color:var(--text);}
-.nav-section h3.breadcrumb-tree{word-break:break-word;}
-.content{padding:26px 34px;flex:1;max-width:980px;}
-.content h1{font-size:1.65em;margin:0 0 .5em;}
-.content h2{font-size:1.3em;margin:1.3em 0 .5em;border-bottom:1px solid var(--border);padding-bottom:.25em;}
-.content p{margin:0 0 1em;}
-.content ul,.content ol{margin:0 0 1em;padding-left:1.4em;}
-.content img{max-width:100%;}
-.embed-image{display:block;border-radius:6px;margin:0 0 1em;}
-.content code{background:var(--code-bg);padding:.1em .35em;border-radius:3px;font-family:var(--mono);font-size:.9em;}
-.content pre{background:var(--code-bg);padding:12px 14px;border-radius:6px;overflow-x:auto;font-family:var(--mono);font-size:.85em;}
-.content pre code{background:none;padding:0;}
-.content table{border-collapse:collapse;margin:0 0 1em;}
-.content th,.content td{border:1px solid var(--border);padding:5px 10px;}
+/* Release pages: a workflow's releases, a job's release and chain, and a store's library releases with their checks. */
+.job-run-mark{font-family:var(--font-mono);font-size:calc(11rem / 14);overflow-wrap:anywhere;}
+.workflow-releases,.job-release,.library-releases{display:flex;flex-direction:column;gap:12px;}
+.workflow-releases .release{padding:12px 0;border-top:1px solid var(--border);}
+.workflow-releases .release:first-of-type{border-top:0;}
+.workflow-releases .release h3{margin:0 0 8px;font:var(--fw-medium) var(--fs-sm,1rem)/1.3 var(--font-ui);}
+.release-current{border-left:2px solid var(--status-ok);padding-left:12px;}
+.release-previous,.release-future{border-left:2px solid var(--accent-primary);padding-left:12px;}
+.release-retired{border-left:2px solid var(--border);padding-left:12px;color:var(--fg-muted);}
+.library-release-list{list-style:none;margin:0;padding:0;}
+.library-release{padding:12px 0;border-top:1px solid var(--border);}
+.library-release:first-child{border-top:0;}
+.library-checks{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 16px;margin:8px 0;}
+.library-checks dt{font-size:calc(11rem / 14);color:var(--fg-muted);}
+.library-checks dd{margin:0;overflow-wrap:anywhere;}
+.library-checks ul,.library-dependent-results ul{margin:4px 0 0;padding-left:1.2em;}
+.check-passed{color:var(--status-ok);}
+.check-failed{color:var(--status-blocked);}
+.check-skipped{color:var(--fg-muted);}
+.library-dependents{margin-top:8px;}
+.library-dependent-results{list-style:none;margin:0 0 8px;padding:0;}
+.library-dependent-results li{padding:4px 0;}
+.library-dependent-jobs ul{list-style:none;margin:6px 0;padding:0;}
+.library-dependent-jobs li{padding:3px 0;}
 
-/* ---------- wikilinks, callouts, fences, embeds ---------- */
-.wikilink{color:var(--link);text-decoration:none;border-bottom:1px dotted var(--link);}
-.wikilink:hover{border-bottom-style:solid;}
-.wikilink.dead{color:var(--danger);border-bottom-color:var(--danger);}
-.embed-audio{display:block;width:100%;margin:0 0 1em;}
-mark{background:var(--warn-bg);color:var(--text);border-radius:2px;padding:0 .15em;}
-.tag{display:inline-block;color:var(--accent-strong);background:var(--accent-bg);border-radius:10px;padding:.05em .6em;font-size:.9em;}
-.callout{border-left:3px solid var(--accent);background:var(--accent-bg);border-radius:0 6px 6px 0;padding:10px 14px;margin:0 0 1em;}
-.callout-title{font-weight:600;margin-bottom:2px;}
-.callout-note,.callout-info,.callout-todo{border-left-color:var(--link);background:var(--accent-bg);}
-.callout-abstract{border-left-color:var(--abstract);background:var(--abstract-bg);}
-.callout-tip{border-left-color:var(--tip);background:var(--tip-bg);}
-.callout-success{border-left-color:var(--success);background:var(--success-bg);}
-.callout-question{border-left-color:var(--question);background:var(--question-bg);}
-.callout-warning{border-left-color:var(--warn);background:var(--warn-bg);}
-.callout-failure,.callout-danger,.callout-bug{border-left-color:var(--danger);background:var(--danger-bg);}
-.callout-example{border-left-color:var(--example);background:var(--example-bg);}
-.callout-quote{border-left-color:var(--quote);background:var(--quote-bg);}
-.fence{border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin:0 0 1em;background:var(--panel);}
-.fence-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;}
-.fence-unrecognised{border-style:dashed;}
-.embed-block{border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin:0 0 1em;background:var(--bg);}
-.embed-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;}
+.ic-bot{--ic:url("/static/icons/bot.svg");}
 
-/* ---------- base view (cards) ---------- */
-.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin:0 0 1em;}
-.row-card{border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:12px 14px;}
-.row-card h4{margin:0 0 6px;font-size:13.5px;}
-.row-card h4 a{text-decoration:none;color:var(--text);}
-.row-card h4 a:hover{color:var(--link);}
-.row-card dl{margin:0;font-size:12px;}
-.row-card dt{color:var(--text-faint);display:inline;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
-.row-card dd{margin:0 0 5px;display:block;}
-.status-chip{display:inline-block;padding:1px 8px;border-radius:9px;font-size:11px;}
-.status-chip.active{background:var(--accent-bg);color:var(--accent-strong);}
-.status-chip.pending{background:var(--warn-bg);color:var(--warn);}
-.status-chip.done{background:var(--code-bg);color:var(--text-dim);}
-.base-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
-.view-tabs{display:flex;gap:2px;background:var(--code-bg);border-radius:6px;padding:2px;}
-.view-tabs button{border:none;background:transparent;padding:6px 12px;border-radius:5px;font:inherit;font-size:12.5px;cursor:pointer;color:var(--text-dim);}
-.view-tabs button.active{background:var(--panel);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08);}
-.filter-editor{border:1px dashed var(--border-strong);border-radius:6px;padding:12px 14px;margin-bottom:16px;font-size:12.5px;color:var(--text-dim);}
-.filter-editor textarea{width:100%;min-height:120px;font-family:var(--mono);font-size:12px;padding:8px;border:1px solid var(--border-strong);border-radius:5px;background:var(--bg);color:var(--text);box-sizing:border-box;}
-.base-row-edit{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);}
-.base-row-edit label{display:block;margin-bottom:6px;font-size:11.5px;}
-.base-row-edit input[type=text]{display:block;width:100%;margin-top:2px;padding:4px 6px;border:1px solid var(--border-strong);border-radius:4px;background:var(--bg);color:var(--text);font:inherit;font-size:12px;}
-
-/* ---------- diagnostics ---------- */
-.diagnostic-panel{border:1px solid var(--danger);background:var(--danger-bg);color:var(--danger);border-radius:6px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;}
-.diagnostic{margin:0 0 8px;}
-.diagnostic:last-child{margin-bottom:0;}
-.diagnostic-code{font-family:var(--mono);font-size:11px;font-weight:600;margin-right:8px;}
-.diagnostic-path{font-family:var(--mono);font-size:11px;color:var(--text-dim);}
-.diagnostic-message{margin:2px 0 0;}
-
-/* ---------- canvas ---------- */
-.canvas-svg{border:1px solid var(--border);border-radius:8px;background:var(--panel);display:block;max-width:100%;}
-.canvas-node-text{fill:var(--text);}
-.node-bg{stroke:var(--border-strong);stroke-width:1;fill:var(--panel);}
-.canvas-group-bg{fill:none;stroke:var(--border-strong);stroke-dasharray:4 3;}
-.canvas-group-label{fill:var(--text-faint);font-size:11px;}
-.canvas-edge{stroke:var(--text-faint);stroke-width:1.5;fill:none;}
-.canvas-edge-label{fill:var(--text-dim);font-size:11px;}
-
-/* ---------- apps listing ---------- */
-.apps-list-header{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
-.apps-list-header h1{margin:0;flex:1;}
-.icon-button{border:1px solid var(--border-strong);background:var(--panel);color:var(--text);padding:5px 10px;border-radius:5px;cursor:pointer;}
-.icon-button:hover{background:var(--accent-bg);}
-.apps-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;}
-.app-card{border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:12px 14px;}
-.app-name{font-weight:600;}
-.app-status{display:block;font-size:11.5px;color:var(--warn);margin-top:2px;}
-.app-kind{display:block;margin-top:6px;font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em;}
-
-/* ---------- settings ---------- */
-.settings h1{margin-top:0;}
-.settings-grid{display:grid;grid-template-columns:200px 1fr;gap:24px;align-items:start;}
-.settings-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:66px;}
-.settings-nav button{text-align:left;border:none;background:transparent;padding:8px 10px;border-radius:5px;font:inherit;font-size:13px;color:var(--text-dim);cursor:pointer;}
-.settings-nav button.active{background:var(--accent-bg);color:var(--accent-strong);font-weight:600;}
-.settings-panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px 22px;}
-.settings-panel h2{margin-top:0;}
-.settings dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px;margin:0;}
-.settings dt{color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
-.settings dd{margin:0;}
-.field-row{margin-bottom:14px;}
-.field-row label{display:block;font-size:12.5px;font-weight:600;margin-bottom:5px;}
-.field-row input[type=text]{display:block;width:100%;margin-top:4px;padding:6px 9px;border:1px solid var(--border-strong);border-radius:5px;background:var(--bg);color:var(--text);font:inherit;font-size:13px;min-width:0;}
-.save-bar{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);}
-.btn{border:1px solid var(--border-strong);background:var(--panel);color:var(--text);padding:6px 14px;border-radius:5px;font:inherit;font-size:12.5px;cursor:pointer;}
-.btn:hover{background:var(--accent-bg);}
-.btn.primary{background:var(--accent-strong);border-color:var(--accent-strong);color:#fff;}
-.btn.primary:hover{opacity:.92;}
-.btn.small{padding:3px 10px;font-size:11.5px;}
-.mcp-server-list{list-style:none;margin:0 0 16px;padding:0;}
-.mcp-server-list li{border:1px solid var(--border);border-radius:6px;padding:9px 12px;margin-bottom:8px;font-size:12.5px;}
-.mcp-server-row{display:flex;align-items:center;gap:10px;}
-.mcp-server-name{font-weight:600;}
-.mcp-server-transport{color:var(--text-faint);font-size:11px;text-transform:uppercase;}
-.mcp-server-detail{flex:1;color:var(--text-dim);font-family:var(--mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.mcp-server-delete{color:var(--danger);}
-.mcp-server-delete:hover{background:var(--danger-bg);}
-.mcp-server-edit{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);}
-.mcp-server-edit label{display:block;margin-bottom:8px;font-size:12px;}
-.mcp-server-edit input[type=text]{display:block;width:100%;margin-top:4px;padding:5px 8px;border:1px solid var(--border-strong);border-radius:5px;background:var(--bg);color:var(--text);font:inherit;font-size:12.5px;}
-.mcp-server-add-transport{display:flex;gap:6px;margin-bottom:10px;}
-.mcp-server-add-transport button.active{background:var(--accent-strong);border-color:var(--accent-strong);color:#fff;}
-.mcp-server-add{border:1px dashed var(--border-strong);border-radius:6px;padding:14px;}
-.mcp-server-add h3{margin:0 0 10px;font-size:13px;}
-.mcp-server-add label{display:block;margin-bottom:8px;font-size:12.5px;}
-.mcp-server-add input[type=text]{display:block;width:100%;margin-top:4px;padding:6px 9px;border:1px solid var(--border-strong);border-radius:5px;background:var(--bg);color:var(--text);font:inherit;font-size:13px;}
+/* Vault Health pane (Vault settings). */
+.vault-health-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+.vault-health-summary{display:flex;align-items:center;gap:8px;margin:2px 0 0;}
+.vault-health-summary.health-attention .status-dot{background:var(--status-attention);box-shadow:0 0 6px -1px var(--status-attention);animation:none;}
+.vault-health-notice{border:1px solid var(--border);border-left:2px solid var(--co-success);background:var(--co-success-bg);border-radius:var(--radius-nested);padding:10px 14px;margin:0 0 1em;}
+.vault-health-notice.warning{border-left-color:var(--co-warning);background:var(--co-warning-bg);}
+.vault-health-notice ul{margin:6px 0 0;padding-left:1.2em;}
+.vault-health-repair{border:1px solid var(--border);border-radius:var(--radius-nested);padding:10px 14px;margin:0 0 1em;background:var(--bg-panel-raised);}
+.vault-health-repair.confirm{border-left:2px solid var(--co-warning);}
+.vault-health-steps{margin:6px 0 10px;padding-left:1.2em;}
+.vault-health-actions{display:flex;gap:8px;}
+.vault-health-group h3{margin:1.2em 0 0.4em;font-size:calc(12rem / 14);text-transform:uppercase;letter-spacing:var(--label-tracking);color:var(--fg-muted);}
+.vault-health-checks{list-style:none;margin:0;padding:0;}
+.vault-health-check{display:flex;gap:10px;padding:8px 0;border-top:1px solid var(--border);}
+.vault-health-check:first-child{border-top:0;}
+.vault-health-check>.ic{margin-top:3px;}
+.vault-health-check.pass>.ic{color:var(--status-ok);}
+.vault-health-check.fail>.ic{color:var(--status-attention);}
+.vault-health-check-title,.vault-health-check-message{margin:0;}
+.vault-health-check-title .badge{margin-left:6px;}

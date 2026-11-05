@@ -10,7 +10,11 @@ fn json_canvas_1_round_trip_covers_every_node_edge_and_nested_group_feature() ->
 {
     for source in [EVERY_FEATURE, GROUP_NESTING] {
         let document = CanvasDocument::try_from(source)?;
-        assert!(document.diagnostics().is_empty());
+        assert!(
+            document.diagnostics().is_empty(),
+            "`document.diagnostics()` should be empty, got {:?}",
+            document.diagnostics()
+        );
 
         let rendered = String::try_from(&document)?;
         let reparsed = CanvasDocument::try_from(rendered.as_str())?;
@@ -147,8 +151,16 @@ fn every_canvas_operation_composes_and_node_removal_cascades_edges() -> Result<(
         CanvasOperation::RemoveNode { id: "b".to_owned() },
     ])?;
 
-    assert!(document.diagnostics().is_empty());
-    assert!(document.edges().is_empty());
+    assert!(
+        document.diagnostics().is_empty(),
+        "`document.diagnostics()` should be empty, got {:?}",
+        document.diagnostics()
+    );
+    assert!(
+        document.edges().is_empty(),
+        "`document.edges()` should be empty, got {:?}",
+        document.edges()
+    );
     assert!(document.nodes().iter().any(|node| {
         node.pointer("/id") == Some(&json!("c")) && node.pointer("/text") == Some(&json!("Updated C"))
     }));

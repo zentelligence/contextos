@@ -5,9 +5,36 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 #[test]
 fn md_mutation_body_parses_a_patch_with_no_expected_hash() -> TestResult {
     let parsed: MdMutationBody = serde_json::from_str(r#"{"patch": {"status": "active"}}"#)?;
-    assert_eq!(parsed.patch.get("status").and_then(Value::as_str), Some("active"));
-    assert_eq!(parsed.expected_hash, None);
+    let MdMutationBody::Frontmatter { patch, expected_hash } = parsed else {
+        return Err("expected a Frontmatter variant".into());
+    };
+    assert_eq!(patch.get("status").and_then(Value::as_str), Some("active"));
+    assert_eq!(expected_hash, None);
     Ok(())
+}
+
+#[test]
+fn md_mutation_body_parses_a_whole_body_replacement() -> TestResult {
+    let parsed: MdMutationBody =
+        serde_json::from_str(r#"{"body": {"old": "Old text.", "new": "New text."}, "expected_hash": "abc"}"#)?;
+    let MdMutationBody::Body { body, expected_hash } = parsed else {
+        return Err("expected a Body variant".into());
+    };
+    assert_eq!(body.old, "Old text.");
+    assert_eq!(body.new, "New text.");
+    assert_eq!(expected_hash.as_deref(), Some("abc"));
+    Ok(())
+}
+
+#[test]
+fn md_mutation_body_a_payload_carrying_both_fields_resolves_to_frontmatter() {
+    // `patch` and `body` are each other's own required field: a real caller
+    // never sends both, but an untagged enum tries variants in declaration
+    // order, so a payload carrying both still parses deterministically
+    // (as `Frontmatter`, ignoring the extra `body` key) rather than
+    // panicking or picking ambiguously.
+    let result: Result<MdMutationBody, _> = serde_json::from_str(r#"{"patch": {}, "body": {"old": "", "new": ""}}"#);
+    assert!(matches!(result, Ok(MdMutationBody::Frontmatter { .. })));
 }
 
 #[test]

@@ -1,4 +1,5 @@
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use serde_json::{Map, json};
@@ -86,7 +87,7 @@ async fn catalogue_advertises_mermaid_tools_with_object_schemas() -> Result<(), 
 async fn validate_accepts_inline_source_and_reports_a_well_formed_diagram()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -109,7 +110,7 @@ async fn validate_reads_the_fenced_mermaid_block_from_a_vault_note()
         vault.path().join("diagram.md"),
         format!("# Title\n\nSome text.\n\n```mermaid\n{VALID_FLOWCHART}```\n\nMore text.\n"),
     )?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -142,7 +143,7 @@ async fn a_decoy_mermaid_fence_nested_inside_an_unrelated_fenced_block_is_skippe
              ```mermaid\n{VALID_FLOWCHART}```\n"
         ),
     )?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -160,7 +161,7 @@ async fn a_decoy_mermaid_fence_nested_inside_an_unrelated_fenced_block_is_skippe
 async fn validate_reports_a_stable_code_for_a_malformed_diagram() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -185,7 +186,7 @@ async fn validate_reports_a_stable_code_for_a_malformed_diagram() -> Result<(), 
 async fn validate_rejects_oversized_inline_source_with_the_resource_limit_code()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let oversized = "x".repeat(2 * 1024 * 1024 + 1);
 
     let result = call_tool(
@@ -211,7 +212,7 @@ async fn validate_rejects_oversized_inline_source_with_the_resource_limit_code()
 async fn render_returns_an_embedded_svg_resource_free_of_foreign_object_and_script()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -245,7 +246,7 @@ async fn render_returns_an_embedded_svg_resource_free_of_foreign_object_and_scri
 async fn render_returns_the_same_diagnostics_as_validate_on_failure()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -271,7 +272,7 @@ async fn a_note_without_a_fenced_mermaid_block_reports_the_stable_schema_code()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("plain.md"), "# Title\n\nNo diagram here.\n")?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -293,7 +294,7 @@ async fn supplying_both_path_and_source_is_a_stable_invalid_argument_error()
         vault.path().join("diagram.md"),
         format!("```mermaid\n{VALID_FLOWCHART}```\n"),
     )?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -311,7 +312,7 @@ async fn supplying_both_path_and_source_is_a_stable_invalid_argument_error()
 async fn supplying_neither_path_nor_source_is_a_stable_invalid_argument_error()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(server, "mermaid_validate", serde_json::from_value(json!({}))?).await?;
 
@@ -323,7 +324,7 @@ async fn supplying_neither_path_nor_source_is_a_stable_invalid_argument_error()
 #[tokio::test]
 async fn a_path_outside_every_configured_root_is_rejected() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -340,7 +341,7 @@ async fn a_path_outside_every_configured_root_is_rejected() -> Result<(), Box<dy
 #[tokio::test]
 async fn unknown_fields_are_rejected() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,

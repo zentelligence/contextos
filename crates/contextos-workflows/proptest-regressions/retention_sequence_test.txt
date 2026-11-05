@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cd40b7f5b44934d5d174ad12f2511c4651fe037ee5dcaf5148250873805173bd # shrinks to ops = [InstallWorkflow(4), CreateJob { wf: 1, slot: 2, release: 0 }, EditVersion { wf: 1, slot: 2, release: 1 }, InstallLibrary(0), InstallLibrary(3), InstallWorkflow(1), Validate { wf: 1, slot: 2 }, CreateJob { wf: 1, slot: 2, release: 0 }, Retire { wf: 1, slot: 2 }, InstallWorkflow(5), CreateJob { wf: 1, slot: 0, release: 1 }, InstallWorkflow(1)]

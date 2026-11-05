@@ -43,23 +43,48 @@ pub async fn mutate(
     method: Method,
     body: axum::body::Bytes,
 ) -> Response {
-    let Some(client) = state.clients.get(&state.primary_server) else {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "mcp/server-not-configured");
+    let client = match crate::routes::primary_session(&state.clients) {
+        Ok(client) => client,
+        Err(response) => return *response,
     };
     let extension = extension_of(&relative_path).to_ascii_lowercase();
     match extension.as_str() {
-        "md" => mutate_md(client, &vault_name, &relative_path, &method, &body).await,
-        "base" => mutate_base(client, &vault_name, &relative_path, &method, &body).await,
+        "md" => mutate_md(&client, &vault_name, &relative_path, &method, &body).await,
+        "base" => mutate_base(&client, &vault_name, &relative_path, &method, &body).await,
         "canvas" => method_not_allowed(),
-        _ => mutate_generic(client, &vault_name, &relative_path, &method).await,
+        _ => mutate_generic(&client, &vault_name, &relative_path, &method).await,
     }
 }
 
+/// A `.md` route's own two distinct mutation shapes: editing frontmatter
+/// (`patch`, dispatched to `frontmatter_update`) or replacing the body text
+/// verbatim (`body`, dispatched to `fs_edit_file` as a single whole-body
+/// edit). The two are structurally distinguishable (`patch` and `body` are
+/// each other's own required field), never conflated by shape.
 #[derive(Debug, Deserialize)]
-struct MdMutationBody {
-    patch: Map<String, Value>,
-    #[serde(default)]
-    expected_hash: Option<String>,
+#[serde(untagged)]
+enum MdMutationBody {
+    Frontmatter {
+        patch: Map<String, Value>,
+        #[serde(default)]
+        expected_hash: Option<String>,
+    },
+    Body {
+        body: BodyEdit,
+        #[serde(default)]
+        expected_hash: Option<String>,
+    },
+}
+
+/// A whole-body replacement: `old` is the body text the editor loaded the
+/// page with, `new` is the edited text. Submitting the full previous body
+/// (rather than a computed diff) lets this dispatch through `fs_edit_file`'s
+/// existing exact-match edit contract unchanged, with `expected_hash`
+/// providing the real conflict guard at the whole-file level.
+#[derive(Debug, Deserialize)]
+struct BodyEdit {
+    old: String,
+    new: String,
 }
 
 async fn mutate_md(
@@ -74,16 +99,38 @@ async fn mutate_md(
             let Ok(parsed) = serde_json::from_slice::<MdMutationBody>(body) else {
                 return malformed_body();
             };
-            let mut args = Map::new();
-            args.insert(
-                "path".to_owned(),
-                Value::String(format!("{vault_name}://{relative_path}")),
-            );
-            args.insert("patch".to_owned(), Value::Object(parsed.patch));
-            if let Some(hash) = parsed.expected_hash {
-                args.insert("expected_hash".to_owned(), Value::String(hash));
+            match parsed {
+                MdMutationBody::Frontmatter { patch, expected_hash } => {
+                    let mut args = Map::new();
+                    args.insert(
+                        "path".to_owned(),
+                        Value::String(format!("{vault_name}://{relative_path}")),
+                    );
+                    args.insert("patch".to_owned(), Value::Object(patch));
+                    if let Some(hash) = expected_hash {
+                        args.insert("expected_hash".to_owned(), Value::String(hash));
+                    }
+                    forward(client, "frontmatter_update", args).await
+                }
+                MdMutationBody::Body {
+                    body: edit,
+                    expected_hash,
+                } => {
+                    let mut args = Map::new();
+                    args.insert(
+                        "path".to_owned(),
+                        Value::String(format!("{vault_name}://{relative_path}")),
+                    );
+                    let mut one_edit = Map::new();
+                    one_edit.insert("old_text".to_owned(), Value::String(edit.old));
+                    one_edit.insert("new_text".to_owned(), Value::String(edit.new));
+                    args.insert("edits".to_owned(), Value::Array(vec![Value::Object(one_edit)]));
+                    if let Some(hash) = expected_hash {
+                        args.insert("expected_hash".to_owned(), Value::String(hash));
+                    }
+                    forward(client, "fs_edit_file", args).await
+                }
             }
-            forward(client, "frontmatter_update", args).await
         }
         Method::DELETE => delete_file(client, vault_name, relative_path).await,
         _ => method_not_allowed(),
@@ -91,7 +138,7 @@ async fn mutate_md(
 }
 
 /// `.base`'s own route carries two distinct mutation targets
-/// (`web-routes.md` §2): editing a matched row's content
+///: editing a matched row's content
 /// (`target = "row"`) dispatches `frontmatter_update` against that row's
 /// own note path, never the `.base` file's path; editing the view
 /// definition itself (`target = "definition"`) dispatches `base_apply`
@@ -154,7 +201,7 @@ async fn mutate_base(
         // A `.base` route's own DELETE removes a filter/view/formula from
         // the definition (`base_apply`'s `remove_*` operations), never a
         // matched note: deleting a note is an operation on that note's own
-        // route instead (`web-routes.md` §2).
+        // route instead.
         Method::DELETE => {
             let Ok(parsed) = serde_json::from_slice::<DefinitionOnlyBody>(body) else {
                 return malformed_body();
@@ -193,8 +240,7 @@ async fn apply_base_definition(
 
 /// Any file type with no dedicated mutation path (`.mermaid`, or any other
 /// extension) still accepts `DELETE`, since `fs_delete_file` operates on
-/// any file (`web-routes.md` §2: "`fs_delete_file` for `DELETE` on any
-/// file"); `POST`/`PATCH`/`PUT` have no defined target here and are `405`.
+/// any file; `POST`/`PATCH`/`PUT` have no defined target here and are `405`.
 async fn mutate_generic(client: &McpClient, vault_name: &str, relative_path: &str, method: &Method) -> Response {
     match *method {
         Method::DELETE => delete_file(client, vault_name, relative_path).await,
@@ -218,7 +264,7 @@ async fn delete_file(client: &McpClient, vault_name: &str, relative_path: &str) 
 async fn forward(client: &McpClient, tool_name: &str, args: Map<String, Value>) -> Response {
     match client.call_tool(tool_name.to_owned(), args).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
-        Err(McpCallError::Unreachable { .. }) => unreachable(),
+        Err(McpCallError::Unreachable { .. } | McpCallError::Refused { .. }) => unreachable(),
     }
 }
 

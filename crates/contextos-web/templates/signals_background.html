@@ -1,0 +1,17 @@
+<section id="signals-background" class="panel signals-region" aria-labelledby="signals-background-heading" hx-get="{{ view.refresh_href }}" hx-trigger="sse:reload" hx-target="this" hx-swap="outerHTML">
+  <div class="panel-header"><h2 id="signals-background-heading">Background activity</h2></div>
+{% if view.unreadable %}
+  <p class="hint error">Events could not be read just now.</p>
+{% else if view.groups.is_empty() %}
+  <p class="hint">No background activity has been recorded.</p>
+{% else %}
+{% for group in view.groups %}
+  <h3 class="signals-group" title="{{ group.kind }}">{{ group.label }} <span class="hint">{{ group.total }}</span></h3>
+  <ul class="signals-list">
+{% for line in group.lines %}
+    {% include "signal_event.html" %}
+{% endfor %}
+  </ul>
+{% endfor %}
+{% endif %}
+</section>

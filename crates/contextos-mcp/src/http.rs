@@ -2,26 +2,38 @@
 //!
 //! This module builds an [`axum::Router`] that mounts the rmcp streamable
 //! HTTP service behind two request-level guards: bearer authentication and a
-//! request body cap. The router nests exactly one `ContextOsServer`
+//! request body cap. rmcp's own Host check, its defence against DNS
+//! rebinding, stays on for a loopback bind, where no token is required, and
+//! is off for a non-loopback bind, where the token is. The router nests exactly one `ContextOsServer`
 //! instance (the same one the stdio transport serves) so indexes, Git
 //! state, and per-root write locks stay unified across transports.
 //!
-//! The vendored `rmcp = "=2.2.0"` streamable-HTTP server negotiates protocol
-//! revisions up to and including `2026-07-28` (see
-//! [`rmcp::model::ProtocolVersion::V_2026_07_28`]), which is the minimum
-//! protocol revision this server supports, even though the crate's own
-//! `LATEST` constant predates it.
+//! rmcp serves MCP protocol revision 2026-07-28 here, where every request
+//! carries its revision in `_meta` and mirrors it, with its method and tool
+//! name, into the `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`
+//! headers. rmcp validates those headers against the body. A request without
+//! the version header is a legacy one, which rmcp serves as 2025-03-26, the
+//! revision the MCP specification lets a server assume for it; legacy
+//! clients are supported only as far as rmcp supports them.
 //!
-//! The server runs the streamable HTTP transport in **stateless,
-//! JSON-response mode** (`stateful_mode: false`, `json_response: true`).
-//! Session state in the MCP sense would be redundant here: every tool call
-//! already goes through the one shared `ContextOsServer`, whose Arc-backed
-//! indexes, Git state, and write coordinators are the only state that
-//! matters. Stateless mode also keeps every HTTP exchange a plain
-//! request/response with a JSON body, which is both simpler to test through
-//! `tower::ServiceExt::oneshot` and an explicitly documented option of the
-//! MCP Streamable HTTP specification (it avoids SSE framing overhead for
-//! simple request/response tool calls).
+//! The server runs the streamable HTTP transport **without legacy sessions
+//! and with SSE responses** (`legacy_session_mode: false`,
+//! `json_response: false`). Revision 2026-07-28 has no sessions at all, and
+//! for a legacy client session state would be redundant here: every tool
+//! call already goes through the one shared `ContextOsServer`, whose
+//! Arc-backed indexes, Git state, and write coordinators are the only state
+//! that matters. Each POST is answered with its own short event stream, so a
+//! tool's progress notifications (`query_index_rebuild` streams them
+//! whenever the request carries a progress token) arrive ahead of its
+//! result.
+//!
+//! SSE keep-alive comments stay off (`sse_keep_alive: None`). Each response
+//! stream ends as soon as its result is sent, and the longest silent call,
+//! a semantic rebuild for a client without a progress token, is bounded by
+//! its rebuild budget (25 seconds unless configured). Clients reach this
+//! server directly over loopback or a local network rather than through an
+//! idle-timeout proxy; a deployment that adds such a proxy needs a
+//! keep-alive shorter than the proxy's idle timeout.
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -48,8 +60,7 @@ pub const MOUNT_PATH: &str = "/mcp";
 /// This is the "validate" half of a deliberate validate-then-bind seam: it
 /// only inspects the configured bind address and token, so tests can assert
 /// the refusal without ever asking the operating system to listen on a
-/// non-loopback address. [`build_router`] and the caller's own
-/// `TcpListener::bind` are the "bind" half.
+/// non-loopback address. [`listen`] is the "bind" half.
 ///
 /// # Errors
 ///
@@ -67,6 +78,30 @@ pub fn validate_bind(bind: &str, token: &str) -> Result<(), HttpTransportError> 
     Ok(())
 }
 
+/// Validates `bind` and `token` with [`validate_bind`], then listens on `bind`.
+///
+/// Only one process on a host can listen on an address, so a second `contextos` started with `--http` on the same
+/// address is told that another process holds it, and how to find out which, rather than being shown the operating
+/// system's bare error.
+///
+/// # Errors
+///
+/// Returns any [`validate_bind`] refusal, [`HttpTransportError::AddressInUse`] when another process already listens on
+/// `bind`, or [`HttpTransportError::Listen`] when the operating system refuses it for another reason.
+pub async fn listen(bind: &str, token: &str) -> Result<tokio::net::TcpListener, HttpTransportError> {
+    validate_bind(bind, token)?;
+    tokio::net::TcpListener::bind(bind).await.map_err(|source| {
+        if source.kind() == std::io::ErrorKind::AddrInUse {
+            HttpTransportError::AddressInUse { bind: bind.to_owned() }
+        } else {
+            HttpTransportError::Listen {
+                bind: bind.to_owned(),
+                source,
+            }
+        }
+    })
+}
+
 /// Builds the authenticated streamable HTTP router for one shared
 /// `ContextOsServer` instance.
 ///
@@ -81,7 +116,9 @@ pub fn validate_bind(bind: &str, token: &str) -> Result<(), HttpTransportError> 
 /// # Errors
 ///
 /// Returns [`HttpTransportError::BodyLimitOverflow`] when `max_body_kb`
-/// overflows a byte count on this platform.
+/// overflows a byte count on this platform, or
+/// [`HttpTransportError::InvalidBindAddress`] when `bind` is not a
+/// `host:port` socket address.
 pub fn build_router(server: ContextOsServer, config: &HttpConfig) -> Result<Router, HttpTransportError> {
     let max_body_bytes = usize::try_from(
         config
@@ -96,13 +133,25 @@ pub fn build_router(server: ContextOsServer, config: &HttpConfig) -> Result<Rout
         max_body_bytes,
     });
 
+    let mut rmcp_config = StreamableHttpServerConfig::default();
+    if serves_other_hosts(config)? {
+        // rmcp's Host check (loopback names only, by default) is its defence against DNS rebinding,
+        // which matters where no token is required. On a non-loopback bind a bearer token is
+        // mandatory and a rebinding page cannot know it, so the check would only refuse every client
+        // that reaches the server by its network address.
+        rmcp_config = rmcp_config.with_allowed_hosts(Vec::<String>::new());
+    }
     let session_manager = Arc::new(LocalSessionManager::default());
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         session_manager,
-        StreamableHttpServerConfig::default()
-            .with_stateful_mode(false)
-            .with_json_response(true)
+        rmcp_config
+            .with_legacy_session_mode(false)
+            .with_json_response(false)
+            // rmcp enforces a body limit of its own (4 MiB by default); the
+            // operator's `max_body_kb`, already enforced above, is the one
+            // limit, so rmcp is given the same value.
+            .with_max_request_body_bytes(max_body_bytes)
             .with_sse_keep_alive(None),
     );
 
@@ -114,6 +163,18 @@ pub fn build_router(server: ContextOsServer, config: &HttpConfig) -> Result<Rout
         })))
 }
 
+/// Whether `config` binds beyond the loopback interface behind a bearer token, so that clients
+/// reach the server by names and addresses other than the loopback ones.
+fn serves_other_hosts(config: &HttpConfig) -> Result<bool, HttpTransportError> {
+    let address = config
+        .bind
+        .parse::<SocketAddr>()
+        .map_err(|_source| HttpTransportError::InvalidBindAddress {
+            bind: config.bind.clone(),
+        })?;
+    Ok(!address.ip().is_loopback() && !config.token.is_empty())
+}
+
 /// Typed startup and configuration failures for the HTTP transport.
 #[derive(Debug, Error)]
 pub enum HttpTransportError {
@@ -122,13 +183,28 @@ pub enum HttpTransportError {
     /// MCP server reachable beyond the local host would let any peer on that
     /// interface read and write the vault.
     #[error(
-        "refusing to start the HTTP transport: bind address {bind} is not loopback and no bearer token is configured; set [server.http].token in the configuration file, export CONTEXTOS_MCP_TOKEN, or bind to a loopback address such as 127.0.0.1"
+        "refusing to start the HTTP transport: bind address {bind} is not loopback and no bearer token is configured; set [server.http] token (the token itself) or token_env (the name of a variable holding it) in the configuration file, export CONTEXTOS_MCP_TOKEN, or bind to a loopback address such as 127.0.0.1"
     )]
     NonLoopbackBindWithoutToken { bind: String },
     /// The configured bind string is not a parseable `host:port` socket
     /// address.
-    #[error("HTTP bind address is invalid; expected a host:port socket address such as 127.0.0.1:7331, got {bind}")]
+    #[error("HTTP bind address is invalid; expected a host:port socket address such as 127.0.0.1:3737, got {bind}")]
     InvalidBindAddress { bind: String },
+    /// Another process already listens on the bind address.
+    #[error(
+        "another process is already serving on {bind}, most likely the contextos HTTP service or another contextos \
+         started with --http; run `contextos service status` to check the service, or pass `--http` with another \
+         address"
+    )]
+    AddressInUse { bind: String },
+    /// The operating system refused to listen on the bind address for a reason other than another process holding
+    /// it.
+    #[error("could not listen on {bind}: {source}")]
+    Listen {
+        bind: String,
+        #[source]
+        source: std::io::Error,
+    },
     /// `max_body_kb` overflows a byte count on this platform.
     #[error("configured server.http.max_body_kb overflows a byte count")]
     BodyLimitOverflow,
@@ -235,7 +311,7 @@ struct AuthErrorBody {
 const AUTH_ERROR_BODY: AuthErrorBody = AuthErrorBody {
     code: "auth/missing-token",
     message: "Authentication failed: the request did not carry a valid bearer token.",
-    remediation: "Send 'Authorization: Bearer <token>' using the token configured at server.http.token or the CONTEXTOS_MCP_TOKEN environment variable.",
+    remediation: "Send 'Authorization: Bearer <token>' using the token configured at server.http.token, the variable server.http.token_env names, or the CONTEXTOS_MCP_TOKEN environment variable.",
 };
 
 fn unauthorized_response() -> Response {
@@ -292,71 +368,5 @@ fn content_length_exceeds(headers: &HeaderMap, max_bytes: usize) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{AuthGuard, HttpTransportError, bearer_token, validate_bind};
-
-    #[test]
-    fn bearer_token_matches_scheme_case_insensitively() {
-        assert_eq!(bearer_token("Bearer abc"), Some("abc"));
-        assert_eq!(bearer_token("bearer abc"), Some("abc"));
-        assert_eq!(bearer_token("BEARER   abc  "), Some("abc"));
-        assert_eq!(bearer_token("Basic abc"), None);
-        assert_eq!(bearer_token("abc"), None);
-    }
-
-    #[test]
-    fn auth_guard_without_a_token_accepts_every_request() {
-        let guard = AuthGuard::from_token("");
-        let headers = axum::http::HeaderMap::new();
-        assert!(guard.reject(&headers).is_none());
-    }
-
-    #[test]
-    fn auth_guard_rejects_a_wrong_token() {
-        let guard = AuthGuard::from_token("correct-token");
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            axum::http::HeaderValue::from_static("Bearer wrong-token"),
-        );
-        assert!(guard.reject(&headers).is_some());
-    }
-
-    #[test]
-    fn auth_guard_accepts_the_configured_token() {
-        let guard = AuthGuard::from_token("correct-token");
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            axum::http::header::AUTHORIZATION,
-            axum::http::HeaderValue::from_static("Bearer correct-token"),
-        );
-        assert!(guard.reject(&headers).is_none());
-    }
-
-    #[test]
-    fn validate_bind_accepts_loopback_without_a_token() -> Result<(), Box<dyn std::error::Error>> {
-        validate_bind("127.0.0.1:7331", "")?;
-        Ok(())
-    }
-
-    #[test]
-    fn validate_bind_refuses_non_loopback_without_a_token() {
-        let result = validate_bind("0.0.0.0:7331", "");
-        assert!(matches!(
-            result,
-            Err(HttpTransportError::NonLoopbackBindWithoutToken { .. })
-        ));
-    }
-
-    #[test]
-    fn validate_bind_accepts_non_loopback_with_a_token() -> Result<(), Box<dyn std::error::Error>> {
-        validate_bind("0.0.0.0:7331", "configured-token")?;
-        Ok(())
-    }
-
-    #[test]
-    fn validate_bind_rejects_an_unparseable_bind() {
-        let result = validate_bind("not-a-socket-address", "");
-        assert!(matches!(result, Err(HttpTransportError::InvalidBindAddress { .. })));
-    }
-}
+#[path = "http_test.rs"]
+mod tests;

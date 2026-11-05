@@ -1,0 +1,50 @@
+<div class="agents-list" hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-swap="outerHTML">
+  <div class="agents-list-header page-actions">
+    <div class="agents-state-filter">
+      <a class="btn small {% if state_filter.all %}primary{% endif %}" href="{{ urls.agents() }}">All</a>
+      <a class="btn small {% if state_filter.working %}primary{% endif %}" href="{{ urls.agents_in_state("working") }}">Working</a>
+      <a class="btn small {% if state_filter.blocked %}primary{% endif %}" href="{{ urls.agents_in_state("blocked") }}">Blocked</a>
+      <a class="btn small {% if state_filter.awaiting_input %}primary{% endif %}" href="{{ urls.agents_in_state("awaiting-input") }}">Awaiting input</a>
+      <a class="btn small {% if state_filter.idle %}primary{% endif %}" href="{{ urls.agents_in_state("idle") }}">Idle</a>
+    </div>
+  </div>
+{% if groups.is_empty() %}
+  <p class="hint">No agents are configured in <code>.contextos/agents.toml</code> yet.</p>
+{% else %}
+{% for group in groups %}
+  <section class="agents-domain-group">
+    <h3>{{ group.domain }}</h3>
+    <div class="card-grid">
+    {% for agent in group.agents %}
+      <div class="row-card" data-state="{{ agent.state_label }}">
+        <h4>{{ agent.name }}{% if agent.chief_of_staff %} <span class="status-chip">chief of staff</span>{% endif %}</h4>
+        <dl>
+          <dt>State</dt><dd><span class="status-chip {{ agent.state_label }}">{{ agent.state_label }}</span></dd>
+        </dl>
+      {% if let Some(live) = agent.liveness %}
+        <dl class="agent-liveness">
+        {% if let Some(finish) = live.last_finish %}
+          <dt>Last run</dt><dd><time datetime="{{ finish.iso }}">{{ finish.time }}</time> <span class="status-chip {{ finish.colour }}">{{ finish.severity }}</span></dd>
+        {% endif %}
+          <dt>Claims</dt><dd>{{ live.claimed }} task{% if live.claimed != 1 %}s{% endif %}</dd>
+        </dl>
+        {% for run in live.overdue %}
+        <p class="agent-run-overdue"><span class="status-chip colour-amber">Run {{ run.run_id }} has not finished</span> <span class="hint">started {{ run.time }}</span></p>
+        {% endfor %}
+      {% endif %}
+      {% if !agent.lapsed.is_empty() %}
+        <ul class="agent-lapsed">
+        {% for lapse in agent.lapsed %}
+          <li>Claim lapsed on <a href="{{ lapse.href }}">{{ lapse.task_id }}</a> <span class="hint">{{ lapse.time }}</span></li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+        <a class="btn small" href="{{ agent.detail_href }}">Details <span class="ic ic-open" aria-hidden="true"></span></a>
+      </div>
+    {% endfor %}
+    </div>
+  </section>
+{% endfor %}
+{% endif %}
+  <p class="hint">Configured at <code>.contextos/agents.toml</code>; state is set by agents themselves via <code>agent_state_change</code>.</p>
+</div>

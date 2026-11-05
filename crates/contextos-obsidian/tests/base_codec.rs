@@ -7,7 +7,11 @@ const EVERY_FEATURE: &str = include_str!("../../../fixtures/obsidian-formats/bas
 fn base_round_trip_preserves_every_schema_feature_and_expression_value() -> Result<(), Box<dyn std::error::Error>> {
     let mut document = BaseDocument::try_from(EVERY_FEATURE)?;
 
-    assert!(document.diagnostics().is_empty());
+    assert!(
+        document.diagnostics().is_empty(),
+        "`document.diagnostics()` should be empty, got {:?}",
+        document.diagnostics()
+    );
     document.apply(vec![BaseOperation::AddFormula {
         name: "torture".to_owned(),
         expression: r#"if(title == "O'Reilly: #1", "[ready]", "a,b {c}")"#.to_owned(),
@@ -15,7 +19,11 @@ fn base_round_trip_preserves_every_schema_feature_and_expression_value() -> Resu
     let rendered = String::try_from(&document)?;
     let reparsed = BaseDocument::try_from(rendered.as_str())?;
 
-    assert!(reparsed.diagnostics().is_empty());
+    assert!(
+        reparsed.diagnostics().is_empty(),
+        "`reparsed.diagnostics()` should be empty, got {:?}",
+        reparsed.diagnostics()
+    );
     assert_eq!(reparsed.definition(), document.definition());
     assert_eq!(
         reparsed
@@ -97,7 +105,11 @@ fn every_base_operation_composes_in_one_valid_transaction() -> Result<(), Box<dy
         },
     ])?;
 
-    assert!(document.diagnostics().is_empty());
+    assert!(
+        document.diagnostics().is_empty(),
+        "`document.diagnostics()` should be empty, got {:?}",
+        document.diagnostics()
+    );
     assert_eq!(document.definition().get("formulas"), Some(&json!({})));
     assert_eq!(
         document.definition().get("views"),
@@ -131,7 +143,11 @@ views:
     filters: 'formula["total cost"] > 0'
 "#,
     )?;
-    assert!(document.diagnostics().is_empty());
+    assert!(
+        document.diagnostics().is_empty(),
+        "`document.diagnostics()` should be empty, got {:?}",
+        document.diagnostics()
+    );
     let before = document.clone();
 
     let result = document.apply(vec![BaseOperation::RemoveFormula {
@@ -176,7 +192,11 @@ fn remove_property_and_remove_summary_remove_the_named_entry_and_leave_others_un
         },
     ])?;
 
-    assert!(document.diagnostics().is_empty());
+    assert!(
+        document.diagnostics().is_empty(),
+        "`document.diagnostics()` should be empty, got {:?}",
+        document.diagnostics()
+    );
     assert_eq!(
         document.definition().get("properties"),
         Some(&json!({"priority": {"displayName": "Priority"}}))
@@ -253,7 +273,11 @@ views:
 "#,
     )?;
 
-    assert!(document.diagnostics().is_empty());
+    assert!(
+        document.diagnostics().is_empty(),
+        "`document.diagnostics()` should be empty, got {:?}",
+        document.diagnostics()
+    );
     Ok(())
 }
 

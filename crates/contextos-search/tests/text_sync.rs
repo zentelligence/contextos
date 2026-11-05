@@ -32,6 +32,7 @@ fn service_at(
 ) -> Result<TextSearchService<TantivyIndex>, Box<dyn std::error::Error>> {
     let index = TantivyIndex::try_from(TextIndexConfig {
         directory: vault.path().join(".contextos").join("index"),
+        writer_lock_wait: TextIndexConfig::DEFAULT_WRITER_LOCK_WAIT,
     })?;
     let root = VaultRoot::try_from(VaultRootInput {
         path: vault.path().to_path_buf(),
@@ -130,7 +131,7 @@ fn update_handles_move_and_delete_events() -> Result<(), Box<dyn std::error::Err
     apply(&service, &write_event(OpKind::Delete, vec![b_path]))?;
 
     let gone = service.index().query(&plain_query("widget", &no_fields))?;
-    assert!(gone.is_empty());
+    assert!(gone.is_empty(), "`gone` should be empty, got {gone:?}");
     Ok(())
 }
 
@@ -155,7 +156,7 @@ fn external_edit_bypassing_events_is_reindexed_on_refresh() -> Result<(), Box<dy
     assert_eq!(fresh.len(), 1);
     assert_eq!(fresh[0].path, "notes/item.md");
     let stale = service.index().query(&plain_query("gadget", &no_fields))?;
-    assert!(stale.is_empty());
+    assert!(stale.is_empty(), "`stale` should be empty, got {stale:?}");
     Ok(())
 }
 
@@ -191,7 +192,7 @@ fn refresh_reconciles_new_and_deleted_files() -> Result<(), Box<dyn std::error::
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].path, "notes/new.md");
     let stale = service.index().query(&plain_query("stale", &no_fields))?;
-    assert!(stale.is_empty());
+    assert!(stale.is_empty(), "`stale` should be empty, got {stale:?}");
     Ok(())
 }
 

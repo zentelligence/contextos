@@ -1,4 +1,4 @@
-//! `.canvas` SVG rendering (`web-rendering.md` §3): a JSON Canvas 1.0
+//! `.canvas` SVG rendering: a JSON Canvas 1.0
 //! document (`obsidian:json-canvas` skill), laid out to SVG using each
 //! node's own `x`/`y`/`width`/`height`. No auto-layout runs at any point:
 //! every coordinate used is the one the file itself already carries.
@@ -9,9 +9,15 @@
 //! instead of calling [`render_svg`] at all; this module assumes it is
 //! only ever asked to lay out an already-diagnostic-free node/edge set.
 
+use std::collections::HashMap;
+
+use contextos_markdown::{FileKind, Fragment, LinkDestination, LinkRouter, LinkTarget};
 use serde::Deserialize;
 
+use crate::mcp_client::McpClient;
+use crate::note_render::render_texts;
 use crate::rendering::escape_html;
+use crate::vault_content::read_expanded_text;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -124,52 +130,121 @@ pub struct CanvasEdge {
 }
 
 /// Maps a JSON Canvas preset colour (`"1"` to `"6"`) or an already-literal
-/// hex value to a CSS colour, per the `obsidian:json-canvas` skill's
-/// documented preset palette. Preset-to-actual-colour mapping is a
-/// `contextos-web` UI theme decision (`web-rendering.md` §3), not part of
-/// the format itself.
+/// hex value to a CSS colour. The preset-to-actual-colour mapping is a
+/// `contextos-web` UI theme decision: the JSON Canvas presets carry a conventional hue meaning (1 red,
+/// 2 orange, 3 yellow, 4 green, 5 cyan, 6 purple), drawn here from the
+/// design system's own hue family. These are fixed values in both skins,
+/// consistent with the exemption of diagram interiors from the automated
+/// contrast check: a canvas node's colour is file-authored data, not
+/// chrome `contextos-web` themes.
 fn resolve_color(color: Option<&str>, fallback: &str) -> String {
     match color {
         None => fallback.to_owned(),
-        Some("1") => "#a13a3a".to_owned(),
-        Some("2") => "#a5651f".to_owned(),
-        Some("3") => "#a68a1f".to_owned(),
-        Some("4") => "#5b6b4f".to_owned(),
-        Some("5") => "#3f7a8a".to_owned(),
-        Some("6") => "#5a4f8a".to_owned(),
+        Some("1") => "#F4586B".to_owned(),
+        Some("2") => "#F5B44D".to_owned(),
+        Some("3") => "#EBCB5E".to_owned(),
+        Some("4") => "#5FE393".to_owned(),
+        Some("5") => "#43D9C6".to_owned(),
+        Some("6") => "#B49CFB".to_owned(),
         Some(hex) => hex.to_owned(),
     }
 }
 
-/// Renders `text` (a canvas text node's own Markdown content,
-/// `web-rendering.md` §3) to HTML. Reuses only the synchronous subset of
-/// the stage-1 Markdown pipeline (general Markdown, triple-colon fences,
-/// callouts): a canvas text node's own wikilinks are not resolved in v1,
-/// rendering instead as their literal bracketed text, a deliberate,
-/// disclosed scope limit rather than threading an MCP round trip through
-/// every node of every rendered canvas.
-fn render_node_text(text: &str) -> String {
-    let fences_extracted = super::fences::extract(text);
-    let callouts_extracted = super::callouts::extract(&fences_extracted.text);
-    let mut html = super::markdown::html_from_commonmark(&callouts_extracted.text);
-    for (index, block) in callouts_extracted.blocks.iter().enumerate() {
-        let body_html = super::markdown::html_from_commonmark(&block.body);
-        let rendered = super::callouts::render(&block.open, &body_html);
-        html = html.replace(&format!("<p>{}</p>", super::callouts::placeholder(index)), &rendered);
+/// What a canvas's nodes show that needs the vault, by node id: each text node's rendered Markdown, and where each file
+/// node goes (`None` when no screen shows its file, or it names none).
+#[derive(Clone, Debug, Default)]
+pub struct CanvasContent {
+    pub texts: HashMap<String, String>,
+    pub files: HashMap<String, Option<String>>,
+}
+
+/// The JSON Canvas fields this module reads from the expanded canvas: a node's id, kind, and the text or file it holds.
+#[derive(Debug, Deserialize)]
+struct ExpandedNodes {
+    #[serde(default)]
+    nodes: Vec<ExpandedNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExpandedNode {
+    id: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    subpath: Option<String>,
+}
+
+/// Reads the canvas at `path` with its links expanded by the server, renders every text node through the note
+/// renderer (sharing what they need), and routes every file node, so the board's links work as a note's do.
+pub async fn canvas_content(client: &McpClient, vault_name: &str, path: &str) -> CanvasContent {
+    let expanded = read_expanded_text(client, &format!("{vault_name}://{path}"))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|read| serde_json::from_str::<ExpandedNodes>(&read.text).ok())
+        .map(|parsed| parsed.nodes)
+        .unwrap_or_default();
+    let texts: Vec<(&str, &str)> = expanded
+        .iter()
+        .filter_map(|node| node.text.as_deref().map(|text| (node.id.as_str(), text)))
+        .collect();
+    let files: Vec<(&ExpandedNode, LinkTarget)> = expanded
+        .iter()
+        .filter_map(|node| {
+            node.file.as_deref().map(|file| {
+                (
+                    node,
+                    LinkTarget::from(LinkDestination {
+                        text: file,
+                        percent_encoded: false,
+                    }),
+                )
+            })
+        })
+        .collect();
+    let file_paths: Vec<String> = files
+        .iter()
+        .filter_map(|(_, target)| match target {
+            LinkTarget::Vault { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    let rendered = render_texts(
+        client,
+        vault_name,
+        &texts.iter().map(|(_, text)| *text).collect::<Vec<_>>(),
+        &file_paths,
+    )
+    .await;
+    let mut content = CanvasContent::default();
+    for ((id, _), note) in texts.iter().zip(rendered.notes) {
+        content.texts.insert((*id).to_owned(), note.html);
     }
-    for (index, block) in fences_extracted.blocks.iter().enumerate() {
-        let inner_html = super::markdown::html_from_commonmark(&block.inner);
-        let rendered = super::fences::render(&block.open, &inner_html);
-        html = html.replace(&format!("<p>{}</p>", super::fences::placeholder(index)), &rendered);
+    for (node, target) in files {
+        let href = match target {
+            LinkTarget::Vault { path, .. } if FileKind::from(path.as_str()).is_page() => {
+                let anchor = node
+                    .subpath
+                    .as_deref()
+                    .and_then(|subpath| subpath.strip_prefix('#'))
+                    .map(|fragment| Fragment::from(fragment.to_owned()).anchor());
+                rendered.routes.page(&path, anchor.as_deref())
+            }
+            LinkTarget::Vault { path, .. } => Some(rendered.routes.file(&path)),
+            _ => None,
+        };
+        content.files.insert(node.id.clone(), href);
     }
-    html
+    content
 }
 
 /// Renders a full `.canvas` document to SVG. `viewport` is the SVG's own
 /// `width`/`height` attributes (the rendered frame's CSS box, not the
 /// canvas's content bounds, which the returned `viewBox` covers instead).
 #[must_use]
-pub fn render_svg(nodes: &[CanvasNode], edges: &[CanvasEdge], vault_name: &str) -> String {
+pub fn render_svg(nodes: &[CanvasNode], edges: &[CanvasEdge], content: &CanvasContent) -> String {
     let (min_x, min_y, max_x, max_y) = bounds(nodes);
     let padding = 40.0;
     let view_box = format!(
@@ -182,7 +257,7 @@ pub fn render_svg(nodes: &[CanvasNode], edges: &[CanvasEdge], vault_name: &str) 
 
     let mut body = String::new();
     for node in nodes {
-        body.push_str(&render_node(node, vault_name));
+        body.push_str(&render_node(node, content));
     }
     for edge in edges {
         if let Some(svg) = render_edge(edge, nodes) {
@@ -216,12 +291,12 @@ fn bounds(nodes: &[CanvasNode]) -> (f64, f64, f64, f64) {
     (min_x, min_y, max_x, max_y)
 }
 
-fn render_node(node: &CanvasNode, vault_name: &str) -> String {
+fn render_node(node: &CanvasNode, content: &CanvasContent) -> String {
     let (x, y, w, h) = node.geometry();
     let id = escape_html(node.id());
     match node {
         CanvasNode::Group { label, background, .. } => {
-            let stroke = resolve_color(node.color(), "#b8b2a5");
+            let stroke = resolve_color(node.color(), "#2A3348");
             let fill = background.clone().unwrap_or_else(|| "none".to_owned());
             let label_html = label
                 .as_ref()
@@ -241,8 +316,12 @@ fill=\"{fill}\" stroke=\"{stroke}\" stroke-dasharray=\"4 3\"/>{label_html}</g>"
             )
         }
         CanvasNode::Text { text, .. } => {
-            let stroke = resolve_color(node.color(), "#b8b2a5");
-            let content = render_node_text(text);
+            let stroke = resolve_color(node.color(), "#2A3348");
+            let content = content
+                .texts
+                .get(node.id())
+                .cloned()
+                .unwrap_or_else(|| format!("<p>{}</p>", escape_html(text)));
             format!(
                 "<g class=\"canvas-node canvas-node-text\" data-id=\"{id}\">\
 <rect class=\"node-bg\" x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" \
@@ -252,25 +331,28 @@ fill=\"none\" stroke=\"{stroke}\"/>\
 </foreignObject></g>"
             )
         }
-        CanvasNode::File { file, subpath, .. } => {
-            let stroke = resolve_color(node.color(), "#b8b2a5");
-            let href = match subpath {
-                Some(sub) => format!("/{vault_name}/{file}#{sub}"),
-                None => format!("/{vault_name}/{file}"),
+        CanvasNode::File { file, .. } => {
+            let stroke = resolve_color(node.color(), "#2A3348");
+            let (tx, ty) = (x + w / 2.0, y + h / 2.0);
+            let label = escape_html(file);
+            let text = match content.files.get(node.id()).cloned().flatten() {
+                Some(href) => format!(
+                    "<a href=\"{}\"><text x=\"{tx}\" y=\"{ty}\" class=\"canvas-node-text\">{label}</text></a>",
+                    escape_html(&href)
+                ),
+                // No screen shows the file, or it names none: its name is shown without a link.
+                None => format!(
+                    "<text x=\"{tx}\" y=\"{ty}\" class=\"canvas-node-text canvas-file-unavailable\">{label}</text>"
+                ),
             };
             format!(
                 "<g class=\"canvas-node canvas-node-file\" data-id=\"{id}\">\
 <rect class=\"node-bg\" x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" \
-fill=\"none\" stroke=\"{stroke}\"/>\
-<a href=\"{href}\"><text x=\"{tx}\" y=\"{ty}\" class=\"canvas-node-text\">{label}</text></a></g>",
-                href = escape_html(&href),
-                tx = x + w / 2.0,
-                ty = y + h / 2.0,
-                label = escape_html(file),
+fill=\"none\" stroke=\"{stroke}\"/>{text}</g>"
             )
         }
         CanvasNode::Link { url, .. } => {
-            let stroke = resolve_color(node.color(), "#b8b2a5");
+            let stroke = resolve_color(node.color(), "#2A3348");
             format!(
                 "<g class=\"canvas-node canvas-node-link\" data-id=\"{id}\">\
 <rect class=\"node-bg\" x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" \
@@ -299,7 +381,7 @@ fn render_edge(edge: &CanvasEdge, nodes: &[CanvasNode]) -> Option<String> {
     } else {
         " marker-end=\"url(#canvas-arrow)\"".to_owned()
     };
-    let color = resolve_color(edge.color.as_deref(), "#9a9488");
+    let color = resolve_color(edge.color.as_deref(), "#727A92");
     let label_html = edge
         .label
         .as_ref()

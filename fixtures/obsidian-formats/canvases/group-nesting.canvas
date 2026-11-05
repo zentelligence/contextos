@@ -1,33 +1,57 @@
 {
   "nodes": [
     {
-      "id": "3000000000000001",
-      "type": "group",
+      "id": "leaf-a",
+      "type": "text",
       "x": 0,
       "y": 0,
-      "width": 800,
-      "height": 600,
-      "label": "Outer"
+      "width": 200,
+      "height": 100,
+      "text": "Leaf A"
     },
     {
-      "id": "3000000000000002",
-      "type": "group",
-      "x": 40,
-      "y": 60,
-      "width": 400,
-      "height": 300,
-      "label": "Inner",
-      "backgroundStyle": "repeat"
-    },
-    {
-      "id": "3000000000000003",
+      "id": "leaf-b",
       "type": "text",
-      "x": 80,
-      "y": 100,
-      "width": 240,
-      "height": 120,
-      "text": "Nested member"
+      "x": 250,
+      "y": 0,
+      "width": 200,
+      "height": 100,
+      "text": "Leaf B"
+    },
+    {
+      "id": "inner-group",
+      "type": "group",
+      "x": -40,
+      "y": -40,
+      "width": 530,
+      "height": 180,
+      "label": "Inner"
+    },
+    {
+      "id": "sibling",
+      "type": "text",
+      "x": 0,
+      "y": 300,
+      "width": 200,
+      "height": 100,
+      "text": "Outer sibling"
+    },
+    {
+      "id": "outer-group",
+      "type": "group",
+      "x": -80,
+      "y": -80,
+      "width": 610,
+      "height": 520,
+      "label": "Outer",
+      "backgroundStyle": "ratio"
     }
   ],
-  "edges": []
+  "edges": [
+    {
+      "id": "leaf-a-leaf-b",
+      "fromNode": "leaf-a",
+      "toNode": "leaf-b"
+    }
+  ]
 }

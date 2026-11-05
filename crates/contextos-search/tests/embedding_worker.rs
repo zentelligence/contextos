@@ -143,6 +143,7 @@ fn sqlite_store(directory: &tempfile::TempDir) -> Result<SqliteVecStore, Box<dyn
     Ok(SqliteVecStore::try_from(SqliteVecConfig {
         path: directory.path().join("vectors.db"),
         dimension: 4,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?)
 }
 

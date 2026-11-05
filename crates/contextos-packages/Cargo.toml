@@ -1,0 +1,39 @@
+[package]
+name = "contextos-packages"
+description = "Lays out and checks installed workflow package releases in a package store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `ContentHash` (per-file hashes) and `Clock` (install and removal times).
+contextos-core = { path = "../contextos-core" }
+# The host store's adapter (`host_io.rs`): atomic host writes, link and reparse point detection, and the advisory
+# host lock.
+contextos-fs = { path = "../contextos-fs" }
+# `ReleaseVersion`: an exact semantic version, read before any path is formed from it.
+semver.workspace = true
+# The ledger's record of each release's interface, whose type the manifest model supplies.
+serde = { workspace = true, features = ["derive"] }
+# The release digest and per-file hashes.
+sha2.workspace = true
+thiserror.workspace = true
+# Install and removal times in the ledger.
+time = { workspace = true, features = ["formatting", "parsing"] }
+# `ledger.toml`.
+toml.workspace = true
+tracing.workspace = true
+# `spawn_blocking`: the host store's adapter (`host_io.rs`) keeps its blocking filesystem work off the executor.
+tokio.workspace = true
+
+[dev-dependencies]
+# Real temporary store folders for the host adapter's tests.
+tempfile.workspace = true
+# Generated releases, versions, and paths for the engine's invariants.
+proptest.workspace = true
+
+[lints]
+workspace = true

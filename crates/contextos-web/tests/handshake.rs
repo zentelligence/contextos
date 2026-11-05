@@ -1,7 +1,9 @@
-//! `contextos-web` refuses to serve any HTTP request until every
-//! configured `[[mcp_server]]`'s `initialize` handshake has completed; a
-//! deliberately misconfigured entry is a startup error, never a
-//! request-time surprise.
+//! `contextos-web` refuses to serve any HTTP request until every startup connection attempt has
+//! resolved. A misconfigured `Stdio` entry (a local command wholly within this operator's own
+//! configuration) is still a startup error, never a request-time surprise. An unreachable `Http`
+//! entry is not: it reaches a third-party server whose own outage or a stale credential must not
+//! take the whole process down with it, so it is simply left out of the connected set instead
+//! (`mcp_client::McpClientSet::connect_with`'s own doc comment has the full rationale).
 
 mod support;
 
@@ -37,7 +39,7 @@ async fn a_misconfigured_command_fails_the_whole_connect_call_before_any_request
 }
 
 #[tokio::test]
-async fn an_unreachable_http_endpoint_fails_the_connect_call() -> Result<(), BoxError> {
+async fn an_unreachable_http_endpoint_is_skipped_rather_than_failing_startup() -> Result<(), BoxError> {
     // Bind an ephemeral loopback port, then drop the listener before
     // connecting: the OS refuses the next connection to that exact port
     // immediately (a real, deterministic "nothing is listening here"),
@@ -53,13 +55,24 @@ async fn an_unreachable_http_endpoint_fails_the_connect_call() -> Result<(), Box
         name: "unreachable".to_owned(),
         endpoint: format!("http://127.0.0.1:{port}"),
         token_env: None,
+        auth: None,
+        headers: std::collections::BTreeMap::new(),
     };
 
+    // Observed in practice (2026-09-20): a single `[[mcp_server]]` entry with a stale credential
+    // used to abort `contextos-web`'s entire startup with a hard `Error: Handshake { .. }`, taking
+    // down every other configured server, the vault browser, apps, and jobs along with it. An
+    // unreachable/misauthenticated `Http` entry must instead resolve `Ok`, fast, with that one
+    // entry simply absent from the connected set.
     let Ok(result) = tokio::time::timeout(std::time::Duration::from_secs(10), McpClientSet::connect(&[entry])).await
     else {
         return Err("an unreachable endpoint must fail fast, not hang the whole startup".into());
     };
 
-    assert!(result.is_err());
+    let set = result?;
+    assert!(
+        set.get("unreachable").is_none(),
+        "an unreachable Http entry must be absent from the connected set, not connected"
+    );
     Ok(())
 }

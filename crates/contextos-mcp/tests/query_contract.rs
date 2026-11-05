@@ -1,7 +1,8 @@
+mod support;
 use std::fs::File;
 use std::time::{Duration, SystemTime};
 
-use contextos_mcp::{Config, ContextOsServer};
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ProgressNotificationParam};
 use rmcp::service::NotificationContext;
@@ -37,8 +38,22 @@ fn structured(
         .ok_or_else(|| std::io::Error::other("tool result omitted structured content").into())
 }
 
+/// The flat success and failure fields of `query_graph`'s output, whichever operation answers.
+const GRAPH_FIELDS: [&str; 10] = [
+    "code",
+    "edges",
+    "links",
+    "message",
+    "nodes",
+    "notes",
+    "offset",
+    "path",
+    "remediation",
+    "total",
+];
+
 #[tokio::test]
-async fn catalogue_advertises_the_five_query_tools_with_object_schemas_and_output_fields()
+async fn catalogue_advertises_the_six_query_tools_with_object_schemas_and_output_fields()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let catalogue = ContextOsServer::catalogue();
     // Each tool's output schema is the flat, merged success-and-`ToolFailure`
@@ -50,17 +65,51 @@ async fn catalogue_advertises_the_five_query_tools_with_object_schemas_and_outpu
     let expected = [
         (
             "query_text",
-            vec!["code", "hits", "index_freshness", "message", "path", "remediation"],
+            vec![
+                "code",
+                "hits",
+                "index_freshness",
+                "message",
+                "offset",
+                "path",
+                "remediation",
+                "total",
+            ],
         ),
-        ("query_semantic", vec!["code", "hits", "message", "path", "remediation"]),
         (
-            "query_graph",
-            vec!["code", "edges", "message", "nodes", "path", "remediation"],
+            "query_semantic",
+            vec![
+                "code",
+                "hits",
+                "message",
+                "offset",
+                "path",
+                "remediation",
+                "total",
+                "total_capped",
+            ],
         ),
+        (
+            "query_blended",
+            vec![
+                "code",
+                "hits",
+                "index_freshness",
+                "message",
+                "offset",
+                "path",
+                "remediation",
+                "total",
+                "total_capped",
+                "warnings",
+            ],
+        ),
+        ("query_graph", GRAPH_FIELDS.to_vec()),
         (
             "query_index_status",
             vec![
                 "code",
+                "failure",
                 "graph",
                 "message",
                 "path",
@@ -72,7 +121,16 @@ async fn catalogue_advertises_the_five_query_tools_with_object_schemas_and_outpu
         ),
         (
             "query_index_rebuild",
-            vec!["code", "graph", "message", "path", "remediation", "semantic", "text"],
+            vec![
+                "code",
+                "graph",
+                "message",
+                "path",
+                "recovered",
+                "remediation",
+                "semantic",
+                "text",
+            ],
         ),
     ];
 
@@ -211,7 +269,7 @@ async fn query_text_finds_a_note_written_through_the_server_with_no_manual_index
     // the notes it wrote, not the derived index.md files this feature also
     // produces (which are themselves legitimately searchable content,
     // covered separately).
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].index_md.enabled = false;
     let server = ContextOsServer::try_from(config)?;
 
@@ -262,7 +320,7 @@ async fn query_text_finds_a_note_written_through_the_server_with_no_manual_index
 async fn query_text_scoping_is_governed_by_search_exclude_not_index_md_exclude()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     // Managed index.md generation is disabled so this test observes only
     // the notes it wrote, not the derived index.md files this feature also
     // produces (which are themselves legitimately searchable content and
@@ -341,7 +399,7 @@ async fn query_text_scoping_is_governed_by_search_exclude_not_index_md_exclude()
 #[tokio::test]
 async fn query_text_reindexes_a_direct_external_edit() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     call_tool(
         server.clone(),
         "fs_write_file",
@@ -386,7 +444,7 @@ async fn query_text_reindexes_a_direct_external_edit() -> Result<(), Box<dyn std
 #[tokio::test]
 async fn path_prefix_and_tag_filters_scope_results() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].index_md.enabled = false;
     let server = ContextOsServer::try_from(config)?;
     call_tool(
@@ -440,7 +498,7 @@ async fn path_prefix_and_tag_filters_scope_results() -> Result<(), Box<dyn std::
 async fn exclude_paths_omits_a_superseded_prefix_from_query_text_results()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].index_md.enabled = false;
     let server = ContextOsServer::try_from(config)?;
     call_tool(
@@ -492,7 +550,7 @@ async fn exclude_paths_omits_a_superseded_prefix_from_query_text_results()
 #[tokio::test]
 async fn invalid_query_syntax_is_a_stable_tool_error() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -520,7 +578,7 @@ async fn invalid_query_syntax_is_a_stable_tool_error() -> Result<(), Box<dyn std
 async fn query_graph_covers_neighbours_backlinks_path_and_orphans()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     // b.md is written before a.md so a.md's wikilink resolves to the real
     // note rather than creating a phantom node.
@@ -643,6 +701,11 @@ async fn query_graph_covers_neighbours_backlinks_path_and_orphans()
 #[derive(Clone, Default)]
 struct ProgressCapturingClient {
     updates: std::sync::Arc<tokio::sync::Mutex<Vec<ProgressNotificationParam>>>,
+    /// Signalled once the last phase of an `index: "all"` rebuild is
+    /// recorded. rmcp runs each notification handler as its own task and a
+    /// call returns when its result arrives, so a test waits on this rather
+    /// than assuming the handlers ran first.
+    final_phase: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl ClientHandler for ProgressCapturingClient {
@@ -652,10 +715,75 @@ impl ClientHandler for ProgressCapturingClient {
         _context: NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
         let updates = self.updates.clone();
+        let final_phase = self.final_phase.clone();
         async move {
+            let is_final = params.message.as_deref() == Some("link graph rebuilt");
             updates.lock().await.push(params);
+            if is_final {
+                final_phase.notify_one();
+            }
         }
     }
+}
+
+/// Edge `kind` is the form a link was written in, and a link to a file that is not a note reaches a `file` node rather
+/// than a phantom.
+#[tokio::test]
+async fn query_graph_reports_each_links_form_and_reaches_non_note_files()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::create_dir_all(vault.path().join("assets"))?;
+    std::fs::write(vault.path().join("assets/photo.png"), [1_u8, 2, 3])?;
+    std::fs::write(vault.path().join("b.md"), "# B\n")?;
+    std::fs::write(
+        vault.path().join("a.md"),
+        "# A\n\n[[b]] ![[photo.png]] [b again](b.md) ![pic](assets/photo.png) [[ghost]]\n",
+    )?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].index_md.enabled = false;
+    let server = ContextOsServer::try_from(config)?;
+    call_tool(
+        server.clone(),
+        "query_index_rebuild",
+        serde_json::from_value(json!({"index": "graph"}))?,
+    )
+    .await?;
+
+    let result = call_tool(
+        server,
+        "query_graph",
+        serde_json::from_value(json!({"operation": "neighbours", "from": "a.md"}))?,
+    )
+    .await?;
+
+    let content = structured(&result)?;
+    let mut kinds: Vec<String> = content
+        .get("edges")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| std::io::Error::other("query_graph omitted edges"))?
+        .iter()
+        .filter_map(|edge| edge.get("kind").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        ["markdown", "markdown-embed", "wikilink", "wikilink", "wikilink-embed"]
+    );
+    let nodes = content
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| std::io::Error::other("query_graph omitted nodes"))?;
+    let node = |path: &str| nodes.iter().find(|node| node.get("path") == Some(&json!(path)));
+    assert_eq!(
+        node("assets/photo.png").map(|node| (node.get("kind"), node.get("phantom"))),
+        Some((Some(&json!("file")), Some(&json!(false))))
+    );
+    assert_eq!(
+        node("ghost").map(|node| (node.get("kind"), node.get("phantom"))),
+        Some((Some(&json!("not-found")), Some(&json!(true))))
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -664,7 +792,7 @@ async fn query_index_rebuild_streams_progress_notifications_when_requested()
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     std::fs::write(vault.path().join("a.md"), "# A\n\nFirst note.\n")?;
     std::fs::write(vault.path().join("b.md"), "# B\n\n[[a]]\n")?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].index_md.enabled = false;
     let server = ContextOsServer::try_from(config)?;
 
@@ -676,6 +804,7 @@ async fn query_index_rebuild_streams_progress_notifications_when_requested()
 
     let client_handler = ProgressCapturingClient::default();
     let updates = client_handler.updates.clone();
+    let final_phase = client_handler.final_phase.clone();
     let mut client = client_handler.serve(client_transport).await?;
 
     // rmcp's client transport assigns a progress token to every outgoing
@@ -687,6 +816,9 @@ async fn query_index_rebuild_streams_progress_notifications_when_requested()
 
     let result = client.call_tool(params).await?;
     assert_eq!(result.is_error, Some(false));
+    // Bounded so a missing final notification fails the test instead of
+    // hanging it.
+    tokio::time::timeout(Duration::from_secs(30), final_phase.notified()).await?;
 
     client.close().await?;
     server_handle.await??;
@@ -723,7 +855,7 @@ async fn query_index_rebuild_streams_progress_notifications_when_requested()
 async fn status_and_rebuild_reflect_writes_and_report_zero_staleness_afterwards()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].index_md.enabled = false;
     let server = ContextOsServer::try_from(config)?;
     call_tool(
@@ -792,7 +924,7 @@ async fn status_and_rebuild_reflect_writes_and_report_zero_staleness_afterwards(
 async fn disabled_text_search_reports_the_stable_disabled_error() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].search.text = false;
     let server = ContextOsServer::try_from(config)?;
 
@@ -813,7 +945,7 @@ async fn disabled_semantic_search_reports_the_stable_disabled_error()
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     // `search.semantic` defaults to `false`, so no embedding provider
     // configuration is needed for this vault.
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let result = call_tool(
         server,
@@ -830,7 +962,7 @@ async fn disabled_semantic_search_reports_the_stable_disabled_error()
 fn semantic_enabled_with_local_provider_and_no_model_directory_fails_construction_clearly()
 -> Result<(), Box<dyn std::error::Error>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].search.semantic = true;
     // `provider` defaults to `local`; no `model_directory` is configured,
     // which must be an explicit, actionable startup failure rather than a
@@ -846,7 +978,7 @@ fn semantic_enabled_with_local_provider_and_no_model_directory_fails_constructio
 async fn unmanaged_vault_reports_search_disabled_rather_than_erroring_on_status()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].managed = false;
     let server = ContextOsServer::try_from(config)?;
 

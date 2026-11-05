@@ -14,38 +14,93 @@ path = "src/main.rs"
 
 [dependencies]
 # `json`: on top of the workspace default (`http1`, `tokio`), needed for the
-# `axum::Json` extractor/response the MCP proxy route (FR-210) and its
+# `axum::Json` extractor/response the MCP proxy route and its
 # error bodies use. `contextos-mcp` does not need this feature (rmcp owns
 # its own JSON-RPC framing), so it stays off the shared workspace default
 # and is added here instead.
 # `query`: on top of `json`, needed for the `axum::extract::Query`
-# extractor the vault content routes use for `?raw=1`/`?view=` (FR-221).
-axum = { workspace = true, features = ["json", "query"] }
-# Rendering pipeline page/fragment composition (`web-architecture.md` §6,
-# `NFR-W02`): "rendering pipeline output ... is composed into Askama
+# extractor the vault content routes use for `?raw=1`/`?view=`.
+# `multipart`: the Inbox screen's own file upload form
+# (`routes::inbox_outbox::upload`).
+axum = { workspace = true, features = ["json", "query", "multipart"] }
+# Rendering pipeline page/fragment composition:
+# "rendering pipeline output ... is composed into Askama
 # templates, not generated as raw string concatenation".
 askama.workspace = true
 # `.mermaid`-extension standalone-file rendering and the generic "anything
-# else" content route (`web-routes.md` §2) decode `fs_attach_file`'s
+# else" content route decode `fs_attach_file`'s
 # base64-encoded blob resources.
 base64.workspace = true
 camino.workspace = true
 clap.workspace = true
-# `VaultPath`, `VaultRoot`, `VaultSet`, config-loading types only (FR-200,
-# D-W01); contextos-web depends on no other existing crate, and never calls
-# a service-crate trait directly (FR-201).
+# `VaultPath`, `VaultRoot`, `VaultSet`, config-loading types only;
+# contextos-web never calls a service-crate trait directly.
 contextos-core = { path = "../contextos-core" }
-directories.workspace = true
+# The one atomic writer for files outside every vault (`atomic_write.rs`); a leaf adapter depending on a capability
+# crate points towards `contextos-core` like every other edge.
+contextos-fs = { path = "../contextos-fs" }
+# The one definition of when an event is open or cleared, shared with the retention sweep in `contextos-mcp`.
+contextos-events = { path = "../contextos-events" }
+# `contextos-web service ...` and the server's process record, shared with `contextos service ...`.
+contextos-service = { path = "../contextos-service" }
+# The package store engine: one code path that lays out, installs, removes, and checks releases in the host store and
+# every vault's store; this crate supplies each store's I/O and the manifest model's glue.
+contextos-packages = { path = "../contextos-packages" }
+# The headless-job scheduler and Rhai execution engine:
+# `contextos-web` hosts every job's registry discovery, MCP dispatch, and
+# vault-facing I/O; `contextos-workflows` owns the Rhai/cron/concurrency
+# mechanics with no dependency back on this crate.
+contextos-workflows = { path = "../contextos-workflows" }
+# Rotating, retention-bounded `log_file` destination for `tracing`
+# (`logging.rs`), shared with `contextos-mcp`'s own identical
+# [server]-logging schema so the rotation/retention mechanics are never
+# duplicated across binaries.
+contextos-logging = { path = "../contextos-logging" }
+# The note model and renderer: this crate reads notes, fetches what they embed, and routes their links; rendering
+# itself is pure and lives there.
+contextos-markdown = { path = "../contextos-markdown" }
+contextos-host = { path = "../contextos-host" }
+# Workflow package bundle decompression/extraction (`package_bundle.rs`), paired with `tar`.
+flate2.workspace = true
+# Content-sniffed defence against a renamed executable in the Inbox upload boundary
+# (`routes::inbox_outbox::content_is_denylisted_executable`), matching the same crate
+# `contextos-fs` uses for its own read-side MIME detection.
+infer.workspace = true
+# Dry-run job execution (`dry_run_caller.rs`): validates a script's real
+# call_mcp arguments, and a scenario's own mocked response, against a real
+# MCP tool's declared schema.
+jsonschema.workspace = true
 # `.gitignore`-style pattern matching for the nav shell's directory tree
-# (`web-routes.md`'s vault browser): the vault root's own `.gitignore`,
+# (the vault browser): the vault root's own `.gitignore`,
 # fetched as plain text over MCP, is compiled and matched with the same
 # crate `contextos-fs` already uses for its own hidden-pattern exclusion, so
 # glob semantics stay identical without contextos-web depending on
-# contextos-fs itself (FR-201).
+# contextos-fs itself.
 ignore.workspace = true
+# Extension-based MIME type display for the Inbox/Outbox listing's own "type" column
+# (`inbox_outbox::mime_type_for_name`), matching the same crate `contextos-fs` uses for its own
+# extension-based fallback.
+mime_guess.workspace = true
+# `contextos-web config` only: the interactive terminal wizard that creates
+# or updates `web.toml` (mirroring `contextos config` on the MCP-server
+# binary). Every prompt goes through this crate's own `WebInterviewer`
+# trait, so the wizard logic is tested against a scripted double with no
+# real terminal; `inquire` is reached only by `TerminalWebInterviewer`.
+inquire.workspace = true
+futures-util.workspace = true
+# The entity index's Markdown table (`entities.rs`); rendering goes through `contextos-markdown`.
 pulldown-cmark.workspace = true
+# PKCE code-verifier and OAuth2 `state`-parameter generation (`oauth.rs`): a CSPRNG the standard
+# library does not provide.
+rand.workspace = true
+# The OAuth2 token-endpoint exchange/refresh calls only (`routes::settings_oauth`). Declared here
+# with its own feature set rather than `.workspace = true`: the workspace default pulls in
+# `blocking` for `contextos-search`'s own synchronous design, which does not apply to this fully
+# async/Tokio crate. `json` decodes the token endpoint's response body; `form` submits the
+# `application/x-www-form-urlencoded` authorization-code grant.
+reqwest = { version = "0.13.4", default-features = false, features = ["form", "json", "rustls"] }
 # Embeds the crate's own `static/` assets (CSS, JS) into the binary at
-# compile time (FR-250), so `/static/` is servable with no configuration
+# compile time, so `/static/` is servable with no configuration
 # and no dependency on the process's working directory or install layout;
 # an operator-configured `static_dir` remains an optional override on top.
 # `debug-embed` forces real embedding in `cargo test`/`cargo run` builds
@@ -59,32 +114,60 @@ rmcp = { workspace = true, features = [
     "transport-streamable-http-client",
     "transport-streamable-http-client-reqwest",
 ] }
+semver.workspace = true
 serde.workspace = true
+# Names the event type in `mcp_http_auth::CredentialedHttpClient`, which supplies the current credential to each
+# request an MCP session over streamable HTTP makes.
+sse-stream.workspace = true
+# RFC 7636 §4.2's `S256` PKCE code-challenge transform (`oauth.rs`): SHA-256 the code verifier.
+sha2.workspace = true
 serde_json.workspace = true
+# Workflow package bundle extraction (`package_bundle.rs`), paired with `flate2`.
+tar.workspace = true
+# Uniquely named staging directories for a workflow package bundle's
+# extraction (`package_bundle.rs`) and the store's own atomic install
+# (`package_store.rs`), matching `contextos-fs`'s identical use for its
+# own atomic-write temp files.
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
+# `rt`: the task tracker that lets shutdown wait for connection attempts and retiring sessions still in progress.
+tokio-util = { workspace = true, features = ["rt"] }
+# The shared job claim is an advisory lock the operating system releases when its holder dies (`shared_claim.rs`);
+# the same lock the graph store already takes.
 toml.workspace = true
-# Structure- and comment-preserving `web.toml` edits for `/settings/`
-# (FR-251), mirroring `contextos-mcp`'s own `config_writer.rs` use of this
+# Structure- and comment-preserving `web.toml` edits for `/settings/`,
+# mirroring `contextos-mcp`'s own `config_writer.rs` use of this
 # crate for the identical `config.toml` discipline.
 toml_edit.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-# Daily log-rotation boundaries and rotated-filename timestamps
-# (`logging.rs`); the same already-audited, workspace-pinned crate
-# `contextos-core` uses for `OperationEvent` timestamps (`Clock`,
-# `pipeline.rs`), not a new dependency to the workspace.
+# RFC 3339 parsing/formatting (`retention.rs`, `scheduler.rs`, OAuth token
+# expiry) and datetime macros for tests; the same already-audited,
+# workspace-pinned crate `contextos-core` uses for `OperationEvent`
+# timestamps (`Clock`, `pipeline.rs`), not a new dependency to the
+# workspace. `contextos-logging` owns its own equivalent dependency for
+# rotated-filename timestamps (`logging.rs` no longer formats them itself).
 time = { workspace = true, features = ["formatting", "parsing", "macros"] }
 
+# Already used by rmcp; retain group ownership so timeout escalation also kills
+# launcher descendants (for example, uvx's Python server).
+process-wrap = { version = "10.0.1", default-features = false, features = ["tokio1", "process-group", "kill-on-drop", "job-object", "creation-flags"] }
+
+# The process creation flag type process-wrap's `CreationFlags` holds, so a child is started in its own process group
+# by name rather than by a bare number. The same version process-wrap uses, so no second copy is built.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", default-features = false, features = ["Win32_System_Threading"] }
+
 [dev-dependencies]
-# Dev-only: proves FR-202 (contextos-web's independent config.toml vault-list
-# reader) agrees with contextos-mcp's own `Config`/`VaultSet` pipeline on the
-# same file. Never a production dependency; contextos-mcp is not on the
-# shipped binary's dependency graph (FR-200).
+# Dev-only: tests serve a real `contextos-mcp` server in process (over a duplex pipe and over HTTP) so the host's MCP
+# calls meet the real tool catalogue. Never a production dependency; contextos-mcp is not on the shipped binary's
+# dependency graph.
 contextos-mcp = { path = "../contextos-mcp" }
+# Dev-only: generated app-data roots prove no run summary ever names the host's data folder (`run_summary_test.rs`).
+proptest.workspace = true
 tempfile.workspace = true
 
 [lints]

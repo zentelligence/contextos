@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d94b501b5e7c7bda2a997aa8dc6ed08b283628db265e3f689febd5261523bd13 # shrinks to lists = CallLists { server_allow: None, server_deny: ["b"], tool_allow: [], tool_deny: [] }, server = "b", name = "x"
+cc d3eecf57d555fcde553bf9579ef5fe99da50c0baccf936ff86006c7528c6f2c0 # shrinks to lists = CallLists { server_allow: Some([]), server_deny: [], tool_allow: [], tool_deny: [] }, server = "a", name = "x"
+cc 6d64d0b5f9d7d26dfafcdfda2545c04f2ef898b00dcf8bc82c5bcdd8b6166cf3 # shrinks to lists = CallLists { server_allow: None, server_deny: [], tool_allow: [], tool_deny: [ToolRef { server: "c", tool: "x" }] }, server = "c"

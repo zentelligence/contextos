@@ -20,11 +20,10 @@ use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, value};
 
 use crate::{Config, ConfigError};
 
-/// One configured vault as reported by [`ConfigDocument::vaults`]: its
-/// resolved display name, path, managed flag, and semantic-search state,
-/// read directly off the TOML structure rather than through `Config`'s
-/// strict validator, so an empty or not-yet-valid document still reports an
-/// accurate (possibly empty) list instead of surfacing `ConfigError::NoVaults`.
+/// One configured vault as reported by [`ConfigDocument::vaults`]: its resolved display name, path, managed flag,
+/// and semantic-search state, read directly off the TOML structure rather than through `Config`'s strict validator,
+/// so a not-yet-valid document (mid-edit, or one with a duplicate name or an unresolvable path) still reports an
+/// accurate, possibly empty, list instead of surfacing `Config`'s own load error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VaultSummary {
     pub name: String,
@@ -36,13 +35,25 @@ pub struct VaultSummary {
 
 /// This document's `[server]` settings as reported by
 /// [`ConfigDocument::server_settings`], with the same schema defaults
-/// `ServerConfig::default` uses (`configuration.md`) filled in when the key
+/// `ServerConfig::default` uses filled in when the key
 /// is absent.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerSettingsSummary {
     pub transports: Vec<String>,
     pub log_level: String,
-    pub log_file: String,
+    pub logging: LogSettings,
+}
+
+/// The `[server]` log destination and its rotation and retention, as one unit because the schema rejects rotation
+/// or retention without a file (`ServerConfig::validate_logging`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LogSettings {
+    /// The log file path; empty logs to stderr.
+    pub file: String,
+    pub max_size_mb: Option<u64>,
+    pub rotate_daily: bool,
+    pub retention_days: Option<u32>,
+    pub retention_files: Option<u32>,
 }
 
 /// A `config.toml` document under edit, preserving comments and formatting
@@ -120,16 +131,14 @@ impl ConfigDocument {
         self.validate_or_rollback(backup)
     }
 
-    /// Removes the `[[vault]]` entry named `name` (its explicit `name`, or
-    /// its `path`'s basename when unset), compared case-insensitively to
-    /// match `VaultRoot`'s own name comparison.
+    /// Removes the `[[vault]]` entry named `name` (its explicit `name`, or its `path`'s basename when unset),
+    /// compared case-insensitively to match `VaultRoot`'s own name comparison. May remove the last configured
+    /// vault, leaving the document with zero: a running server starts and operates with no vault configured at
+    /// all, so this is a valid resulting document, not one `validate_or_rollback` rejects.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigWriterError::UnknownVaultName`] when no configured
-    /// vault matches `name`. Returns [`ConfigWriterError::Invalid`] and
-    /// leaves the document unchanged when removing the match would leave no
-    /// vault configured at all.
+    /// Returns [`ConfigWriterError::UnknownVaultName`] when no configured vault matches `name`.
     pub fn remove_vault(&mut self, name: &str) -> Result<(), ConfigWriterError> {
         let target = name.to_ascii_lowercase();
         let backup = self.document.clone();
@@ -299,15 +308,32 @@ impl ConfigDocument {
             .and_then(Item::as_str)
             .unwrap_or("info")
             .to_owned();
-        let log_file = server
-            .and_then(|server| server.get("log_file"))
-            .and_then(Item::as_str)
-            .unwrap_or("")
-            .to_owned();
+        let text = |key: &str| {
+            server
+                .and_then(|server| server.get(key))
+                .and_then(Item::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
+        let whole = |key: &str| {
+            server
+                .and_then(|server| server.get(key))
+                .and_then(Item::as_integer)
+                .and_then(|number| u64::try_from(number).ok())
+        };
         ServerSettingsSummary {
             transports,
             log_level,
-            log_file,
+            logging: LogSettings {
+                file: text("log_file"),
+                max_size_mb: whole("log_max_size_mb"),
+                rotate_daily: server
+                    .and_then(|server| server.get("log_rotate_daily"))
+                    .and_then(Item::as_bool)
+                    .unwrap_or(false),
+                retention_days: whole("log_retention_days").and_then(|number| u32::try_from(number).ok()),
+                retention_files: whole("log_retention_files").and_then(|number| u32::try_from(number).ok()),
+            },
         }
     }
 
@@ -327,7 +353,7 @@ impl ConfigDocument {
         &mut self,
         transports: &[String],
         log_level: &str,
-        log_file: &str,
+        logging: &LogSettings,
     ) -> Result<(), ConfigWriterError> {
         let backup = self.document.clone();
         {
@@ -354,15 +380,48 @@ impl ConfigDocument {
                 server.insert("log_level", value(log_level));
             }
 
-            if log_file.is_empty() {
-                server.remove("log_file");
-            } else {
-                server.insert("log_file", value(log_file));
+            if let Err(error) = apply_logging(server, logging) {
+                self.document = backup;
+                return Err(error);
             }
         }
-        // An empty `[server]` table still renders a header with nothing
-        // under it; drop the key entirely once every field is back at its
-        // default, so re-accepting every prefilled default is a true no-op.
+        self.drop_empty_server_table();
+
+        self.validate_or_rollback(backup)
+    }
+
+    /// Sets only this document's log destination, rotation, and retention, leaving `transports` and `log_level`
+    /// as they are. Clearing `logging.file` removes the rotation and retention keys with it, since the schema
+    /// rejects them without a file; a value equal to the schema default is omitted, as [`Self::set_server_settings`]
+    /// does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigWriterError::ServerNotATable`] when `[server]` is present but not a table. Returns
+    /// [`ConfigWriterError::Invalid`] and leaves the document unchanged when the resulting configuration would be
+    /// invalid (for example a retention setting with no rotation, or a zero size).
+    pub fn set_logging(&mut self, logging: &LogSettings) -> Result<(), ConfigWriterError> {
+        let backup = self.document.clone();
+        {
+            let server = self
+                .document
+                .entry("server")
+                .or_insert_with(|| Item::Table(Table::new()))
+                .as_table_mut()
+                .ok_or(ConfigWriterError::ServerNotATable)?;
+            if let Err(error) = apply_logging(server, logging) {
+                self.document = backup;
+                return Err(error);
+            }
+        }
+        self.drop_empty_server_table();
+
+        self.validate_or_rollback(backup)
+    }
+
+    /// An empty `[server]` table still renders a header with nothing under it; drop the key entirely once every
+    /// field is back at its default, so re-accepting every prefilled default is a true no-op.
+    fn drop_empty_server_table(&mut self) {
         if self
             .document
             .get("server")
@@ -371,8 +430,6 @@ impl ConfigDocument {
         {
             self.document.remove("server");
         }
-
-        self.validate_or_rollback(backup)
     }
 
     /// Locates the `[[vault]]` table currently named `name` (case-
@@ -406,6 +463,43 @@ impl Default for ConfigDocument {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Writes `logging` into the `[server]` table: each key is set when it deviates from the schema default and removed
+/// otherwise, and no rotation or retention key survives an empty `file`.
+fn apply_logging(server: &mut Table, logging: &LogSettings) -> Result<(), ConfigWriterError> {
+    let has_file = !logging.file.is_empty();
+    // Narrowed before anything is written, so a refusal leaves the table untouched.
+    let size = logging
+        .max_size_mb
+        .filter(|_| has_file)
+        .map(narrow_integer)
+        .transpose()?;
+    let set_or_remove = |server: &mut Table, key: &str, item: Option<Item>| match item {
+        Some(item) => {
+            server.insert(key, item);
+        }
+        None => {
+            server.remove(key);
+        }
+    };
+    set_or_remove(server, "log_file", has_file.then(|| value(logging.file.as_str())));
+    set_or_remove(server, "log_max_size_mb", size.map(value));
+    set_or_remove(
+        server,
+        "log_rotate_daily",
+        (has_file && logging.rotate_daily).then(|| value(true)),
+    );
+    let days = logging.retention_days.filter(|_| has_file);
+    set_or_remove(server, "log_retention_days", days.map(i64::from).map(value));
+    let files = logging.retention_files.filter(|_| has_file);
+    set_or_remove(server, "log_retention_files", files.map(i64::from).map(value));
+    Ok(())
+}
+
+/// A TOML integer from a `u64`, rejecting a value TOML cannot represent rather than truncating it.
+fn narrow_integer(number: u64) -> Result<i64, ConfigWriterError> {
+    i64::try_from(number).map_err(|_source| ConfigWriterError::NumberOutOfRange { value: number })
 }
 
 fn render_and_validate(document: &DocumentMut) -> Result<(), ConfigWriterError> {
@@ -447,6 +541,8 @@ pub enum ConfigWriterError {
     VaultKeyNotATable { key: String },
     #[error("the \"server\" key is not a table")]
     ServerNotATable,
+    #[error("{value} is too large to be written to config.toml")]
+    NumberOutOfRange { value: u64 },
     #[error("no vault named {name} is configured")]
     UnknownVaultName { name: String },
     #[error("the edited configuration is invalid")]

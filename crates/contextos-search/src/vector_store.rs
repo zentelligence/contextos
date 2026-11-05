@@ -1,7 +1,7 @@
 //! `SQLite`-backed vector storage for semantic search chunks.
 //!
 //! `StoresVectors` is the port every vector store implementation satisfies
-//! (architecture.md's trait catalogue: `upsert`, `delete`, `similar(k)`);
+//! (`upsert`, `delete`, `similar(k)`);
 //! `SqliteVecStore` is the default implementation, backed by `rusqlite`
 //! (bundled `SQLite`) and the `sqlite-vec` extension's `vec0` virtual table
 //! mechanism.
@@ -50,13 +50,23 @@
 //! exclusion never causes the same under-count either.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once, PoisonError};
+use std::time::{Duration, Instant};
 
 use contextos_core::ContentHash;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::SearchError;
+
+mod inspect;
+
+use crate::store::{DerivedStore, StoreFailure, StoreWriteLock, lock_path_beside};
+pub use inspect::{VectorStoreState, inspect_vector_store};
+
+/// How long a connection waits on `SQLite`'s own locks: only reached against an instance of an older build, which
+/// writes without the store's write lock.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One vector to upsert: the chunk identity (`path`, `ordinal`) carried by
 /// [`crate::Chunk`], its heading trail and content hash, and the embedding
@@ -119,6 +129,32 @@ pub struct VectorStoreStats {
     pub chunks: usize,
 }
 
+/// Everything one note's stored vectors are brought up to date with, in one commit: the records for chunks embedded
+/// afresh, the chunks kept because their stored hash already matched, how many chunks the note now has, and a check
+/// that the note still holds the content all of these were taken from.
+pub struct PathCommit<'a> {
+    pub path: &'a str,
+    pub records: &'a [VectorRecord<'a>],
+    /// `(ordinal, content hash)` of each chunk left as stored because its hash already matched when the note was read.
+    pub kept: &'a [(usize, &'a ContentHash)],
+    /// How many chunks the note now has: every stored chunk at this ordinal or beyond is removed. `0` for a note that
+    /// no longer exists.
+    pub chunk_count: usize,
+    /// Whether the note still holds the content the records were built from; called while the store's write lock is
+    /// held, so nothing written after the call can be overtaken by this commit.
+    pub source_unchanged: &'a dyn Fn() -> Result<bool, SearchError>,
+}
+
+/// Whether a [`PathCommit`] was written.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PathCommitOutcome {
+    /// The note's vectors now reflect the content the commit was built from.
+    Committed,
+    /// The note changed after it was read, or another instance has since stored different chunks for it: nothing was
+    /// written, and the note must be read and embedded again.
+    SourceChanged,
+}
+
 /// Port for the vector store behind semantic search.
 pub trait StoresVectors: Send + Sync {
     /// Upserts each record: a new `(path, ordinal)` is inserted; an
@@ -170,6 +206,18 @@ pub trait StoresVectors: Send + Sync {
     /// Returns a storage error when the database cannot be written.
     fn prune_ordinals_at_or_beyond(&self, path: &str, keep_below: usize) -> Result<(), SearchError>;
 
+    /// Brings one note's stored vectors up to date in one commit, as [`PathCommit`] describes, but only when the note
+    /// still holds the content they were built from and every kept chunk is still stored as it was: checked while the
+    /// store's write lock is held, so a commit built from content read earlier never overwrites vectors for newer
+    /// content, written here or by another instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SearchError::VectorDimensionMismatch`] for a vector of the wrong length, the check's own error, a busy
+    /// failure when another instance holds the write lock past the configured wait, and a storage error when the
+    /// database cannot be written.
+    fn commit_path(&self, commit: &PathCommit<'_>) -> Result<PathCommitOutcome, SearchError>;
+
     /// Returns aggregate counts of currently stored chunks, for
     /// `query_index_status` reporting.
     ///
@@ -193,13 +241,24 @@ pub struct SqliteVecConfig {
     /// different dimension requires a fresh database, rebuilt through
     /// `query_index_rebuild`, not an in-place migration.
     pub dimension: usize,
+    /// How long a write waits for another instance's write to the same store before failing as `index/busy`;
+    /// [`crate::DEFAULT_WRITE_WAIT`] in every server and CLI instance.
+    pub write_wait: std::time::Duration,
 }
 
-/// Default [`StoresVectors`] implementation over a `sqlite-vec` database.
+/// Default [`StoresVectors`] implementation over a `sqlite-vec` database, shared by every `contextos` instance on the
+/// vault.
+///
+/// The database is in write-ahead-log mode, so a reader in any instance never waits for a writer and sees what every
+/// instance has committed. Writers are serialised across instances by the store's write lock beside the database
+/// (`vectors.db.lock`): a write that finds another instance writing waits up to [`SqliteVecConfig::write_wait`] and
+/// then fails as `index/busy`, having changed nothing.
 pub struct SqliteVecStore {
     connection: Mutex<Connection>,
     dimension: usize,
     db_path: String,
+    lock_path: PathBuf,
+    write_wait: Duration,
 }
 
 impl std::fmt::Debug for SqliteVecStore {
@@ -244,7 +303,11 @@ impl TryFrom<SqliteVecConfig> for SqliteVecStore {
                 source,
             })?;
         }
-        let connection = Connection::open(&value.path).map_err(|source| storage_error(&db_path, source))?;
+        let lock_path = lock_path_beside(&value.path);
+        // Opening switches the journal mode and creates the schema, which two instances opening a new store at once
+        // would otherwise race on; the write lock orders them.
+        let _lock = StoreWriteLock::acquire(DerivedStore::Vectors, &lock_path, value.write_wait)?;
+        let connection = open_connection(&value.path).map_err(|source| storage_error(&db_path, source))?;
 
         connection
             .execute(
@@ -284,6 +347,8 @@ impl TryFrom<SqliteVecConfig> for SqliteVecStore {
             connection: Mutex::new(connection),
             dimension: value.dimension,
             db_path,
+            lock_path,
+            write_wait: value.write_wait,
         })
     }
 }
@@ -293,6 +358,106 @@ impl StoresVectors for SqliteVecStore {
         if records.is_empty() {
             return Ok(());
         }
+        self.check_dimensions(records)?;
+        self.write(|transaction| self.upsert_within(transaction, records))
+    }
+
+    fn delete(&self, path: &str) -> Result<(), SearchError> {
+        self.write(|transaction| self.delete_within(transaction, path))
+    }
+
+    fn similar(&self, request: &SimilarityQuery<'_>) -> Result<Vec<SimilarityHit>, SearchError> {
+        if request.vector.len() != self.dimension {
+            return Err(SearchError::VectorDimensionMismatch {
+                path: String::new(),
+                ordinal: 0,
+                expected: self.dimension,
+                actual: request.vector.len(),
+            });
+        }
+        if request.k == 0 {
+            return Ok(Vec::new());
+        }
+
+        let connection = self.locked();
+        let query_vector = serialise_vector(request.vector);
+        let k = i64::try_from(request.k).unwrap_or(i64::MAX);
+
+        let mut sql = String::from(
+            "SELECT c.path, c.ordinal, c.heading_context, c.content_hash, v.distance \
+             FROM vec_chunks v JOIN chunks c ON c.rowid = v.rowid \
+             WHERE v.embedding MATCH ?1 AND k = ?2",
+        );
+        let mut bound: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(query_vector), Box::new(k)];
+        if let Some(prefix) = request.path_prefix {
+            push_segment_scope_clause(&mut sql, &mut bound, prefix, "IN");
+        }
+        for excluded in request.exclude_paths {
+            push_segment_scope_clause(&mut sql, &mut bound, excluded, "NOT IN");
+        }
+        sql.push_str(" ORDER BY v.distance");
+
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|source| storage_error(&self.db_path, source))?;
+        let bound_refs: Vec<&dyn rusqlite::ToSql> = bound.iter().map(std::convert::AsRef::as_ref).collect();
+        let mut rows = collect_hits(&mut statement, bound_refs.as_slice(), &self.db_path)?;
+        rows.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(rows)
+    }
+
+    fn existing_hash(&self, path: &str, ordinal: usize) -> Result<Option<ContentHash>, SearchError> {
+        let connection = self.locked();
+        stored_hash(&connection, &self.db_path, path, ordinal)
+    }
+
+    fn prune_ordinals_at_or_beyond(&self, path: &str, keep_below: usize) -> Result<(), SearchError> {
+        self.write(|transaction| self.prune_within(transaction, path, keep_below))
+    }
+
+    fn commit_path(&self, commit: &PathCommit<'_>) -> Result<PathCommitOutcome, SearchError> {
+        self.check_dimensions(commit.records)?;
+        self.write(|transaction| {
+            if !(commit.source_unchanged)()? {
+                return Ok(PathCommitOutcome::SourceChanged);
+            }
+            for &(ordinal, hash) in commit.kept {
+                if stored_hash(transaction, &self.db_path, commit.path, ordinal)?.as_ref() != Some(hash) {
+                    return Ok(PathCommitOutcome::SourceChanged);
+                }
+            }
+            self.upsert_within(transaction, commit.records)?;
+            self.prune_within(transaction, commit.path, commit.chunk_count)?;
+            Ok(PathCommitOutcome::Committed)
+        })
+    }
+
+    fn stats(&self) -> Result<VectorStoreStats, SearchError> {
+        let connection = self.locked();
+        let (documents, chunks): (i64, i64) = connection
+            .query_row("SELECT COUNT(DISTINCT path), COUNT(*) FROM chunks", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(|source| storage_error(&self.db_path, source))?;
+        Ok(VectorStoreStats {
+            documents: usize::try_from(documents).unwrap_or(0),
+            chunks: usize::try_from(chunks).unwrap_or(0),
+        })
+    }
+}
+
+impl SqliteVecStore {
+    fn locked(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.connection.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Refuses a record whose vector does not have the store's dimension, before anything is written.
+    fn check_dimensions(&self, records: &[VectorRecord<'_>]) -> Result<(), SearchError> {
         for record in records {
             if record.vector.len() != self.dimension {
                 return Err(SearchError::VectorDimensionMismatch {
@@ -303,12 +468,31 @@ impl StoresVectors for SqliteVecStore {
                 });
             }
         }
+        Ok(())
+    }
 
+    /// Runs `body` in one immediate transaction while holding the store's write lock, committing what it did only
+    /// when it succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a busy failure when another instance holds the write lock past the configured wait, `body`'s own
+    /// error, and a storage error when the transaction cannot be started or committed.
+    fn write<T>(&self, body: impl FnOnce(&Transaction<'_>) -> Result<T, SearchError>) -> Result<T, SearchError> {
+        let _lock = StoreWriteLock::acquire(DerivedStore::Vectors, &self.lock_path, self.write_wait)?;
         let mut connection = self.locked();
         let transaction = connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|source| storage_error(&self.db_path, source))?;
+        let value = body(&transaction)?;
+        transaction
+            .commit()
+            .map_err(|source| storage_error(&self.db_path, source))?;
+        Ok(value)
+    }
 
+    /// Upserts `records` within `transaction`.
+    fn upsert_within(&self, transaction: &Transaction<'_>, records: &[VectorRecord<'_>]) -> Result<(), SearchError> {
         for record in records {
             let ordinal = i64::try_from(record.ordinal).map_err(|_| SearchError::VectorOrdinalOutOfRange {
                 path: record.path.to_owned(),
@@ -360,17 +544,11 @@ impl StoresVectors for SqliteVecStore {
                 )
                 .map_err(|source| storage_error(&self.db_path, source))?;
         }
-
-        transaction
-            .commit()
-            .map_err(|source| storage_error(&self.db_path, source))
+        Ok(())
     }
 
-    fn delete(&self, path: &str) -> Result<(), SearchError> {
-        let mut connection = self.locked();
-        let transaction = connection
-            .transaction()
-            .map_err(|source| storage_error(&self.db_path, source))?;
+    /// Removes every chunk stored for `path` within `transaction`.
+    fn delete_within(&self, transaction: &Transaction<'_>, path: &str) -> Result<(), SearchError> {
         transaction
             .execute(
                 "DELETE FROM vec_chunks WHERE rowid IN (SELECT rowid FROM chunks WHERE path = ?1)",
@@ -380,86 +558,12 @@ impl StoresVectors for SqliteVecStore {
         transaction
             .execute("DELETE FROM chunks WHERE path = ?1", params![path])
             .map_err(|source| storage_error(&self.db_path, source))?;
-        transaction
-            .commit()
-            .map_err(|source| storage_error(&self.db_path, source))
+        Ok(())
     }
 
-    fn similar(&self, request: &SimilarityQuery<'_>) -> Result<Vec<SimilarityHit>, SearchError> {
-        if request.vector.len() != self.dimension {
-            return Err(SearchError::VectorDimensionMismatch {
-                path: String::new(),
-                ordinal: 0,
-                expected: self.dimension,
-                actual: request.vector.len(),
-            });
-        }
-        if request.k == 0 {
-            return Ok(Vec::new());
-        }
-
-        let connection = self.locked();
-        let query_vector = serialise_vector(request.vector);
-        let k = i64::try_from(request.k).unwrap_or(i64::MAX);
-
-        let mut sql = String::from(
-            "SELECT c.path, c.ordinal, c.heading_context, c.content_hash, v.distance \
-             FROM vec_chunks v JOIN chunks c ON c.rowid = v.rowid \
-             WHERE v.embedding MATCH ?1 AND k = ?2",
-        );
-        let mut bound: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(query_vector), Box::new(k)];
-        if let Some(prefix) = request.path_prefix {
-            push_segment_scope_clause(&mut sql, &mut bound, prefix, "IN");
-        }
-        for excluded in request.exclude_paths {
-            push_segment_scope_clause(&mut sql, &mut bound, excluded, "NOT IN");
-        }
-        sql.push_str(" ORDER BY v.distance");
-
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(|source| storage_error(&self.db_path, source))?;
-        let bound_refs: Vec<&dyn rusqlite::ToSql> = bound.iter().map(std::convert::AsRef::as_ref).collect();
-        let mut rows = collect_hits(&mut statement, bound_refs.as_slice(), &self.db_path)?;
-        rows.sort_by(|left, right| {
-            right
-                .score
-                .partial_cmp(&left.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        Ok(rows)
-    }
-
-    fn existing_hash(&self, path: &str, ordinal: usize) -> Result<Option<ContentHash>, SearchError> {
-        let ordinal = i64::try_from(ordinal).map_err(|_| SearchError::VectorOrdinalOutOfRange {
-            path: path.to_owned(),
-            ordinal,
-        })?;
-        let connection = self.locked();
-        let stored: Option<String> = connection
-            .query_row(
-                "SELECT content_hash FROM chunks WHERE path = ?1 AND ordinal = ?2",
-                params![path, ordinal],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|source| storage_error(&self.db_path, source))?;
-        stored
-            .map(|text| {
-                ContentHash::try_from(text.as_str()).map_err(|source| SearchError::VectorRecordCorrupt {
-                    path: path.to_owned(),
-                    reason: format!("stored content hash is invalid: {source}"),
-                })
-            })
-            .transpose()
-    }
-
-    fn prune_ordinals_at_or_beyond(&self, path: &str, keep_below: usize) -> Result<(), SearchError> {
+    /// Removes every chunk stored for `path` whose ordinal is `keep_below` or greater, within `transaction`.
+    fn prune_within(&self, transaction: &Transaction<'_>, path: &str, keep_below: usize) -> Result<(), SearchError> {
         let keep_below = i64::try_from(keep_below).unwrap_or(i64::MAX);
-        let mut connection = self.locked();
-        let transaction = connection
-            .transaction()
-            .map_err(|source| storage_error(&self.db_path, source))?;
         transaction
             .execute(
                 "DELETE FROM vec_chunks WHERE rowid IN (\
@@ -474,29 +578,37 @@ impl StoresVectors for SqliteVecStore {
                 params![path, keep_below],
             )
             .map_err(|source| storage_error(&self.db_path, source))?;
-        transaction
-            .commit()
-            .map_err(|source| storage_error(&self.db_path, source))
-    }
-
-    fn stats(&self) -> Result<VectorStoreStats, SearchError> {
-        let connection = self.locked();
-        let (documents, chunks): (i64, i64) = connection
-            .query_row("SELECT COUNT(DISTINCT path), COUNT(*) FROM chunks", [], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
-            .map_err(|source| storage_error(&self.db_path, source))?;
-        Ok(VectorStoreStats {
-            documents: usize::try_from(documents).unwrap_or(0),
-            chunks: usize::try_from(chunks).unwrap_or(0),
-        })
+        Ok(())
     }
 }
 
-impl SqliteVecStore {
-    fn locked(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.connection.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+/// The content hash stored for `(path, ordinal)`, or `None` when no such chunk is stored.
+fn stored_hash(
+    connection: &Connection,
+    db_path: &str,
+    path: &str,
+    ordinal: usize,
+) -> Result<Option<ContentHash>, SearchError> {
+    let ordinal = i64::try_from(ordinal).map_err(|_| SearchError::VectorOrdinalOutOfRange {
+        path: path.to_owned(),
+        ordinal,
+    })?;
+    let stored: Option<String> = connection
+        .query_row(
+            "SELECT content_hash FROM chunks WHERE path = ?1 AND ordinal = ?2",
+            params![path, ordinal],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|source| storage_error(db_path, source))?;
+    stored
+        .map(|text| {
+            ContentHash::try_from(text.as_str()).map_err(|source| SearchError::VectorRecordCorrupt {
+                path: path.to_owned(),
+                reason: format!("stored content hash is invalid: {source}"),
+            })
+        })
+        .transpose()
 }
 
 /// Reads every row from an already-prepared similarity statement into
@@ -593,10 +705,46 @@ fn push_segment_scope_clause(sql: &mut String, bound: &mut Vec<Box<dyn rusqlite:
     bound.push(Box::new(suffix_pattern));
 }
 
+/// Reports a `rusqlite` failure against the store at `path`: as a busy or damaged store when `SQLite` says so, so a
+/// caller can tell contention and damage from any other storage failure, and as a vector storage failure otherwise.
 fn storage_error(path: &str, source: rusqlite::Error) -> SearchError {
+    if let rusqlite::Error::SqliteFailure(inner, _) = &source {
+        match inner.code {
+            ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => {
+                return StoreFailure::busy(DerivedStore::Vectors, path, source.to_string()).into();
+            }
+            ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase => {
+                return StoreFailure::corrupt(DerivedStore::Vectors, path, source.to_string()).into();
+            }
+            _ => {}
+        }
+    }
     SearchError::VectorStorage {
         path: path.to_owned(),
         source,
+    }
+}
+
+/// Opens one connection in write-ahead-log mode with an explicit busy timeout, retrying the whole sequence while
+/// `SQLite` reports the database busy, for up to [`BUSY_TIMEOUT`]: an instance of an older build may be switching a new
+/// store's journal mode at the same moment.
+fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
+    let deadline = Instant::now().checked_add(BUSY_TIMEOUT);
+    loop {
+        let attempt = Connection::open(path).and_then(|connection| {
+            connection.busy_timeout(BUSY_TIMEOUT)?;
+            connection.pragma_update(None, "journal_mode", "WAL")?;
+            Ok(connection)
+        });
+        match attempt {
+            Err(rusqlite::Error::SqliteFailure(inner, _))
+                if matches!(inner.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+                    && deadline.is_some_and(|deadline| Instant::now() < deadline) =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            other => return other,
+        }
     }
 }
 
@@ -608,8 +756,8 @@ fn storage_error(path: &str, source: rusqlite::Error) -> SearchError {
 ///
 /// # Safety
 ///
-/// This function contains the one `unsafe` block approved by
-/// `phase-5-decision-addendum.md` A3. `sqlite3_auto_extension` is a C FFI
+/// This function contains the one `unsafe` block in this crate.
+/// `sqlite3_auto_extension` is a C FFI
 /// entry point (`rusqlite::ffi::sqlite3_auto_extension`) that stores a raw
 /// function pointer in `SQLite`'s process-global extension list; `SQLite`
 /// invokes it once per newly opened connection. Two invariants make the

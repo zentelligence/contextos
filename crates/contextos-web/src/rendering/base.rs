@@ -1,4 +1,4 @@
-//! `.base` HTMX-driven rendering (`web-rendering.md` §2): a `.base`
+//! `.base` HTMX-driven rendering: a `.base`
 //! file is a view definition (filters, formulas, views) evaluated against
 //! the vault, not a data container; its rendered rows are separate note
 //! files elsewhere in the vault. This module renders the active view's
@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use crate::mcp_client::{McpCallError, McpClient};
 use crate::rendering::diagnostics::{self, Diagnostic};
+use crate::screen_routes::ScreenRoutes;
 
 #[derive(Debug, Clone)]
 struct RowColumn {
@@ -47,16 +48,19 @@ struct RowColumn {
 #[derive(Debug, Clone)]
 struct RowView {
     title: String,
-    has_link: bool,
-    href: String,
+    /// The screen that shows the row's note ([`ScreenRoutes`]); `None` when the row has no note, or no screen
+    /// shows it.
+    href: Option<String>,
+    /// The row has a note but no screen shows it, so its title says so rather than linking anywhere.
+    unrouted: bool,
     /// The row's own vault-relative note path, the row-edit form's
     /// `frontmatter_update` target; `None` when the row has no `file.path`
-    /// column at all, matching `has_link`.
+    /// column at all.
     note_path: Option<String>,
     columns: Vec<RowColumn>,
 }
 
-/// One entry in the view-switcher tab strip (`web-rendering.md` §2): every
+/// One entry in the view-switcher tab strip: every
 /// view the `.base` file's own definition declares, switched via a real
 /// `GET ...?view=<name>` request through `base_query`, not a client-side
 /// re-filter.
@@ -69,7 +73,8 @@ struct ViewTab {
 #[derive(Template)]
 #[template(path = "base_view.html")]
 struct BaseViewTemplate<'a> {
-    vault_name: &'a str,
+    /// Every URL the template links to within the vault.
+    urls: crate::urls::VaultUrls,
     path: &'a str,
     views: &'a [ViewTab],
     matched: u64,
@@ -99,7 +104,7 @@ struct BaseReadStructured {
 }
 
 /// Renders the addressed `.base` file's active view as an HTMX card grid
-/// (`web-rendering.md` §2), or a diagnostic panel when the file itself
+///, or a diagnostic panel when the file itself
 /// fails to parse (a diagnostic naming path `"$"`, this crate's convention
 /// for a whole-file parse failure).
 ///
@@ -107,9 +112,8 @@ struct BaseReadStructured {
 ///
 /// Returns [`McpCallError::Unreachable`] when the MCP transport itself
 /// fails; a tool-level error or a parse/render failure is reported inline
-/// as a diagnostic panel in the returned `Ok(String)` instead, matching
-/// `web-rendering.md`'s never-a-server-error contract for this content
-/// type.
+/// as a diagnostic panel in the returned `Ok(String)` instead, so this
+/// content type never produces a server error.
 pub async fn render_view(
     mcp: &McpClient,
     vault_name: &str,
@@ -147,10 +151,31 @@ pub async fn render_view(
         })
         .collect();
 
-    let rows_json: Vec<serde_json::Map<String, Value>> = serde_json::from_str(&structured.content).unwrap_or_default();
+    let mut rows_json: Vec<serde_json::Map<String, Value>> =
+        serde_json::from_str(&structured.content).unwrap_or_default();
+    // A folder's managed `index.md` is never shown, even by a base whose filters do not leave it out.
+    let listed_before = rows_json.len();
+    rows_json.retain(|row| {
+        !row.get("file.path")
+            .and_then(Value::as_str)
+            .is_some_and(crate::vault_links::is_managed_index)
+    });
+    // Every note a row can link to: its own `file.path` and the target of any link-valued column.
+    let listed: Vec<String> = rows_json
+        .iter()
+        .flat_map(|row| {
+            row.get("file.path")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .into_iter()
+                .chain(row.values().filter_map(|value| link_target(Some(value))))
+        })
+        .collect();
+    let screens = ScreenRoutes::load(mcp, vault_name, listed.iter().map(String::as_str)).await;
+    let route = |path: &str| screens.route(path);
     let rows: Vec<RowView> = rows_json
         .iter()
-        .map(|row| row_view(row, &structured.columns, vault_name, &display_names))
+        .map(|row| row_view(row, &structured.columns, &route, &display_names))
         .collect();
 
     let diagnostics_html = if structured.diagnostics.is_empty() {
@@ -160,10 +185,12 @@ pub async fn render_view(
     };
 
     let template = BaseViewTemplate {
-        vault_name,
+        urls: crate::urls::VaultUrls::from(vault_name),
         path,
         views: &views,
-        matched: structured.matched,
+        matched: structured
+            .matched
+            .saturating_sub(u64::try_from(listed_before - rows_json.len()).unwrap_or(u64::MAX)),
         truncated: structured.truncated,
         rows: &rows,
         has_diagnostics: !structured.diagnostics.is_empty(),
@@ -255,7 +282,7 @@ async fn read_definition(
 fn row_view(
     row: &serde_json::Map<String, Value>,
     columns: &[String],
-    vault_name: &str,
+    route: &impl Fn(&str) -> Option<String>,
     display_names: &HashMap<String, String>,
 ) -> RowView {
     let file_path = row
@@ -263,10 +290,8 @@ fn row_view(
         .and_then(Value::as_str)
         .map(str::to_owned)
         .or_else(|| columns.iter().find_map(|name| link_target(row.get(name))));
-    let (has_link, href) = match &file_path {
-        Some(p) => (true, format!("/{vault_name}/{p}")),
-        None => (false, String::new()),
-    };
+    let href = file_path.as_deref().and_then(route);
+    let unrouted = file_path.is_some() && href.is_none();
     // Obsidian's own `file.basename` (the file's own name without its
     // extension) is the more appropriate title text than `file.name`
     // (with it): a card header is a title, not a filename listing.
@@ -284,7 +309,7 @@ fn row_view(
         .iter()
         .filter(|c| c.as_str() != "file.path")
         .map(|name| {
-            let (value, href) = column_value(row.get(name), vault_name);
+            let (value, href) = column_value(row.get(name), route);
             RowColumn {
                 name: name.clone(),
                 label: display_names.get(name).cloned().unwrap_or_else(|| name.clone()),
@@ -296,8 +321,8 @@ fn row_view(
         .collect();
     RowView {
         title,
-        has_link,
         href,
+        unrouted,
         note_path: file_path,
         columns: column_views,
     }
@@ -315,8 +340,8 @@ fn link_target(value: Option<&Value>) -> Option<String> {
 }
 
 /// Resolves one column's display text and, when the column's value is a
-/// `base_query` link, the vault route it should link to.
-fn column_value(value: Option<&Value>, vault_name: &str) -> (String, Option<String>) {
+/// `base_query` link to a note a screen shows, that screen's route.
+fn column_value(value: Option<&Value>, route: &impl Fn(&str) -> Option<String>) -> (String, Option<String>) {
     if let Some(target) = link_target(value) {
         let display = value
             .and_then(Value::as_object)
@@ -324,7 +349,7 @@ fn column_value(value: Option<&Value>, vault_name: &str) -> (String, Option<Stri
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        return (display, Some(format!("/{vault_name}/{target}")));
+        return (display, route(&target));
     }
     match value {
         Some(value) => (stringify(value), None),

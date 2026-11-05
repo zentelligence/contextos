@@ -1,6 +1,7 @@
 use serde::Serialize;
 use thiserror::Error;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 use crate::{RoutesOperations, VaultPath};
 
@@ -107,10 +108,117 @@ pub struct OperationWarning {
     pub message: String,
 }
 
+/// A write's payload, text or binary. The one write pipeline handles both
+/// uniformly (persistence and hashing already operate on bytes); only the
+/// tool boundary distinguishes them, decoding a `content_base64` input into
+/// [`Self::Binary`] or passing a `content` input through as [`Self::Text`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WriteContent {
+    Text(UnixText),
+    Binary(Vec<u8>),
+}
+
+/// Text as the vault stores it: every `\r\n` line break, and every lone `\r` (the classic Mac line break), written as
+/// `\n`, the way every path is written with `/`, whatever platform produced it. Remembers whether anything was
+/// converted, so the write can say so rather than change the text silently.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnixText {
+    text: String,
+    converted: bool,
+}
+
+impl From<String> for UnixText {
+    fn from(value: String) -> Self {
+        if value.contains('\r') {
+            Self {
+                text: value.replace("\r\n", "\n").replace('\r', "\n"),
+                converted: true,
+            }
+        } else {
+            Self {
+                text: value,
+                converted: false,
+            }
+        }
+    }
+}
+
+impl From<&str> for UnixText {
+    fn from(value: &str) -> Self {
+        Self::from(value.to_owned())
+    }
+}
+
+impl AsRef<str> for UnixText {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl From<UnixText> for String {
+    fn from(value: UnixText) -> Self {
+        value.text
+    }
+}
+
+/// The warning code a write returns when it converted `\r\n` or `\r` line endings to `\n`.
+pub const LINE_ENDINGS_CONVERTED: &str = "write/line-endings-converted";
+
+impl WriteContent {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Text(text) => text.text.as_bytes(),
+            Self::Binary(bytes) => bytes,
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.as_bytes().len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Whether `\r\n` or `\r` line endings were converted to `\n` to make this content; never for binary content.
+    #[must_use]
+    pub const fn converted_line_endings(&self) -> bool {
+        match self {
+            Self::Text(text) => text.converted,
+            Self::Binary(_) => false,
+        }
+    }
+}
+
+impl From<String> for WriteContent {
+    fn from(value: String) -> Self {
+        Self::Text(value.into())
+    }
+}
+
+impl From<UnixText> for WriteContent {
+    fn from(value: UnixText) -> Self {
+        Self::Text(value)
+    }
+}
+
+impl From<Vec<u8>> for WriteContent {
+    fn from(value: Vec<u8>) -> Self {
+        Self::Binary(value)
+    }
+}
+
+#[cfg(test)]
+#[path = "pipeline_test.rs"]
+mod tests;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WriteMutation {
     pub path: VaultPath,
-    pub content: String,
+    pub content: WriteContent,
     pub expected_hash: Option<ContentHash>,
     pub force: bool,
     pub origin: Origin,
@@ -171,7 +279,7 @@ impl From<&RestoreMutation> for WriteMutation {
     fn from(value: &RestoreMutation) -> Self {
         Self {
             path: value.path.clone(),
-            content: value.content.clone(),
+            content: value.content.clone().into(),
             expected_hash: value.expected_hash.clone(),
             force: false,
             origin: value.origin.clone(),
@@ -252,9 +360,38 @@ pub trait AppliesMutations: Send + Sync {
     fn append(&self, request: &AppendMutation) -> Result<AppendOutcome, Self::Error>;
 }
 
+/// That a write converted `\r\n` or `\r` line endings to `\n`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineEndingsConverted;
+
+impl From<LineEndingsConverted> for OperationWarning {
+    fn from(_: LineEndingsConverted) -> Self {
+        Self {
+            code: LINE_ENDINGS_CONVERTED.to_owned(),
+            message: "\\r\\n or \\r line endings were written as \\n, as the vault stores all text".to_owned(),
+        }
+    }
+}
+
+/// The warning a text write returns when it converted the line endings it was given.
+fn line_ending_warnings(content: &WriteContent) -> Vec<OperationWarning> {
+    if content.converted_line_endings() {
+        vec![LineEndingsConverted.into()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Injectable time source for deterministic operation events.
 pub trait Clock: Clone + Send + Sync {
     fn now(&self) -> OffsetDateTime;
+
+    /// `instant` (one this clock did not report, such as a file's birth time or a commit's) shown in the zone this
+    /// clock reports in, at the offset that zone had then. The instant itself is unchanged. A clock with no zone of
+    /// its own shows it as given.
+    fn localise(&self, instant: OffsetDateTime) -> OffsetDateTime {
+        instant
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -264,6 +401,19 @@ impl Clock for SystemClock {
     fn now(&self) -> OffsetDateTime {
         OffsetDateTime::now_utc()
     }
+}
+
+/// Rounds `instant` down to the start of its minute and renders it as RFC 3339: the precision
+/// contract for every `created`/`updated` stamp a tool writes into frontmatter, so two stamps
+/// a few seconds apart in the same minute compare equal instead of differing by a raw
+/// sub-second fraction that is noise to an operator reading the file.
+#[must_use]
+pub fn frontmatter_timestamp(instant: OffsetDateTime) -> String {
+    let minute = instant
+        .replace_second(0)
+        .and_then(|value| value.replace_nanosecond(0))
+        .unwrap_or(instant);
+    minute.format(&Rfc3339).unwrap_or_else(|_| minute.to_string())
 }
 
 #[derive(Clone, Debug)]
@@ -321,18 +471,6 @@ pub struct PipelineResult<T> {
     pub warnings: Vec<OperationWarning>,
 }
 
-/// Renders a vault-relative path using forward slashes regardless of
-/// platform, for operation-event summary text: `VaultPath::relative`
-/// returns a native path, and `Path::display` alone would leak the native
-/// separator (`\` on Windows) into persisted log lines and MCP tool output.
-fn forward_slash_display(path: &VaultPath) -> String {
-    path.relative()
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 impl<A, C> WritePipeline<A, C>
 where
     A: AppliesMutations,
@@ -354,7 +492,7 @@ where
             origin: request.origin.clone(),
             summary: format!(
                 "{action} {} ({} bytes)",
-                forward_slash_display(&value.path),
+                value.path.portable_relative(),
                 value.bytes_written
             ),
             at: self.clock.now(),
@@ -362,7 +500,7 @@ where
         Ok(PipelineResult {
             value,
             event: Some(event),
-            warnings: Vec::new(),
+            warnings: line_ending_warnings(&request.content),
         })
     }
 
@@ -373,14 +511,15 @@ where
     /// Returns the adapter's typed error and emits no event when persistence
     /// does not complete.
     pub fn restore(&self, request: &RestoreMutation) -> Result<PipelineResult<WriteOutcome>, A::Error> {
-        let value = self.adapter.write(&WriteMutation::from(request))?;
+        let mutation = WriteMutation::from(request);
+        let value = self.adapter.write(&mutation)?;
         let event = OperationEvent {
             kind: OpKind::Restore,
             paths: vec![value.path.clone()],
             origin: request.origin.clone(),
             summary: format!(
                 "Restored {} ({} bytes)",
-                forward_slash_display(&value.path),
+                value.path.portable_relative(),
                 value.bytes_written
             ),
             at: self.clock.now(),
@@ -388,7 +527,7 @@ where
         Ok(PipelineResult {
             value,
             event: Some(event),
-            warnings: Vec::new(),
+            warnings: line_ending_warnings(&mutation.content),
         })
     }
 
@@ -404,7 +543,7 @@ where
             kind: OpKind::Delete,
             paths: vec![value.path.clone()],
             origin: request.origin.clone(),
-            summary: format!("Deleted {}", forward_slash_display(&value.path)),
+            summary: format!("Deleted {}", value.path.portable_relative()),
             at: self.clock.now(),
         };
         Ok(PipelineResult {
@@ -429,7 +568,7 @@ where
             summary: format!(
                 "Appended {} bytes to {}",
                 value.bytes_appended,
-                forward_slash_display(&value.path)
+                value.path.portable_relative()
             ),
             at: self.clock.now(),
         };
@@ -455,7 +594,7 @@ where
             kind: OpKind::Create,
             paths: vec![value.path.clone()],
             origin: request.origin.clone(),
-            summary: format!("Created directory {}", forward_slash_display(&value.path)),
+            summary: format!("Created directory {}", value.path.portable_relative()),
             at: self.clock.now(),
         });
         Ok(PipelineResult {
@@ -479,8 +618,8 @@ where
             origin: request.origin.clone(),
             summary: format!(
                 "Moved {} to {}",
-                forward_slash_display(&value.source),
-                forward_slash_display(&value.destination)
+                value.source.portable_relative(),
+                value.destination.portable_relative()
             ),
             at: self.clock.now(),
         };

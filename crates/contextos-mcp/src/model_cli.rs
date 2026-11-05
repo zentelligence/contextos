@@ -8,8 +8,8 @@
 //! either application is reused by the other.
 //!
 //! This module never touches `contextos-search`: `FastembedLocal` still only
-//! ever loads an already-populated, explicitly configured `model_directory`
-//! (phase-5-decision-addendum.md A1). `contextos model download` is a
+//! ever loads an already-populated, explicitly configured `model_directory`,
+//! so the search runtime never downloads anything. `contextos model download` is a
 //! separate, explicitly user-invoked utility, never part of MCP tool
 //! dispatch or the search runtime path.
 //!
@@ -21,8 +21,8 @@
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
+use contextos_host::HostFolders;
 use contextos_search::REQUIRED_MODEL_FILES;
-use directories::BaseDirs;
 use hf_hub::api::sync::ApiBuilder;
 use hf_hub::{Cache, CacheRepo};
 use thiserror::Error;
@@ -46,8 +46,8 @@ const CACHE_DIR_NAME: &str = ".fastembed_cache";
 /// Returns [`ModelCliError::HomeDirectoryUnavailable`] when the operator's
 /// home directory cannot be determined.
 pub fn default_model_cache_dir() -> Result<PathBuf, ModelCliError> {
-    let base_dirs = BaseDirs::new().ok_or(ModelCliError::HomeDirectoryUnavailable)?;
-    Ok(base_dirs.home_dir().join(CACHE_DIR_NAME))
+    let folders = HostFolders::detect().ok_or(ModelCliError::HomeDirectoryUnavailable)?;
+    Ok(folders.home().join(CACHE_DIR_NAME))
 }
 
 /// Returns the shared snapshot directory for the default model if every
@@ -67,8 +67,8 @@ fn cached_directory(repo: &CacheRepo) -> Option<PathBuf> {
 ///
 /// `FastembedLocal` only ever reads a flat directory containing every
 /// required file directly; it never calls this function or touches
-/// `hf-hub` itself, so `phase-5-decision-addendum.md` A1's guarantee for
-/// the search runtime path is unaffected. When `configured` already
+/// `hf-hub` itself, so the search runtime path still never downloads
+/// anything. When `configured` already
 /// contains every required file, it is returned unchanged -- today's
 /// behaviour. Otherwise `configured` is tried as an hf-hub cache root (for
 /// example the shared `$HOME/.fastembed_cache` `contextos model download`

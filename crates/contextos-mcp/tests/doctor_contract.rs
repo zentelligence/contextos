@@ -1,4 +1,5 @@
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use serde_json::{Map, json};
@@ -81,7 +82,7 @@ async fn catalogue_advertises_doctor_with_an_object_schema() -> Result<(), Box<d
 #[tokio::test]
 async fn doctor_reports_a_healthy_vault_with_no_failures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].git.enabled = false;
     config.vaults[0].index_md.enabled = false;
     let server = ContextOsServer::try_from(config)?;
@@ -104,7 +105,7 @@ async fn doctor_reports_a_healthy_vault_with_no_failures() -> Result<(), Box<dyn
 async fn doctor_reports_a_missing_managed_index_as_auto_fixable() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].git.enabled = false;
     let server = ContextOsServer::try_from(config)?;
 
@@ -130,7 +131,7 @@ async fn doctor_reports_invalid_frontmatter_as_never_auto_fixable()
         vault.path().join("broken.md"),
         "---\ntitle: Notes: something happened\n---\nBody\n",
     )?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].git.enabled = false;
     config.vaults[0].index_md.enabled = false;
     let server = ContextOsServer::try_from(config)?;
@@ -151,5 +152,202 @@ async fn doctor_reports_invalid_frontmatter_as_never_auto_fixable()
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| std::io::Error::other("Frontmatter validity omitted message"))?;
     assert!(message.contains("broken.md"), "{message}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn doctor_reports_a_duplicate_id_as_never_auto_fixable() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::create_dir_all(vault.path().join("a"))?;
+    std::fs::create_dir_all(vault.path().join("b"))?;
+    std::fs::write(
+        vault.path().join("all.base"),
+        "views:\n  - type: table\n    name: All\n",
+    )?;
+    std::fs::write(
+        vault.path().join("a/first.md"),
+        "---\nid: TASK-007\ntitle: First\n---\nBody\n",
+    )?;
+    std::fs::write(
+        vault.path().join("b/second.md"),
+        "---\nid: TASK-007\ntitle: Second\n---\nBody\n",
+    )?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].git.enabled = false;
+    config.vaults[0].index_md.enabled = false;
+    let server = ContextOsServer::try_from(config)?;
+
+    let result = call_tool(server, "doctor", Map::new()).await?;
+
+    assert_eq!(result.is_error, Some(false));
+    assert_eq!(structured(&result)?.get("has_failures"), Some(&json!(true)));
+    let duplicate = checks(&result)?
+        .into_iter()
+        .find(|check| check.get("subject") == Some(&json!("Duplicate id detection")))
+        .ok_or_else(|| std::io::Error::other("no Duplicate id detection check reported"))?;
+    assert_eq!(duplicate.get("status"), Some(&json!("fail")));
+    assert_eq!(duplicate.get("auto_fixable"), Some(&json!(false)));
+    assert_eq!(duplicate.get("remediation_tool"), None);
+    let message = duplicate
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| std::io::Error::other("Duplicate id detection omitted message"))?;
+    assert!(message.contains("TASK-007"), "{message}");
+    assert!(message.contains("all.base"), "{message}");
+    assert!(message.contains("a/first.md"), "{message}");
+    assert!(message.contains("b/second.md"), "{message}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn doctor_reports_no_duplicate_ids_for_a_healthy_vault() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::write(vault.path().join("a.md"), "---\nid: TASK-001\ntitle: A\n---\nBody\n")?;
+    std::fs::write(vault.path().join("b.md"), "---\nid: TASK-002\ntitle: B\n---\nBody\n")?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].git.enabled = false;
+    config.vaults[0].index_md.enabled = false;
+    let server = ContextOsServer::try_from(config)?;
+
+    let result = call_tool(server, "doctor", Map::new()).await?;
+
+    assert_eq!(result.is_error, Some(false));
+    let duplicate = checks(&result)?
+        .into_iter()
+        .find(|check| check.get("subject") == Some(&json!("Duplicate id detection")))
+        .ok_or_else(|| std::io::Error::other("no Duplicate id detection check reported"))?;
+    assert_eq!(duplicate.get("status"), Some(&json!("pass")));
+    Ok(())
+}
+
+/// `doctor`, and the dry run of a resolution that reuses it, only read: with semantic search configured they check
+/// the provider and report the vector store, without creating the store or the state directory that holds it.
+/// The key is written in the configuration, and the report never shows it.
+#[test]
+fn doctor_checks_semantic_search_without_creating_the_vector_store()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::write(vault.path().join("note.md"), "# Note\n")?;
+    let stub = support::embedding_stub::EmbeddingStub::start()?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    let settings = &mut config.vaults[0];
+    settings.index_md.enabled = false;
+    settings.git.enabled = false;
+    settings.search.text = false;
+    settings.search.graph = false;
+    settings.search.semantic = true;
+    settings.search.embedding = contextos_mcp::EmbeddingConfig {
+        provider: contextos_mcp::EmbeddingProvider::OpenaiCompatible,
+        model: "stub".to_owned(),
+        endpoint: stub.endpoint(),
+        api_key: "sk-doctor-must-not-appear".to_owned(),
+        api_key_env: String::new(),
+        model_directory: None,
+    };
+
+    let report = contextos_mcp::DoctorReport::try_from(&config)?.to_string();
+    let preview = contextos_mcp::preview_resolution_for_cli(&config)?;
+
+    assert!(!report.contains("sk-doctor-must-not-appear"), "{report}");
+
+    assert!(
+        !vault.path().join(".contextos").exists(),
+        "the doctor created the vault's derived state"
+    );
+    assert!(report.contains("Semantic search | PASS"), "{report}");
+    assert!(report.contains("not been built yet"), "{report}");
+    assert!(preview.is_empty(), "{preview:?}");
+    Ok(())
+}
+
+/// An openai-compatible provider with neither a key nor a variable naming one fails its check, and the remediation
+/// offers both ways of supplying it.
+#[test]
+fn doctor_reports_an_openai_compatible_provider_with_no_key_naming_both_ways_to_supply_one()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    let settings = &mut config.vaults[0];
+    settings.index_md.enabled = false;
+    settings.git.enabled = false;
+    settings.search.semantic = true;
+    settings.search.embedding = contextos_mcp::EmbeddingConfig {
+        provider: contextos_mcp::EmbeddingProvider::OpenaiCompatible,
+        model: "stub".to_owned(),
+        endpoint: "https://embeddings.example.com/v1/embeddings".to_owned(),
+        ..contextos_mcp::EmbeddingConfig::default()
+    };
+
+    let report = contextos_mcp::DoctorReport::try_from(&config)?.to_string();
+
+    let semantic = report
+        .lines()
+        .find(|line| line.starts_with("Semantic search |"))
+        .ok_or("no Semantic search line")?;
+    assert!(semantic.starts_with("Semantic search | FAIL"), "{report}");
+    assert!(semantic.contains("api_key or api_key_env"), "{report}");
+    Ok(())
+}
+
+/// A repository whose branch reference is corrupt is damaged, not merely new: the doctor must leave it to the operator
+/// rather than offer `git_init`, which would build history on top of the damage.
+#[test]
+fn doctor_reports_a_corrupt_branch_reference_as_needing_the_operator()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    git2::Repository::init(vault.path())?;
+    let head = std::fs::read_to_string(vault.path().join(".git/HEAD"))?;
+    let branch = head.trim().strip_prefix("ref: ").ok_or("HEAD is not symbolic")?;
+    std::fs::write(vault.path().join(".git").join(branch), "not an object id\n")?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].index_md.enabled = false;
+
+    let report = contextos_mcp::DoctorReport::try_from(&config)?.to_string();
+    let preview = contextos_mcp::preview_resolution_for_cli(&config)?;
+
+    let git_line = report
+        .lines()
+        .find(|line| line.starts_with("Git recovery |"))
+        .ok_or("no Git recovery line")?;
+    assert!(git_line.starts_with("Git recovery | FAIL"), "{report}");
+    assert!(!git_line.contains("no commits yet"), "{report}");
+    assert!(
+        preview.iter().all(|outcome| outcome.subject != "Git recovery"),
+        "{preview:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn doctor_reports_an_invalid_team_as_a_team_config_failure_through_the_tool()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::create_dir_all(vault.path().join(".contextos"))?;
+    std::fs::write(
+        vault.path().join(".contextos/team.toml"),
+        "[[member]]\nslug = \"atlas\"\nname = \"Atlas\"\nchief_of_staff = true\n\
+         [[member]]\nslug = \"vela\"\nname = \"Vela\"\nchief_of_staff = true\n",
+    )?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].git.enabled = false;
+    config.vaults[0].index_md.enabled = false;
+    let server = ContextOsServer::try_from(config)?;
+
+    let result = call_tool(server, "doctor", Map::new()).await?;
+
+    assert_eq!(result.is_error, Some(false));
+    assert_eq!(structured(&result)?.get("has_failures"), Some(&json!(true)));
+    let team = checks(&result)?
+        .into_iter()
+        .find(|check| check.get("subject") == Some(&json!("Team configuration")))
+        .ok_or_else(|| std::io::Error::other("no Team configuration check reported"))?;
+    assert_eq!(team.get("status"), Some(&json!("fail")));
+    assert_eq!(team.get("auto_fixable"), Some(&json!(false)));
+    let message = team
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| std::io::Error::other("Team configuration omitted message"))?;
+    assert!(message.contains("several-chiefs-of-staff"), "{message}");
+    assert!(!message.contains("Atlas") && !message.contains("Vela"), "{message}");
     Ok(())
 }

@@ -1,6 +1,6 @@
 # ContextOS Server
 
-ContextOS Server is a Rust implementation of a Model Context Protocol (MCP) server for operating ContextOS knowledge vaults: Obsidian-flavoured Markdown vaults with structured notes, Bases, and Canvas files. The repository name is `context-os-mcp`; the installed binary is `contextos`.
+ContextOS Server is a Rust implementation of a Model Context Protocol (MCP) server for operating ContextOS knowledge vaults: Obsidian-flavoured Markdown vaults with structured notes, Bases, and Canvas files. The repository name is `context-os`; the installed binary is `contextos`.
 
 It is a vault-aware execution layer, not a generic filesystem MCP: every write is path-safe and atomic, and the server layers automatic `index.md` maintenance, append-only operation logging, local Git recovery, structured Obsidian operations, and text/graph/semantic search on top.
 
@@ -13,7 +13,7 @@ It is a vault-aware execution layer, not a generic filesystem MCP: every write i
 | Recovery | Stage mutations and create debounced local Git commits; restore historical content without rewriting history |
 | Obsidian | Structured note/frontmatter, Bases, Canvas, and wikilink operations with validation |
 | Query | Ranked text search, link-graph traversal, and opt-in local semantic search |
-| Transport | MCP over stdio and authenticated streamable HTTP from one service instance |
+| Transport | MCP protocol revision 2026-07-28 (earlier revisions as far as the rmcp SDK serves them) over stdio and authenticated streamable HTTP from one service instance |
 | Extension | Feature-gated, namespaced modules using the same secured core services |
 
 See [`docs/mcp-tools.md`](docs/mcp-tools.md) for the full tool catalogue.
@@ -76,18 +76,24 @@ Hexagonal Cargo workspace; every dependency edge points towards `contextos-core`
 | `contextos-oplog` | Append-only operation logging |
 | `contextos-git` | Local repository status, staging, commit, diff, and recovery |
 | `contextos-search` | Text, graph, vector, and embedding services |
+| `contextos-markdown` | Pure rendering of vault notes to HTML: the dialect, fences, author HTML allowlist, and link routing port |
 | `contextos-mermaid` | Mermaid diagram parsing, layout, and SVG rendering |
 | `contextos-ephemeris` | Optional astronomical/astrological calculations (moon phase, solar events, personal-year periods) |
 | `contextos-mcp` | MCP tool registry, configuration, stdio, and HTTP transports |
+| `contextos-workflows` | Rhai workflow execution, saved-job scheduling rules, and run-record helpers |
+| `contextos-web` | Web interface, saved-job discovery and scheduling, and the workflow engine's MCP caller |
 
 Every mutation passes through one write pipeline: validate, check for conflicts, write atomically (temp file, fsync, rename), then route the resulting event to the index, operation log, Git, and search substrates. A downstream substrate failure becomes a typed warning; it never rolls back a completed write.
 
+A workflow defines executable logic, a job saves its configuration, and a run records one invocation. `contextos-web` hosts `contextos-workflows`; the execution library has no dependency on its host. The Workflows navigation heading leads to saved-job management, where job-specific manifests, routes, and favourites retain their names.
+
 ## Documentation
 
-- [`docs/installation.md`](docs/installation.md) — building, installing, and first run
-- [`docs/configuration.md`](docs/configuration.md) — `config.toml` reference
-- [`docs/cli-reference.md`](docs/cli-reference.md) — every `contextos` subcommand
-- [`docs/mcp-tools.md`](docs/mcp-tools.md) — the MCP tools the server registers
+- [`docs/installation.md`](docs/installation.md): building, installing, and first run
+- [`docs/configuration.md`](docs/configuration.md): `config.toml` reference
+- [`docs/cli-reference.md`](docs/cli-reference.md): every `contextos` subcommand
+- [`docs/mcp-tools.md`](docs/mcp-tools.md): the MCP tools the server registers
+- [`docs/rendering.md`](docs/rendering.md): how the web interface renders notes, Base, Canvas, and diagram files
 - API/code reference: run `cargo doc --workspace --no-deps --open`
 
 ## Contributing

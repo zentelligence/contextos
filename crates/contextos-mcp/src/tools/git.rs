@@ -5,11 +5,11 @@
 
 use std::sync::Arc;
 
-use contextos_core::{Clock, SystemClock, VaultPath, VaultPathInput, VaultRoot};
+use contextos_core::{Clock, PortableRelativePath, SystemClock, VaultPath, VaultPathInput, VaultRoot};
 use contextos_fs::{FilesystemService, FilesystemServiceConfig};
 use contextos_git::{
-    GitCommitResult, GitDiffRequest, GitDiffResult, GitInitResult, GitLogEntry, GitLogRequest, GitRestoreRequest,
-    GitRestoreResult, GitStatusResult,
+    GitCommitFailure, GitCommitResult, GitDiffRequest, GitDiffResult, GitInitResult, GitLogEntry, GitLogRequest,
+    GitRestoreRequest, GitRestoreResult, GitStatusResult,
 };
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::schemars;
@@ -344,8 +344,8 @@ impl From<GitCommitResult> for GitCommitToolResult {
             commit_id: value.commit_id,
             committed_paths: value
                 .committed_paths
-                .into_iter()
-                .map(|path| path.to_string_lossy().into_owned())
+                .iter()
+                .map(|path| String::from(PortableRelativePath(path)))
                 .collect(),
             message: value.message,
         }
@@ -382,6 +382,32 @@ struct GitStatusToolResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "crate::resource_support::optional_u64_schema")]
     seconds_until_auto_commit: Option<u64>,
+    /// The latest failed attempt to commit the pending paths; absent while commits are succeeding. The paths stay
+    /// pending and the commit is retried, so this is the cue to look at the repository (a locked reference, say).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    commit_failure: Option<GitCommitFailureToolResult>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct GitCommitFailureToolResult {
+    /// Stable machine-readable error code, such as `git/commit`.
+    code: String,
+    message: String,
+    /// Consecutive failed attempts since the last successful commit.
+    attempts: u32,
+    /// When the latest attempt failed, as a Unix timestamp.
+    at_unix: i64,
+}
+
+impl From<GitCommitFailure> for GitCommitFailureToolResult {
+    fn from(value: GitCommitFailure) -> Self {
+        Self {
+            code: value.code,
+            message: value.message,
+            attempts: value.attempts,
+            at_unix: value.at_unix,
+        }
+    }
 }
 
 impl From<(GitStatusResult, Option<u64>)> for GitStatusToolResult {
@@ -395,6 +421,7 @@ impl From<(GitStatusResult, Option<u64>)> for GitStatusToolResult {
             untracked: value.0.untracked,
             pending_paths: value.0.pending_paths,
             seconds_until_auto_commit: value.1,
+            commit_failure: value.0.commit_failure.map(GitCommitFailureToolResult::from),
         }
     }
 }

@@ -78,6 +78,6 @@ fn fake_embedder_empty_input_yields_empty_output_without_error() -> Result<(), B
 
     let vectors = embedder.embed(&[])?;
 
-    assert!(vectors.is_empty());
+    assert!(vectors.is_empty(), "`vectors` should be empty, got {vectors:?}");
     Ok(())
 }

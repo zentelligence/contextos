@@ -50,6 +50,31 @@ fn accepts_relative_path_beneath_sole_root() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// `Path`'s own `PartialEq` compares components, not raw strings, so
+/// `path.relative() == Path::new("notes/welcome.md")` above passes on every
+/// platform regardless of which separator the underlying string actually
+/// uses. `portable_relative` is the one every MCP tool response's JSON
+/// "path" field is built from, and that byte-for-byte string is what a
+/// cross-platform client actually receives, so this asserts the string
+/// itself, not a `Path`-normalised comparison of it.
+#[test]
+fn portable_relative_is_forward_slash_separated_regardless_of_host_platform() -> Result<(), Box<dyn std::error::Error>>
+{
+    let vault = tempdir()?;
+    let notes = vault.path().join("notes");
+    std::fs::create_dir(&notes)?;
+    std::fs::write(notes.join("welcome.md"), "hello")?;
+    let roots = sole_root(vault.path().to_path_buf())?;
+
+    let path = VaultPath::try_from(VaultPathInput {
+        roots: &roots,
+        raw: "notes/welcome.md",
+    })?;
+
+    assert_eq!(path.portable_relative(), "notes/welcome.md");
+    Ok(())
+}
+
 #[test]
 fn accepts_absolute_path_beneath_a_root() -> Result<(), Box<dyn std::error::Error>> {
     let vault = tempdir()?;
@@ -223,6 +248,75 @@ fn requires_absolute_paths_when_more_than_one_root_is_configured() -> Result<(),
     Ok(())
 }
 
+/// An empty root set is a supported startup state, not a construction failure, so both a fresh bootstrap with no
+/// `[[vault]]` entries yet and `contextos config vault remove` clearing the last one can reach it.
+#[test]
+fn vault_set_accepts_zero_configured_roots() -> Result<(), Box<dyn std::error::Error>> {
+    let roots = VaultSet::try_from(Vec::new())?;
+
+    assert!(roots.is_empty());
+    assert_eq!(roots.len(), 0);
+    Ok(())
+}
+
+/// A relative path against zero configured roots must not be misreported as `AmbiguousRoot` (which means "more than
+/// one candidate"): zero roots is a distinct, more actionable condition, since there is nothing to disambiguate
+/// between and no path a caller could pass would ever help.
+#[test]
+fn relative_path_with_zero_configured_roots_is_reported_as_no_roots() -> Result<(), Box<dyn std::error::Error>> {
+    let roots = VaultSet::try_from(Vec::new())?;
+
+    let result = VaultPath::try_from(VaultPathInput {
+        roots: &roots,
+        raw: "welcome.md",
+    });
+
+    assert!(matches!(result, Err(PathError::NoRoots)));
+    Ok(())
+}
+
+/// An absolute path against zero configured roots is equally `NoRoots`, not `OutsideRoot` (which implies roots exist
+/// but this path is not under any of them).
+#[test]
+fn absolute_path_with_zero_configured_roots_is_reported_as_no_roots() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    let roots = VaultSet::try_from(Vec::new())?;
+    let raw = vault.path().to_str().ok_or("tempdir path is not valid UTF-8")?;
+
+    let result = VaultPath::try_from(VaultPathInput { roots: &roots, raw });
+
+    assert!(matches!(result, Err(PathError::NoRoots)));
+    Ok(())
+}
+
+/// A `{name}://...` selector against zero configured roots is also `NoRoots`, not `UnknownVaultName`: with nothing
+/// configured at all, "no vaults are configured" is the more actionable signal than "that particular name is
+/// unknown".
+#[test]
+fn named_prefix_with_zero_configured_roots_is_reported_as_no_roots() -> Result<(), Box<dyn std::error::Error>> {
+    let roots = VaultSet::try_from(Vec::new())?;
+
+    let result = VaultPath::try_from(VaultPathInput {
+        roots: &roots,
+        raw: "mine://welcome.md",
+    });
+
+    assert!(matches!(result, Err(PathError::NoRoots)));
+    Ok(())
+}
+
+/// `try_from_vault_selector` (the Git tools' `vault` field, `vault_index_rebuild`'s default `"."`) must surface the
+/// identical `NoRoots` error with zero configured roots, not an implicit current-working-directory fallback.
+#[test]
+fn vault_selector_with_zero_configured_roots_is_reported_as_no_roots() -> Result<(), Box<dyn std::error::Error>> {
+    let roots = VaultSet::try_from(Vec::new())?;
+
+    let result = VaultPath::try_from_vault_selector(&roots, ".");
+
+    assert!(matches!(result, Err(PathError::NoRoots)));
+    Ok(())
+}
+
 #[test]
 fn a_named_prefix_resolves_against_that_vault_without_an_absolute_path() -> Result<(), Box<dyn std::error::Error>> {
     let first = tempdir()?;
@@ -387,11 +481,10 @@ fn a_named_prefix_still_rejects_traversal_in_the_remainder() -> Result<(), Box<d
 
 #[test]
 fn a_named_prefix_is_not_misclassified_as_an_alternate_data_stream() -> Result<(), Box<dyn std::error::Error>> {
-    // Regression for the specific risk the phase 9 change brief calls out:
-    // `validate_windows_input` rejects any raw string containing `:` outside
-    // a drive-letter position as `AlternateDataStream`, so a `name://` prefix
-    // must be detected and stripped before that check ever sees the raw
-    // string, not after.
+    // Regression: `validate_windows_input` rejects any raw string containing
+    // `:` outside a drive-letter position as `AlternateDataStream`, so a
+    // `name://` prefix must be detected and stripped before that check ever
+    // sees the raw string, not after.
     let first = tempdir()?;
     let second = tempdir()?;
     std::fs::write(second.path().join("welcome.md"), "hello")?;

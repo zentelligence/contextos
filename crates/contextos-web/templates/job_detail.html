@@ -1,0 +1,20 @@
+<div class="jobs-screen">
+{% for notice in notices %}  <p class="job-message" role="alert">{{ notice }}</p>
+{% endfor %}  <a href="{{ workflow_href }}">All jobs in this workflow</a>
+  <section class="panel" style="--job-accent:var(--entity-{{ job.accent }})">
+    <header class="panel-header"><h1>{{ job.name }}</h1>{{ job.favourite_toggle_html|safe }}</header>
+    <div class="job-detail-summary">
+      <span class="job-avatar"><span class="ic ic-jobs" aria-hidden="true"></span></span>
+      <span class="badge"><span class="ic ic-{{ job.owner_icon }}" aria-hidden="true"></span>Owner: {{ job.owner_name }}</span>
+      <span class="job-status"><span class="status-dot {{ job.state }}" aria-hidden="true"></span>{{ job.state }}</span>
+    </div>
+    <dl class="job-properties">
+      <div><dt>Last run</dt><dd>{{ job.last_run }}</dd></div>
+{% for fact in facts %}      <div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>
+{% endfor %}    </dl>
+{% if !registers %}    <p role="alert">This job does not register, so it cannot run. Validate it to see why.</p>
+{% endif %}  </section>
+{{ status_html|safe }}
+{{ release_html|safe }}
+{{ runs_html|safe }}
+</div>

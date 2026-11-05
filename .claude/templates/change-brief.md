@@ -18,6 +18,7 @@
 - In:
 - Out:
 - Affected crates/boundaries:
+- Plugin `mcp-tools` skill impact (or why none):
 
 ## Holistic quality assessment
 

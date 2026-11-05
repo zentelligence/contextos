@@ -10,7 +10,6 @@ Always read `AGENTS.md` first. Then route the task through this index.
 | Paths, writes, HTTP, secrets, or external content | `security.md` |
 | Rust code, dependencies, errors, async, or logging | `rust-quality.md` |
 | Completion or CI | `../workflows/quality-gate.md` |
-| Session memory, diaries, or vault knowledge stores | `memory.md` |
 | Code review | `../reviewers/code-review.md` |
 | Requirement or phase review | `../reviewers/specification-review.md` |
 

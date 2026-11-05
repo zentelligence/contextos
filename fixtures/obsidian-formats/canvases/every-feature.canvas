@@ -2,57 +2,86 @@
   "nodes": [
     {
       "id": "1000000000000001",
-      "type": "group",
-      "x": -40,
-      "y": -40,
-      "width": 980,
-      "height": 480,
-      "label": "Every feature",
-      "background": "Attachments/background.png",
-      "backgroundStyle": "cover",
-      "color": "4"
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 250,
+      "height": 100,
+      "color": "4",
+      "text": "# Overview\n\nProject overview note."
     },
     {
       "id": "1000000000000002",
       "type": "text",
       "x": 0,
-      "y": 0,
-      "width": 280,
-      "height": 160,
-      "text": "# Text node\n\nMarkdown content",
-      "color": "#AABBCC"
+      "y": 250,
+      "width": 200,
+      "height": 100,
+      "text": "Task A"
     },
     {
       "id": "1000000000000003",
-      "type": "file",
-      "x": 340,
-      "y": 0,
-      "width": 260,
-      "height": 200,
-      "file": "Notes/Source.md",
-      "subpath": "#Evidence"
+      "type": "text",
+      "x": 400,
+      "y": 250,
+      "width": 200,
+      "height": 100,
+      "color": "#3355ff",
+      "text": "Task B"
     },
     {
       "id": "1000000000000004",
-      "type": "link",
-      "x": 660,
+      "type": "file",
+      "x": 400,
       "y": 0,
-      "width": 240,
-      "height": 120,
-      "url": "https://jsoncanvas.org"
+      "width": 250,
+      "height": 100,
+      "file": "reference/spec.md",
+      "subpath": "#Design"
+    },
+    {
+      "id": "1000000000000005",
+      "type": "link",
+      "x": 700,
+      "y": 0,
+      "width": 250,
+      "height": 100,
+      "url": "https://example.com/reference"
+    },
+    {
+      "id": "1000000000000006",
+      "type": "group",
+      "x": -40,
+      "y": 210,
+      "width": 680,
+      "height": 180,
+      "label": "Tasks",
+      "background": "#eeeeee",
+      "backgroundStyle": "cover"
     }
   ],
   "edges": [
     {
-      "id": "2000000000000001",
-      "fromNode": "1000000000000002",
-      "fromSide": "right",
+      "id": "e-1-2",
+      "fromNode": "1000000000000001",
+      "fromSide": "bottom",
+      "toNode": "1000000000000002",
+      "toSide": "top",
+      "label": "leads to",
+      "color": "1"
+    },
+    {
+      "id": "e-1-4",
+      "fromNode": "1000000000000001",
       "fromEnd": "none",
+      "toNode": "1000000000000004",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "e-2-3",
+      "fromNode": "1000000000000002",
       "toNode": "1000000000000003",
-      "toSide": "left",
-      "toEnd": "arrow",
-      "color": "6",
-      "label": "supports"
+      "color": "#00ff00"
     }
   ]
 }

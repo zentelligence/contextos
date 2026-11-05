@@ -1,0 +1,10 @@
+{% import "vault_settings_nav.html" as settings_nav %}
+<div class="vault-settings settings" hx-ext="json-enc">
+  <h1>Vault Settings</h1>
+  <div class="settings-grid">
+    {% call settings_nav::nav(nav) %}{% endcall %}
+    <div class="settings-content">
+      {{ panel_html|safe }}
+    </div>
+  </div>
+</div>

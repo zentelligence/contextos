@@ -1,0 +1,136 @@
+{# The Activity log: the operation log and session summaries, read only. Both are append-only records of what
+   happened, so there is deliberately no edit, new, or save affordance anywhere on this page. #}
+{% macro neighbour_link(neighbour, rel, direction) %}
+<a
+  class="btn small"
+  rel="{{ rel }}"
+  href="{{ neighbour.href }}"
+  hx-get="{{ neighbour.href }}"
+  hx-target="closest .vault-settings"
+  hx-swap="outerHTML"
+  hx-push-url="true"
+>{% if direction == "previous" %}<span class="ic ic-chevron-left" aria-hidden="true"></span> {{ neighbour.label }}{% else %}{{ neighbour.label }} <span class="ic ic-chevron-right" aria-hidden="true"></span>{% endif %}</a>
+{% endmacro %}
+<section class="settings-panel vm-panel" aria-labelledby="vm-heading">
+  <header class="vm-header">
+    <h2 id="vm-heading"><span class="ic ic-{{ icon }}" aria-hidden="true"></span> Activity log</h2>
+    <p class="hint vm-read-only"><span class="ic ic-circle-alert" aria-hidden="true"></span> Read only. The operation log and session summaries are append-only records, written as work happens; they are never edited here.</p>
+  </header>
+{% if tabs.len() > 1 %}
+  <nav class="vm-tabs" aria-label="Activity records">
+  {% for tab in tabs %}
+    <a
+      class="vm-tab{% if tab.active %} active{% endif %}"
+      href="{{ tab.href }}"
+      hx-get="{{ tab.href }}"
+      hx-target="closest .vault-settings"
+      hx-swap="outerHTML"
+      hx-push-url="true"
+      {% if tab.active %}aria-current="page"{% endif %}
+    >{{ tab.label }}</a>
+  {% endfor %}
+  </nav>
+{% endif %}
+  <div class="vm-library">
+    <aside class="vm-tree" aria-label="{{ source_label }} by date">
+      <div class="tree-nest">
+      {% for event in tree_events %}
+        {% match event %}
+        {% when TreeEvent::OpenFolder with (label, is_open) %}
+        <details class="nav-group" {% if *is_open %}open{% endif %}>
+          <summary class="nav-group-summary">
+            <span class="nav-group-heading-link"><span class="nav-group-label-text">{{ label }}</span></span>
+            <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="tree-nest">
+        {% when TreeEvent::CloseFolder %}
+          </div>
+        </details>
+        {% when TreeEvent::Leaf with (leaf) %}
+        <a
+          class="notes-list-item{% if leaf.active %} active{% endif %}"
+          href="{{ leaf.href }}"
+          hx-get="{{ leaf.href }}"
+          hx-target="closest .vault-settings"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+          {% if leaf.active %}aria-current="page"{% endif %}
+        >
+          <span class="notes-list-item-title">{{ leaf.label }}</span>
+        {% if !leaf.detail.is_empty() %}
+          <span class="hint mono">{{ leaf.detail }}</span>
+        {% endif %}
+        </a>
+        {% endmatch %}
+      {% endfor %}
+      </div>
+    </aside>
+    <div class="vm-main" id="vm-main">
+    {% match main %}
+    {% when MainView::Empty with (message) %}
+      <div class="vm-empty"><p>{{ message }}</p></div>
+    {% when MainView::Day with (day) %}
+      <div class="vm-main-header">
+        <div>
+          <h3>{{ day.title }}</h3>
+          <p class="hint mono">{{ day.path }}</p>
+        </div>
+        <div class="header-actions">
+        {% if let Some(previous) = day.previous %}{% call neighbour_link(previous, "prev", "previous") %}{% endcall %}{% endif %}
+        {% if let Some(next) = day.next %}{% call neighbour_link(next, "next", "next") %}{% endcall %}{% endif %}
+        </div>
+      </div>
+      <p class="vm-day-summary">
+        <span>{{ day.entry_count }} {% if day.entry_count == 1 %}operation{% else %}operations{% endif %}</span>
+        <span>{{ day.file_count }} {% if day.file_count == 1 %}file{% else %}files{% endif %}</span>
+      {% for (operation, count) in day.operations %}
+        <span class="badge">{{ operation }} {{ count }}</span>
+      {% endfor %}
+      </p>
+    {% if day.lines.is_empty() %}
+      <div class="vm-empty"><p>Nothing was logged on this day.</p></div>
+    {% else %}
+      <table class="vm-table vm-log-table">
+        <thead>
+          <tr><th scope="col" class="vm-log-time">Time</th><th scope="col" class="vm-log-origin">Origin</th><th scope="col" class="vm-log-operation">Operation</th><th scope="col">What happened</th></tr>
+        </thead>
+        <tbody>
+        {% for line in day.lines %}
+          {% match line %}
+          {% when DayLine::Entry with (entry) %}
+          <tr>
+            <td class="mono">{{ entry.time }}</td>
+            <td class="mono">{{ entry.origin }}</td>
+            <td><span class="badge">{{ entry.operation }}</span></td>
+            <td>
+              {{ entry.description }}
+            {% if !entry.files.is_empty() %}
+              <ul class="vm-log-files" aria-label="Files touched">
+              {% for file in entry.files %}<li><a class="mono" href="{{ file.href }}">{{ file.path }}</a></li>{% endfor %}
+              </ul>
+            {% endif %}
+            </td>
+          </tr>
+          {% when DayLine::Other with (text) %}
+          <tr class="vm-log-unstructured"><td colspan="4"><span class="mono">{{ text }}</span></td></tr>
+          {% endmatch %}
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+    {% when MainView::Document with (document) %}
+      <div class="vm-main-header">
+        <div>
+          <h3>{{ document.title }}</h3>
+          <p class="hint mono">{% if !document.meta.is_empty() %}{{ document.meta }} &middot; {% endif %}{{ document.path }}</p>
+        </div>
+        <div class="header-actions">
+        {% if let Some(previous) = document.previous %}{% call neighbour_link(previous, "prev", "previous") %}{% endcall %}{% endif %}
+        {% if let Some(next) = document.next %}{% call neighbour_link(next, "next", "next") %}{% endcall %}{% endif %}
+        </div>
+      </div>
+      <div class="wiki-rendered">{{ document.html|safe }}</div>
+    {% endmatch %}
+    </div>
+  </div>
+</section>

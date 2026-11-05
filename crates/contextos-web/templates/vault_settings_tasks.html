@@ -1,0 +1,126 @@
+{# The Tasks section's structured editor over `.contextos/tasks.toml`. Every row's fields submit under an indexed name;
+   Add, Remove, and Move are submit buttons naming an `edit_action`, which returns the changed draft without writing.
+   Only Save validates and writes; the draft-only buttons skip the browser's own field checks (`formnovalidate`), so an
+   empty new row can still be removed. The first control in the form is a Save button, so pressing Enter in a field
+   saves rather than triggering the first Move button. #}
+{% macro row_controls(list, at, noun) %}
+<span class="tasks-editor-row-actions">
+  <button type="submit" class="icon-button" formnovalidate name="edit_action" value="up:{{ list }}:{{ at.index }}" aria-label="Move {{ noun }} {{ at.index + 1 }} up"{% if at.first %} disabled{% endif %}><span class="ic ic-chevron-up" aria-hidden="true"></span></button>
+  <button type="submit" class="icon-button" formnovalidate name="edit_action" value="down:{{ list }}:{{ at.index }}" aria-label="Move {{ noun }} {{ at.index + 1 }} down"{% if at.last %} disabled{% endif %}><span class="ic ic-chevron-down" aria-hidden="true"></span></button>
+  <button type="submit" class="icon-button" formnovalidate name="edit_action" value="remove:{{ list }}:{{ at.index }}" aria-label="Remove {{ noun }} {{ at.index + 1 }}"><span class="ic ic-x" aria-hidden="true"></span></button>
+</span>
+{% endmacro %}
+{% macro stage_table(stages, add_action, noun) %}
+    <table class="tasks-editor-table">
+      <colgroup><col><col><col class="tasks-editor-col-select"><col class="tasks-editor-col-select"><col class="tasks-editor-col-select"><col class="tasks-editor-col-select"><col class="tasks-editor-col-actions"></colgroup>
+      <thead><tr><th scope="col">State</th><th scope="col">Label</th><th scope="col">Icon</th><th scope="col">Focus section</th><th scope="col">Colour</th><th scope="col">Closes</th><th scope="col"><span class="visually-hidden">Order</span></th></tr></thead>
+      <tbody>
+      {% for stage in stages %}
+        <tr>
+          <td><input type="text" name="{{ stage.name }}.state" value="{{ stage.state }}" aria-label="{{ noun }} {{ stage.at.index + 1 }}" required spellcheck="false" autocomplete="off"></td>
+          <td><input type="text" name="{{ stage.name }}.label" value="{{ stage.label }}" aria-label="Label for {{ noun }} {{ stage.at.index + 1 }}" autocomplete="off"></td>
+          <td><select name="{{ stage.name }}.icon" aria-label="Icon for {{ noun }} {{ stage.at.index + 1 }}">{% for choice in stage.icons %}<option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}</select></td>
+          <td><select name="{{ stage.name }}.bucket" aria-label="Focus section for {{ noun }} {{ stage.at.index + 1 }}">{% for choice in stage.buckets %}<option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}</select></td>
+          <td><span class="stage-colour-field"><span class="status-chip colour-{{ stage.colour }}" aria-hidden="true">{% if stage.state.is_empty() %}state{% else %}{{ stage.state }}{% endif %}</span><select name="{{ stage.name }}.colour" aria-label="Colour for {{ noun }} {{ stage.at.index + 1 }}">{% for choice in stage.colours %}<option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}</select></span></td>
+          <td><select name="{{ stage.name }}.closes" aria-label="Whether {{ noun }} {{ stage.at.index + 1 }} closes a task">{% for choice in stage.closes %}<option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}</select></td>
+          <td>{% call row_controls(stage.list, stage.at, noun) %}{% endcall %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button type="submit" class="btn small" formnovalidate name="edit_action" value="{{ add_action }}"><span class="ic ic-square-pen" aria-hidden="true"></span> Add stage</button>
+{% endmacro %}
+{% macro pane(tasks, vault_name) %}
+<form
+  class="tasks-editor"
+  hx-patch="{{ urls.settings() }}"
+  hx-target="closest .vault-settings"
+  hx-swap="outerHTML"
+>
+  <button type="submit" class="visually-hidden" tabindex="-1" aria-hidden="true">Save</button>
+  <input type="hidden" name="target" value="tasks">
+  <input type="hidden" name="expected_hash" value="{{ tasks.expected_hash }}">
+{% if let Some(error) = tasks.error %}
+  <p class="hint error" role="alert">{{ error }}</p>
+{% endif %}
+{% if let Some(notice) = tasks.notice %}
+  <p class="hint">{{ notice }}</p>
+{% endif %}
+{% if tasks.unsaved %}
+  <p class="hint tasks-editor-unsaved" role="status">Unsaved changes. Save to keep them.</p>
+{% endif %}
+
+  <fieldset class="tasks-editor-group">
+    <legend>Task types</legend>
+    <p class="hint">What a task can be. A type with an id prefix takes its ids from that series when the tasks sidecar declares it. A new task starts in its type's chosen state. Each type moves through its own stages, or the shared stages when it has none of its own.</p>
+    <table class="tasks-editor-table">
+      <colgroup><col><col><col class="tasks-editor-col-prefix"><col class="tasks-editor-col-select"><col class="tasks-editor-col-select"><col class="tasks-editor-col-actions"></colgroup>
+      <thead><tr><th scope="col">Value</th><th scope="col">Label</th><th scope="col">Id prefix</th><th scope="col">Starts in</th><th scope="col">Stages</th><th scope="col"><span class="visually-hidden">Order</span></th></tr></thead>
+      <tbody>
+      {% for entry in tasks.task_types %}
+        <tr>
+          <td><input type="text" name="task_type.{{ entry.at.index }}.value" value="{{ entry.value }}" aria-label="Task type {{ entry.at.index + 1 }}" required spellcheck="false" autocomplete="off"></td>
+          <td><input type="text" name="task_type.{{ entry.at.index }}.label" value="{{ entry.label }}" aria-label="Label for task type {{ entry.at.index + 1 }}" autocomplete="off"></td>
+          <td><input type="text" name="task_type.{{ entry.at.index }}.prefix" value="{{ entry.prefix }}" aria-label="Id prefix for task type {{ entry.at.index + 1 }}" class="tasks-editor-narrow" spellcheck="false" autocomplete="off"></td>
+          <td><select name="task_type.{{ entry.at.index }}.initial" aria-label="State a new task of type {{ entry.at.index + 1 }} starts in">{% for choice in entry.initials %}<option value="{{ choice.value }}"{% if choice.selected %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}</select></td>
+          <td>{% if entry.own_stages %}<button type="submit" class="btn small" formnovalidate name="edit_action" value="share:task_type:{{ entry.at.index }}" aria-label="Use the shared stages for task type {{ entry.at.index + 1 }}">Own: use shared</button>{% else %}<button type="submit" class="btn small" formnovalidate name="edit_action" value="own:task_type:{{ entry.at.index }}" aria-label="Give task type {{ entry.at.index + 1 }} its own stages">Shared: give own</button>{% endif %}</td>
+          <td>{% call row_controls("task_type", entry.at, "task type") %}{% endcall %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button type="submit" class="btn small" formnovalidate name="edit_action" value="add:task_type"><span class="ic ic-square-pen" aria-hidden="true"></span> Add task type</button>
+  </fieldset>
+
+  <fieldset class="tasks-editor-group">
+    <legend>Shared stages</legend>
+    <p class="hint">{% if let Some(users) = tasks.shared_by %}The stages of {{ users }}, in lifecycle order{% else %}Every task type has its own stages, so these serve only tasks whose type is not declared, or which have none{% endif %}: the stage strip's tiles, the State choices, the Focus section each stage's tasks appear in, and whether entering it closes a task, stamping its completed or cancelled date.</p>
+    {% call stage_table(&tasks.stages, "add:stage", "shared state") %}{% endcall %}
+  </fieldset>
+{% for own in tasks.type_stages %}
+
+  <fieldset class="tasks-editor-group">
+    <legend>{{ own.label }} stages</legend>
+    <p class="hint">The stages of {{ own.label }} alone, in lifecycle order.</p>
+    {% call stage_table(&own.stages, format!("add:type_stage:{}", own.owner), format!("{} state", own.label)) %}{% endcall %}
+  </fieldset>
+{% endfor %}
+
+  <fieldset class="tasks-editor-group">
+    <legend>Priorities</legend>
+    <p class="hint">Most urgent first. Sorting by priority follows this order; a task may also have no priority.</p>
+    <table class="tasks-editor-table">
+      <colgroup><col><col><col class="tasks-editor-col-actions"></colgroup>
+      <thead><tr><th scope="col">Value</th><th scope="col">Label</th><th scope="col"><span class="visually-hidden">Order</span></th></tr></thead>
+      <tbody>
+      {% for entry in tasks.priorities %}
+        <tr>
+          <td><input type="text" name="priority.{{ entry.at.index }}.value" value="{{ entry.value }}" aria-label="Priority {{ entry.at.index + 1 }}" required spellcheck="false" autocomplete="off"></td>
+          <td><input type="text" name="priority.{{ entry.at.index }}.label" value="{{ entry.label }}" aria-label="Label for priority {{ entry.at.index + 1 }}" autocomplete="off"></td>
+          <td>{% call row_controls("priority", entry.at, "priority") %}{% endcall %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button type="submit" class="btn small" formnovalidate name="edit_action" value="add:priority"><span class="ic ic-square-pen" aria-hidden="true"></span> Add priority</button>
+  </fieldset>
+
+  <fieldset class="tasks-editor-group">
+    <legend>Hierarchy depth labels</legend>
+    <p class="hint">What the hierarchy view calls each level of the parent tree, from the top. Levels beyond the list have no label.</p>
+    <ol class="tasks-editor-labels">
+    {% for label in tasks.depth_labels %}
+      <li>
+        <input type="text" name="depth_label.{{ label.at.index }}" value="{{ label.label }}" aria-label="Label for level {{ label.at.index + 1 }}" autocomplete="off">
+        {% call row_controls("depth_label", label.at, "level") %}{% endcall %}
+      </li>
+    {% endfor %}
+    </ol>
+    <button type="submit" class="btn small" formnovalidate name="edit_action" value="add:depth_label"><span class="ic ic-square-pen" aria-hidden="true"></span> Add level</button>
+  </fieldset>
+
+  <div class="save-bar">
+    <button type="submit" class="btn primary small">Save</button>
+  </div>
+</form>
+{% endmacro %}

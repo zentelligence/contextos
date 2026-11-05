@@ -1,4 +1,5 @@
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use serde_json::{Map, json};
@@ -55,7 +56,7 @@ async fn base_query_resolves_a_named_view_sorts_limits_and_renders_every_format(
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     write_notes(vault.path())?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let definition = json!({
         "filters": "file.ext == \"md\"",
@@ -162,7 +163,7 @@ async fn base_query_filters_on_a_note_dot_prefixed_property_the_same_as_the_bare
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     write_notes(vault.path())?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     // The real-world shape memory/tasks.base's views use for every
     // state-filtered view (Backlog, Next, Done, ...): note.<key> naming
@@ -192,7 +193,7 @@ async fn base_query_filters_on_a_note_dot_prefixed_property_the_same_as_the_bare
 #[tokio::test]
 async fn base_query_evaluates_a_string_level_and_combinator() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     call_tool(
         server.clone(),
@@ -242,7 +243,7 @@ async fn base_query_filters_and_narrows_scan_by_file_folder_without_matching_sub
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     write_folder_notes(vault.path())?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     // "memory/tasks" matches only the direct child (foo.md), not the note
     // one level deeper in "memory/tasks/deep" (bar.md): the real-world
@@ -293,7 +294,7 @@ async fn base_query_filters_and_narrows_scan_by_file_folder_without_matching_sub
 async fn base_query_exposes_basename_size_timestamps_tags_links_and_embeds()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let content = "---\ntags:\n  - project/alpha\n---\n# A\n\n[[b]]\n![[diagram.png]]\n";
     call_tool(
@@ -339,14 +340,62 @@ async fn base_query_exposes_basename_size_timestamps_tags_links_and_embeds()
 }
 
 #[tokio::test]
+async fn base_query_lists_markdown_links_and_embeds_beside_wikilinks_and_filters_on_them()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
+    for (path, content) in [
+        (
+            "a.md",
+            "[[b]]\n[c](<my note.md> \"Title\")\n![d](pic%20one.png)\n[r][ref]\n\n[ref]: ../raw/e.md\n",
+        ),
+        ("b.md", "no links here\n"),
+    ] {
+        call_tool(
+            server.clone(),
+            "fs_write_file",
+            serde_json::from_value(json!({"path": path, "content": content}))?,
+        )
+        .await?;
+    }
+
+    let result = call_tool(
+        server.clone(),
+        "base_query",
+        serde_json::from_value(json!({
+            "definition": {
+                "filters": "file.links.contains(\"my note.md\")",
+                "order": ["file.name", "file.links", "file.embeds"]
+            },
+            "format": "json"
+        }))?,
+    )
+    .await?;
+
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    let text = structured(&result)?
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| std::io::Error::other("base_query omitted content"))?;
+    let rows: serde_json::Value = serde_json::from_str(text)?;
+    assert_eq!(rows.as_array().map(Vec::len), Some(1));
+    assert_eq!(rows[0].get("file.name"), Some(&json!("a.md")));
+    assert_eq!(
+        rows[0].get("file.links"),
+        Some(&json!(["b", "my note.md", "../raw/e.md"]))
+    );
+    assert_eq!(rows[0].get("file.embeds"), Some(&json!(["pic one.png"])));
+    Ok(())
+}
+
+#[tokio::test]
 async fn base_query_reports_a_frontmatter_parse_failure_as_a_diagnostic_not_a_silent_null()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     // An unquoted title containing its own ": " is ambiguous, genuinely
-    // invalid YAML (the exact real-world shape found in the vault this
-    // addendum was written against): "status: active" is a real,
+    // invalid YAML (a shape found in a real vault): "status: active" is a real,
     // well-formed frontmatter value the parser never reaches, because the
     // malformed title line fails the whole document first.
     call_tool(
@@ -424,7 +473,7 @@ async fn base_query_reports_a_frontmatter_parse_failure_as_a_diagnostic_not_a_si
 async fn base_query_fails_closed_on_file_backlinks_when_search_is_disabled()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let mut config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     config.vaults[0].search.text = false;
     config.vaults[0].search.graph = false;
     let server = ContextOsServer::try_from(config)?;
@@ -456,7 +505,7 @@ async fn base_query_fails_closed_on_file_backlinks_when_search_is_disabled()
 async fn base_query_resolves_file_backlinks_through_the_link_graph()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     // b.md is written before a.md so a.md's wikilink resolves to the real
     // note rather than creating a phantom node (same ordering the
@@ -492,14 +541,17 @@ async fn base_query_resolves_file_backlinks_through_the_link_graph()
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| std::io::Error::other("base_query omitted content"))?;
     let rows: serde_json::Value = serde_json::from_str(text)?;
-    // "index.md" is also a genuine backlink: fs_write_file's managed
-    // directory-listing block links every file in a directory from that
-    // directory's index.md, so the vault root's index.md really does link
-    // to b.md, sorted alongside the deliberate a.md -> b.md wikilink.
-    assert_eq!(
-        rows,
-        json!([{"file.name": "b.md", "file.backlinks": ["a.md", "index.md"]}])
-    );
+    // index.md is never a genuine backlink source: its own table wikilinks
+    // every entry in its directory mechanically, so the link graph excludes
+    // those edges (contextos-search's sync_graph_note). Before that
+    // exclusion existed, this fixture happened to make index.md appear as
+    // a backlink of b.md anyway, but only by accident: the retired
+    // title-plus-first-sentence summary derivation echoed a.md's own body
+    // text ("[[b]]") verbatim into index.md's auto-generated Summary cell,
+    // and the link scanner picked up that leaked wikilink text. The current
+    // frontmatter-only summary derivation never echoes body content, so
+    // that accidental edge cannot recur even independent of the exclusion.
+    assert_eq!(rows, json!([{"file.name": "b.md", "file.backlinks": ["a.md"]}]));
     Ok(())
 }
 
@@ -508,7 +560,7 @@ async fn base_query_fails_closed_on_formula_filters_and_unsupported_expressions(
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     write_notes(vault.path())?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let formula_filter = call_tool(
         server.clone(),
@@ -545,7 +597,7 @@ async fn base_query_reports_an_unknown_view_and_a_columnless_view_by_distinct_co
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     write_notes(vault.path())?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let bare_definition = json!({
         "views": [{"type": "table", "name": "Bare"}]
@@ -585,11 +637,64 @@ async fn base_query_reports_an_unknown_view_and_a_columnless_view_by_distinct_co
 }
 
 #[tokio::test]
+async fn base_query_sorts_the_complete_match_set_before_any_candidate_cap_applies()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Regression test: the candidate scan must never be truncated in its
+    // own filesystem-enumeration order (lexicographic ascending) before a
+    // query's `sort` runs. `rank` is written so the true maximum value
+    // (5001) sits on a note whose path sorts lexicographically *before*
+    // nearly every other candidate ("note-0001.md" precedes "note-1000.md"
+    // through "note-5000.md"), the opposite of an ISO-date-partitioned
+    // path convention: this proves the fix is about scan-versus-sort
+    // ordering in general, not merely about date-like paths happening to
+    // sort chronologically.
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::create_dir_all(vault.path().join("notes"))?;
+    std::fs::write(vault.path().join("notes/note-0001.md"), "---\nrank: 5001\n---\nBody.\n")?;
+    for rank in 1..=5000 {
+        std::fs::write(
+            vault.path().join(format!("notes/note-{:04}.md", rank + 1000)),
+            format!("---\nrank: {rank}\n---\nBody.\n"),
+        )?;
+    }
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
+
+    let result = call_tool(
+        server,
+        "base_query",
+        serde_json::from_value(json!({
+            "definition": {
+                "filters": "file.inFolder(\"notes\")",
+                "order": ["file.name", "rank"],
+                "sort": [{"property": "rank", "direction": "DESC"}],
+                "limit": 1
+            }
+        }))?,
+    )
+    .await?;
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    let body = structured(&result)?;
+    assert_eq!(body.get("matched"), Some(&json!(5001)));
+    // `truncated` correctly reports that more rows matched than were
+    // rendered (5001 exceeds the post-sort render cap) — a legitimate,
+    // honest signal, distinct from the old pre-sort bug where `truncated`
+    // meant the *wrong* row could have been silently dropped before sort
+    // ever ran. The point of this test is that despite `truncated: true`,
+    // the single row actually rendered is still the true global maximum.
+    assert_eq!(body.get("truncated"), Some(&json!(true)));
+    assert_eq!(
+        body.get("content"),
+        Some(&json!("| file.name | rank |\n| --- | --- |\n| note-0001.md | 5001 |\n"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn base_query_requires_exactly_one_of_path_or_definition_and_confines_paths_to_the_vault()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     write_notes(vault.path())?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
 
     let both = call_tool(
         server.clone(),

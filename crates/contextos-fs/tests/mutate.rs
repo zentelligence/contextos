@@ -154,7 +154,7 @@ fn write_creates_parents_atomically_and_returns_hash() -> Result<(), Box<dyn std
 
     let result = service.write_file(&WriteMutation {
         path: note,
-        content: "hello".to_owned(),
+        content: "hello".to_owned().into(),
         expected_hash: None,
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -171,6 +171,57 @@ fn write_creates_parents_atomically_and_returns_hash() -> Result<(), Box<dyn std
         "hello"
     );
     assert!(result.event.is_some());
+    Ok(())
+}
+
+/// `WriteContent::Binary` writes exact bytes, sharing the one write
+/// pipeline text content already goes through: same atomic
+/// temp-write-then-rename, same hashing, same event shape.
+#[test]
+fn write_persists_binary_content_exactly() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    let (service, roots) = fixture(vault.path().to_path_buf())?;
+    let note = path(&roots, "image.png")?;
+    let bytes = vec![0_u8, 1, 2, 3, 255, 254, 128];
+
+    let result = service.write_file(&WriteMutation {
+        path: note,
+        content: bytes.clone().into(),
+        expected_hash: None,
+        force: false,
+        origin: Origin::Tool("fs_write_file".to_owned()),
+    })?;
+
+    assert!(result.value.created);
+    assert_eq!(result.value.bytes_written, bytes.len());
+    assert_eq!(std::fs::read(vault.path().join("image.png"))?, bytes);
+    Ok(())
+}
+
+/// A binary write above the fixed 10 MiB cap (matching `fs_attach_file`'s
+/// own read cap) is rejected before anything reaches disk; a text write of
+/// the same or greater size is unaffected, since only the binary branch is
+/// newly capped.
+#[test]
+fn write_rejects_binary_content_over_the_ten_mebibyte_cap() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    let (service, roots) = fixture(vault.path().to_path_buf())?;
+    let note = path(&roots, "oversized.bin")?;
+    let oversized = vec![0_u8; 10 * 1024 * 1024 + 1];
+
+    let result = service.write_file(&WriteMutation {
+        path: note,
+        content: oversized.into(),
+        expected_hash: None,
+        force: false,
+        origin: Origin::Tool("fs_write_file".to_owned()),
+    });
+
+    let Err(error) = result else {
+        return Err("a binary write over the fixed cap must be rejected".into());
+    };
+    assert!(matches!(error, FsError::TooLargeToWrite { .. }));
+    assert!(!vault.path().join("oversized.bin").exists());
     Ok(())
 }
 
@@ -199,7 +250,7 @@ fn phase_2_filesystem_service_returns_secondary_warnings_after_persistence() -> 
 
     let result = service.write_file(&WriteMutation {
         path: path(&roots, "note.md")?,
-        content: "persisted".to_owned(),
+        content: "persisted".to_owned().into(),
         expected_hash: None,
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -219,7 +270,7 @@ fn conflict_preserves_existing_bytes_and_reports_current_hash_without_naming_for
     let note = path(&roots, "note.md")?;
     let created = service.write_file(&WriteMutation {
         path: note.clone(),
-        content: "original".to_owned(),
+        content: "original".to_owned().into(),
         expected_hash: None,
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -227,7 +278,7 @@ fn conflict_preserves_existing_bytes_and_reports_current_hash_without_naming_for
 
     let result = service.write_file(&WriteMutation {
         path: note,
-        content: "replacement".to_owned(),
+        content: "replacement".to_owned().into(),
         expected_hash: Some(ContentHash::from([0_u8; 32])),
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -277,7 +328,7 @@ fn interruption_after_temporary_flush_preserves_old_content() -> Result<(), Box<
 
     let result = service.write_file(&WriteMutation {
         path: path(&roots, "note.md")?,
-        content: "replacement".to_owned(),
+        content: "replacement".to_owned().into(),
         expected_hash: None,
         force: true,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -355,7 +406,7 @@ fn process_kill_child() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = service.write_file(&WriteMutation {
         path: path(&roots, "note.md")?,
-        content: "replacement".to_owned(),
+        content: "replacement".to_owned().into(),
         expected_hash: None,
         force: true,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -371,7 +422,7 @@ fn existing_file_requires_hash_or_explicit_force() -> Result<(), Box<dyn std::er
     let note = path(&roots, "note.md")?;
     let created = service.write_file(&WriteMutation {
         path: note.clone(),
-        content: "original".to_owned(),
+        content: "original".to_owned().into(),
         expected_hash: None,
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),
@@ -379,14 +430,14 @@ fn existing_file_requires_hash_or_explicit_force() -> Result<(), Box<dyn std::er
 
     let guarded = service.write_file(&WriteMutation {
         path: note.clone(),
-        content: "blocked".to_owned(),
+        content: "blocked".to_owned().into(),
         expected_hash: None,
         force: false,
         origin: Origin::Tool("fs_write_file".to_owned()),
     });
     let forced = service.write_file(&WriteMutation {
         path: note,
-        content: "forced".to_owned(),
+        content: "forced".to_owned().into(),
         expected_hash: None,
         force: true,
         origin: Origin::Tool("fs_write_file".to_owned()),

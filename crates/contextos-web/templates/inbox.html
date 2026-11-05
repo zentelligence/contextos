@@ -1,0 +1,69 @@
+<div class="inbox-screen">
+{% if !ancestors.is_empty() %}
+  <div class="inbox-outbox-ancestors">
+  {% for ancestor in ancestors %}
+    {% if let Some(href) = ancestor.href %}
+    <a class="inbox-outbox-ancestor-row" style="padding-left: {{ ancestor.depth * 16 }}px" href="{{ href }}"><span class="ic ic-folder" aria-hidden="true"></span> {{ ancestor.label }}</a>
+    {% else %}
+    <div class="inbox-outbox-ancestor-row current" style="padding-left: {{ ancestor.depth * 16 }}px"><span class="ic ic-folder" aria-hidden="true"></span> {{ ancestor.label }}</div>
+    {% endif %}
+  {% endfor %}
+  </div>
+{% endif %}
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+{% if let Some(notice) = notice %}
+  <p class="hint">{{ notice }}</p>
+{% endif %}
+{% if folders.is_empty() && items.is_empty() %}
+  <p class="hint">{% if ancestors.is_empty() %}Nothing is in the Inbox yet.{% else %}This folder is empty.{% endif %}</p>
+{% else %}
+  <div class="inbox-outbox-list">
+  {% for folder in folders %}
+    <div class="row-card inbox-outbox-row">
+      <a class="inbox-outbox-folder-link" href="{{ folder.href }}"><span class="ic ic-folder" aria-hidden="true"></span> {{ folder.name }}</a>
+    {% if let Some(status) = folder.status %}
+      <span class="status-chip {{ status }}">{{ status }}</span>
+    {% endif %}
+    {% if let Some(path) = folder.ingest_path %}
+      <form
+        hx-post="{{ ingest_action_href }}"
+        hx-ext="json-enc"
+        hx-vals='{"folder_path": "{{ path }}"}'
+        hx-target="closest .inbox-screen"
+        hx-swap="outerHTML"
+      >
+        <button type="submit" class="btn small">Ingest folder <span class="ic ic-check" aria-hidden="true"></span></button>
+      </form>
+    {% endif %}
+    </div>
+  {% endfor %}
+  {% for item in items %}
+    <div class="row-card inbox-outbox-row">
+      <span class="ic ic-inbox" aria-hidden="true"></span>
+      <div class="inbox-outbox-item-meta">
+        <div class="inbox-outbox-item-name">{{ item.name }}</div>
+        <div class="hint">{{ item.size_label }} &middot; {{ item.type_label }} &middot; {{ item.modified_label }}</div>
+      </div>
+    {% if let Some(status) = item.status %}
+      <span class="status-chip {{ status }}">{{ status }}</span>
+    {% endif %}
+    {% if let Some(path) = item.ingest_path %}
+      <form
+        hx-post="{{ ingest_action_href }}"
+        hx-ext="json-enc"
+        hx-vals='{"file_path": "{{ path }}"}'
+        hx-target="closest .inbox-screen"
+        hx-swap="outerHTML"
+      >
+        <button type="submit" class="btn small">Ingest <span class="ic ic-check" aria-hidden="true"></span></button>
+      </form>
+    {% endif %}
+      <a class="icon-button" title="Download {{ item.name }}" aria-label="Download {{ item.name }}" href="{{ item.download_href }}" download><span class="ic ic-download" aria-hidden="true"></span></a>
+    </div>
+  {% endfor %}
+  </div>
+{% endif %}
+  <p class="hint">Uploads are accepted up to 10 MB; executables and scripts are refused. Ingest creates a task for the configured knowledge curator and never moves the file or folder itself.</p>
+</div>

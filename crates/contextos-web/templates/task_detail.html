@@ -1,0 +1,191 @@
+{% import "task_field_widget.html" as widgets %}
+{% macro readonly_field(field) %}
+<div class="task-field">
+  <span class="task-field-label">{{ field.label }}</span>
+  <span class="task-field-value">{% if field.value.is_empty() %}<span class="hint">&mdash;</span>{% else %}{{ field.value }}{% endif %}</span>
+</div>
+{% endmacro %}
+<div class="task-detail" hx-ext="json-enc">
+  <div class="task-detail-header">
+    <h1><span class="mono">{{ id }}</span> {{ title }}</h1>
+    <div class="task-close-actions">
+    {% for action in close_actions %}
+      <form
+        hx-patch="{{ urls.task(id) }}"
+        hx-target="closest .task-detail"
+        hx-swap="outerHTML"
+      >
+        <input type="hidden" name="state" value="{{ action.state }}">
+        <input type="hidden" name="expected_hash" value="{{ expected_hash }}">
+        <button type="submit" class="btn small">{{ action.label }}</button>
+      </form>
+    {% endfor %}
+    {% if !editing %}
+      <button
+        type="button"
+        class="btn small"
+        hx-get="{{ urls.task_edit(id) }}"
+        hx-target="closest .task-detail"
+        hx-swap="outerHTML"
+      >Edit</button>
+    {% endif %}
+      <a class="btn small" href="{{ urls.tasks() }}">Back to tasks</a>
+    </div>
+  </div>
+
+{% if editing %}
+  <div class="task-detail-layout">
+    <div class="task-detail-main">
+      <form
+        class="task-body-form"
+        hx-patch="{{ urls.task(id) }}"
+        hx-target="closest .task-detail"
+        hx-swap="outerHTML"
+      >
+        <input type="hidden" name="old" value="{{ body }}">
+        <input type="hidden" name="expected_hash" value="{{ expected_hash }}">
+        <h3>Body</h3>
+        <div class="save-bar save-bar-top">
+          <button type="submit" class="btn primary small">Save body</button>
+        </div>
+        <textarea name="new" class="task-body-textarea">{{ body }}</textarea>
+        <div class="save-bar">
+          <button type="submit" class="btn primary small">Save body</button>
+        </div>
+      </form>
+    </div>
+
+    <aside class="task-detail-sidebar">
+    {% if let Some(folder) = folder %}
+      <form
+        class="task-folder-form"
+        hx-patch="{{ urls.task(id) }}"
+        hx-target="closest .task-detail"
+        hx-swap="outerHTML"
+      >
+        {% include "task_folder_input.html" %}
+        <button type="submit" class="btn small">Move</button>
+      </form>
+    {% else %}
+      <div class="task-field">
+        <span class="task-field-label">Folder</span>
+        <span class="task-field-value mono">{% if folder_path.is_empty() %}<span class="hint">Top level</span>{% else %}{{ folder_path }}{% endif %}</span>
+      </div>
+    {% endif %}
+      <form
+        class="task-frontmatter-form"
+        hx-patch="{{ urls.task(id) }}"
+        hx-target="closest .task-detail"
+        hx-swap="outerHTML"
+      >
+        <input type="hidden" name="expected_hash" value="{{ expected_hash }}">
+        <label class="task-field task-title-field">
+          <span class="task-field-label">{{ title_field.label }}</span>
+          {% call widgets::widget(title_field) %}{% endcall %}
+        </label>
+
+        <div class="task-field-group task-field-grid">
+        {% for field in identity_fields %}
+          <label class="task-field">
+            <span class="task-field-label">{{ field.label }}</span>
+            {% call widgets::widget(field) %}{% endcall %}
+          </label>
+        {% endfor %}
+        </div>
+
+        <div class="task-field-group task-field-grid">
+        {% for field in date_fields %}
+          <label class="task-field">
+            <span class="task-field-label">{{ field.label }}</span>
+            {% call widgets::widget(field) %}{% endcall %}
+          </label>
+        {% endfor %}
+        </div>
+
+        <div class="task-field-group task-field-grid">
+        {% include "task_link_fields.html" %}
+        </div>
+
+        <div class="task-field-group task-field-grid">
+        {% for field in remaining_fields %}
+          <label class="task-field">
+            <span class="task-field-label">{{ field.label }}</span>
+            {% call widgets::widget(field) %}{% endcall %}
+          </label>
+        {% endfor %}
+        </div>
+        <button type="submit" class="btn primary small">Save fields</button>
+      </form>
+    </aside>
+  </div>
+  <script>
+  (function(){
+    var root = document.currentScript.closest('.task-detail');
+    if (root && window.contextosTasks) { window.contextosTasks.wireLinkChips(root); }
+  })();
+  </script>
+{% else %}
+  <div class="task-detail-layout">
+    <div class="task-detail-main">
+      <h3>Body</h3>
+      <div class="task-body-rendered">{{ body_html|safe }}</div>
+    </div>
+
+    <aside class="task-detail-sidebar">
+      <div class="task-field task-title-field">
+        <span class="task-field-label">{{ title_field.label }}</span>
+        <span class="task-field-value">{{ title_field.value }}</span>
+      </div>
+
+      <div class="task-field">
+        <span class="task-field-label">Folder</span>
+        <span class="task-field-value mono">{% if folder_path.is_empty() %}<span class="hint">Top level</span>{% else %}{{ folder_path }}{% endif %}</span>
+      </div>
+
+      <div class="task-field-group task-field-grid">
+      {% for field in identity_fields %}
+        {% call readonly_field(field) %}{% endcall %}
+      {% endfor %}
+      </div>
+
+      <div class="task-field-group task-field-grid">
+      {% for field in date_fields %}
+        {% call readonly_field(field) %}{% endcall %}
+      {% endfor %}
+      </div>
+
+      <div class="task-field-group task-field-grid">
+      {% for field in link_fields %}
+        <div class="task-field">
+          <span class="task-field-label">{{ field.label }}</span>
+          <div class="link-chip-list">
+          {% if field.chips.is_empty() %}
+            <span class="hint">&mdash;</span>
+          {% endif %}
+          {% for chip in field.chips %}
+            {% let target = chip.read_href(vault_name) %}
+            {% if let Some(href) = target %}<a class="link-chip" href="{{ href }}">{% else %}<span class="link-chip unrouted" title="{{ crate::vault_links::UNROUTED_HINT }}">{% endif %}
+              <span class="mono">{{ chip.display_id }}</span>
+            {% if let Some(title) = chip.title %}
+              <span class="link-chip-title">{{ title }}</span>
+            {% else if chip.unrouted %}
+              <span class="link-chip-title link-chip-dangling">No screen yet</span>
+            {% else if chip.href.is_none() %}
+              <span class="link-chip-title link-chip-dangling">Not found</span>
+            {% endif %}
+            {% if target.is_some() %}</a>{% else %}</span>{% endif %}
+          {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+      </div>
+
+      <div class="task-field-group task-field-grid">
+      {% for field in remaining_fields %}
+        {% call readonly_field(field) %}{% endcall %}
+      {% endfor %}
+      </div>
+    </aside>
+  </div>
+{% endif %}
+</div>

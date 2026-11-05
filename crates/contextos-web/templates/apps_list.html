@@ -1,33 +1,29 @@
 <div class="apps-list">
-  <div class="apps-list-header">
-    <h1>Apps</h1>
-    <form method="post" action="/{{ vault_name }}/apps/rescan" class="apps-rescan">
-      <button type="submit" class="icon-button" title="Rescan registry/apps/ for new or changed apps" aria-label="Rescan apps">&#x21bb;</button>
-    </form>
-  </div>
 {% if apps.is_empty() %}
   <p class="hint">No apps are registered under <code>registry/apps/</code> yet.</p>
 {% else %}
-  <div class="card-grid">
+  <ul class="apps-grid">
   {% for app in apps %}
-    <div class="row-card" data-kind="{{ app.kind_label }}">
-      <h4>{{ app.name }}</h4>
-      <dl>
-        <dt>Kind</dt><dd>{{ app.kind_label }}</dd>
-      {% if app.servable %}
-        <dt>Opens</dt><dd>{{ app.opens_label }}</dd>
-      {% else %}
-        <dt>Status</dt><dd><span class="status-chip pending">not yet supported</span></dd>
-      {% endif %}
-      </dl>
+    <li class="app-card" data-kind="{{ app.kind_label }}">
+      <div class="app-card-header">
+        <span class="app-icon"><span class="ic ic-{{ app.kind_icon }}" aria-hidden="true"></span></span>
+        <span class="app-name">{{ app.name }}</span>
+        {{ app.favourite_toggle_html|safe }}
+      </div>
     {% if app.servable %}
-      <a class="btn small primary" href="/{{ vault_name }}/apps/{{ app.slug }}/" target="{{ app.target_attr }}">Open &#8599;</a>
+      <span class="app-status app-status-ok">Opens {{ app.opens_label }}</span>
     {% else %}
-      <button class="btn small" disabled>Open &#8599;</button>
+      <span class="status-chip pending">not yet supported</span>
     {% endif %}
-    </div>
+      <span class="app-kind">{{ app.kind_label }}</span>
+    {% if app.servable %}
+      <a class="btn small primary" href="{{ urls.app_home(app.slug) }}"{% if let Some(target) = app.target_attr %} target="{{ target }}"{% endif %}>Open <span class="ic ic-open" aria-hidden="true"></span></a>
+    {% else %}
+      <button class="btn small" disabled>Open <span class="ic ic-open" aria-hidden="true"></span></button>
+    {% endif %}
+    </li>
   {% endfor %}
-  </div>
+  </ul>
 {% endif %}
-  <p class="hint">Discovered at startup from <code>registry/apps/</code>; use the shell's &#x21bb; Rescan to refresh without a restart.</p>
+  <p class="hint">Discovered at startup from <code>registry/apps/</code>; use the Rescan control to refresh without a restart.</p>
 </div>

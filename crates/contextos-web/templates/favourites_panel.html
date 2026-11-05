@@ -1,0 +1,58 @@
+<div class="favourites-panel-body">
+  <section class="favourites-section">
+    <h4>Favourite views</h4>
+{% if views.is_empty() %}
+    <p class="hint">No favourited views. Star a screen from its title bar.</p>
+{% else %}
+    <ul class="favourites-list">
+{% for row in views %}<li><a href="{{ row.href }}">{{ row.label }}</a></li>{% endfor %}
+    </ul>
+{% endif %}
+  </section>
+  <section class="favourites-section">
+    <h4>Favourite pages</h4>
+{% if pages.is_empty() %}
+    <p class="hint">No favourited pages. Star a file from its title bar.</p>
+{% else %}
+    <ul class="favourites-list">
+{% for row in pages %}<li><a href="{{ row.href }}">{{ row.label }}</a></li>{% endfor %}
+    </ul>
+{% endif %}
+  </section>
+  <section class="favourites-section">
+    <h4>Favourite apps</h4>
+{% if apps.is_empty() %}
+    <p class="hint">No favourited apps &mdash; star one under Apps.</p>
+{% else %}
+    <ul class="favourites-list">
+{% for row in apps %}
+      <li><a href="{{ row.href }}"{% if let Some(target) = row.target %} target="{{ target }}"{% endif %}>{{ row.label }}</a></li>
+{% endfor %}
+    </ul>
+{% endif %}
+  </section>
+  <section class="favourites-section">
+    <h4>Favourite jobs</h4>
+{% if jobs.is_empty() %}
+    <p class="hint">No favourited jobs &mdash; star one under Jobs.</p>
+{% else %}
+    <ul class="favourites-list">
+{% for row in jobs %}
+      <li><a href="{{ row.href }}">{{ row.label }}</a></li>
+{% endfor %}
+    </ul>
+{% endif %}
+  </section>
+  <section class="favourites-section">
+    <h4>Recently accessed</h4>
+{% if recent.is_empty() %}
+    <p class="hint">Nothing accessed yet.</p>
+{% else %}
+    <ul class="favourites-list">
+{% for row in recent %}
+      <li><a href="{{ row.href }}">{{ row.label }}</a></li>
+{% endfor %}
+    </ul>
+{% endif %}
+  </section>
+</div>

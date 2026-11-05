@@ -33,6 +33,8 @@ fn service_at(
         root_id: VaultRootId::try_from(0_usize)?,
         root: vault.path().to_path_buf(),
         excludes: vec![],
+        link_excludes: Vec::new(),
+        hidden: Vec::new(),
         state_directory: vault.path().join(".contextos"),
         text_enabled,
         graph_enabled,
@@ -49,6 +51,8 @@ fn semantic_service_at(vault: &tempfile::TempDir) -> Result<VaultSearchService, 
         root_id: VaultRootId::try_from(0_usize)?,
         root: vault.path().to_path_buf(),
         excludes: vec![],
+        link_excludes: Vec::new(),
+        hidden: Vec::new(),
         state_directory: vault.path().join(".contextos"),
         text_enabled: false,
         graph_enabled: false,
@@ -75,11 +79,11 @@ fn graph_store_locked_by_another_instance_degrades_to_disabled() -> Result<(), B
     let second = service_at(&vault, false, true)?;
 
     assert!(
-        first.status()?.graph.enabled,
+        first.status().graph.enabled,
         "the first instance should hold the graph store lock and keep the link graph enabled"
     );
     assert!(
-        !second.status()?.graph.enabled,
+        !second.status().graph.enabled,
         "the second instance should degrade to a disabled link graph rather than fail entirely"
     );
 
@@ -293,7 +297,7 @@ fn status_reports_document_and_graph_counts() -> Result<(), Box<dyn std::error::
     apply(&service, &write_event(OpKind::Create, vec![b_path]))?;
     apply(&service, &write_event(OpKind::Create, vec![a_path]))?;
 
-    let status = service.status()?;
+    let status = service.status();
     assert!(status.text.enabled);
     assert_eq!(status.text.documents, 2);
     assert_eq!(status.text.stale_estimate, 0);
@@ -309,7 +313,7 @@ fn status_reports_the_resolved_state_directory() -> Result<(), Box<dyn std::erro
     let vault = vault_dir()?;
     let service = service_at(&vault, true, true)?;
 
-    let status = service.status()?;
+    let status = service.status();
 
     assert_eq!(status.state_directory, vault.path().join(".contextos"));
     assert_eq!(service.state_directory(), vault.path().join(".contextos"));
@@ -325,7 +329,7 @@ fn rebuild_reconciles_external_edits_and_reports_zero_staleness_afterwards() -> 
 
     // Nothing was routed through `update`, so the indexes start empty and
     // report full staleness until a rebuild reconciles them.
-    let before = service.status()?;
+    let before = service.status();
     assert_eq!(before.text.documents, 0);
     assert_eq!(before.text.stale_estimate, 2);
 
@@ -336,7 +340,7 @@ fn rebuild_reconciles_external_edits_and_reports_zero_staleness_afterwards() -> 
     assert_eq!(graph_report.nodes, 2);
     assert_eq!(graph_report.edges, 1);
 
-    let after = service.status()?;
+    let after = service.status();
     assert_eq!(after.text.documents, 2);
     assert_eq!(after.text.stale_estimate, 0);
     assert!(!after.graph.needs_rebuild);
@@ -409,7 +413,7 @@ fn semantic_rebuild_with_a_budget_returns_early_and_a_later_call_finishes_it() -
         "the other two documents must still be queued, not lost"
     );
 
-    let status_between_calls = service.status()?;
+    let status_between_calls = service.status();
     assert_eq!(
         status_between_calls.semantic.documents, 1,
         "the one embedded document is already durably queryable"
@@ -421,7 +425,7 @@ fn semantic_rebuild_with_a_budget_returns_early_and_a_later_call_finishes_it() -
     let second_report = second.semantic.ok_or("expected a semantic rebuild report")?;
     assert_eq!(second_report.remaining, 0);
 
-    let status_after = service.status()?;
+    let status_after = service.status();
     assert_eq!(status_after.semantic.documents, 3);
     assert_eq!(status_after.semantic.stale_estimate, 0);
     Ok(())
@@ -470,7 +474,7 @@ fn repeated_budgeted_calls_converge_to_zero_remaining_without_reviving_completed
         "all five documents must be processed after five calls"
     );
 
-    let status = service.status()?;
+    let status = service.status();
     assert_eq!(status.semantic.documents, 5);
     assert_eq!(status.semantic.stale_estimate, 0);
     Ok(())
@@ -507,7 +511,7 @@ fn drain_semantic_queue_never_walks_the_vault_to_discover_unqueued_files() -> Re
     assert_eq!(report.paths_scanned, 0);
     assert_eq!(report.embedded, 0);
     assert_eq!(report.remaining, 0);
-    assert_eq!(service.status()?.semantic.documents, 0);
+    assert_eq!(service.status().semantic.documents, 0);
     Ok(())
 }
 
@@ -522,7 +526,7 @@ fn drain_semantic_queue_drains_only_what_was_explicitly_enqueued() -> Result<(),
 
     assert_eq!(report.embedded, 1);
     assert_eq!(report.remaining, 0);
-    assert_eq!(service.status()?.semantic.documents, 1);
+    assert_eq!(service.status().semantic.documents, 1);
     Ok(())
 }
 
@@ -613,7 +617,7 @@ fn query_semantic_limit_zero_returns_no_hits() -> Result<(), Box<dyn std::error:
         path_prefix: None,
         exclude_paths: &[],
     })?;
-    assert!(hits.is_empty());
+    assert!(hits.is_empty(), "`hits` should be empty, got {hits:?}");
     Ok(())
 }
 
@@ -636,7 +640,7 @@ fn query_semantic_skips_a_hit_whose_source_changed_since_it_was_embedded() -> Re
         path_prefix: None,
         exclude_paths: &[],
     })?;
-    assert!(hits.is_empty());
+    assert!(hits.is_empty(), "`hits` should be empty, got {hits:?}");
     Ok(())
 }
 
@@ -650,14 +654,14 @@ fn status_reports_semantic_document_and_chunk_counts_and_staleness() -> Result<(
         "# Note\n\nOne paragraph.\n\n# Second\n\nAnother paragraph.\n",
     )?;
 
-    let queued = service.status()?;
+    let queued = service.status();
     assert!(queued.semantic.enabled);
     assert_eq!(queued.semantic.documents, 0);
     assert_eq!(queued.semantic.chunks, 0);
     assert_eq!(queued.semantic.stale_estimate, 0);
 
     apply(&service, &write_event(OpKind::Create, vec![path]))?;
-    let after_enqueue = service.status()?;
+    let after_enqueue = service.status();
     assert_eq!(
         after_enqueue.semantic.stale_estimate, 1,
         "one path is queued but not yet processed"
@@ -670,7 +674,7 @@ fn status_reports_semantic_document_and_chunk_counts_and_staleness() -> Result<(
     assert_eq!(semantic_report.skipped, 0);
     assert_eq!(semantic_report.failed, 0);
 
-    let after_rebuild = service.status()?;
+    let after_rebuild = service.status();
     assert_eq!(after_rebuild.semantic.documents, 1);
     assert_eq!(after_rebuild.semantic.chunks, 2);
     assert_eq!(after_rebuild.semantic.stale_estimate, 0);
@@ -693,5 +697,77 @@ fn rebuild_skips_unchanged_chunks_on_a_second_pass() -> Result<(), Box<dyn std::
     let second_report = second.semantic.ok_or("expected a semantic rebuild report")?;
     assert_eq!(second_report.embedded, 0);
     assert_eq!(second_report.skipped, 1);
+    Ok(())
+}
+
+/// Notes for the batching comparison: `a` links to `b`, and both mention a shared word.
+fn seed_linked_notes(vault: &tempfile::TempDir) -> Result<Vec<VaultPath>, Box<dyn std::error::Error>> {
+    let (_roots, b) = vault_note(vault, "b.md", "# B\n\nGadget target.\n")?;
+    let (_roots, a) = vault_note(vault, "a.md", "# A\n\nGadget source linking [[b]].\n")?;
+    let (_roots, c) = vault_note(vault, "area/c.md", "# C\n\nGadget elsewhere.\n")?;
+    Ok(vec![b, a, c])
+}
+
+#[test]
+fn a_batch_of_updates_leaves_text_and_graph_as_the_same_events_one_at_a_time_would()
+-> Result<(), Box<dyn std::error::Error>> {
+    let batched_vault = vault_dir()?;
+    let single_vault = vault_dir()?;
+    let batched = service_at(&batched_vault, true, true)?;
+    let single = service_at(&single_vault, true, true)?;
+    let batched_events = seed_linked_notes(&batched_vault)?
+        .into_iter()
+        .map(|path| write_event(OpKind::Create, vec![path]))
+        .collect::<Vec<_>>();
+    for event in seed_linked_notes(&single_vault)?
+        .into_iter()
+        .map(|path| write_event(OpKind::Create, vec![path]))
+    {
+        apply(&single, &event)?;
+    }
+
+    let Ok(()) = batched.update_all(&batched_events) else {
+        return Err("expected the batched update to succeed".into());
+    };
+
+    let batched_hits = batched.query_text(&plain_query("gadget"))?.0;
+    let single_hits = single.query_text(&plain_query("gadget"))?.0;
+    let paths = |hits: &[contextos_search::TextHit]| {
+        let mut paths = hits.iter().map(|hit| hit.path.clone()).collect::<Vec<_>>();
+        paths.sort();
+        paths
+    };
+    assert_eq!(paths(&batched_hits), paths(&single_hits));
+    assert_eq!(paths(&batched_hits), ["a.md", "area/c.md", "b.md"]);
+    let backlinks = |service: &VaultSearchService| -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let mut paths = service
+            .graph_backlinks("b.md")?
+            .nodes
+            .into_iter()
+            .map(|node| node.path)
+            .collect::<Vec<_>>();
+        paths.sort();
+        Ok(paths)
+    };
+    assert_eq!(backlinks(&batched)?, backlinks(&single)?);
+    assert!(backlinks(&batched)?.contains(&"a.md".to_owned()));
+    Ok(())
+}
+
+#[test]
+fn one_unreadable_event_in_a_batch_does_not_stop_the_others_being_applied() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = vault_dir()?;
+    let service = service_at(&vault, true, true)?;
+    let (_roots, good) = vault_note(&vault, "good.md", "# Good\n\nGadget prose.\n")?;
+    let missing = vault_path(&vault, "missing.md")?;
+
+    // A create for a file that does not exist is a removal, not a failure; the good note must still be indexed.
+    let outcome = service.update_all(&[
+        write_event(OpKind::Create, vec![missing]),
+        write_event(OpKind::Create, vec![good]),
+    ]);
+
+    assert!(outcome.is_ok());
+    assert_eq!(service.query_text(&plain_query("gadget"))?.0.len(), 1);
     Ok(())
 }

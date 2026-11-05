@@ -10,7 +10,7 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By particip
 
 1. Read [`AGENTS.md`](AGENTS.md) in full. It governs trait-first design, test-driven delivery, and the security and architecture rules every change must satisfy; nothing below weakens it.
 2. Read [`.claude/rules/00-index.md`](.claude/rules/00-index.md) and load only the guidance relevant to the area you are changing (see the rule-routing table in `CLAUDE.md`).
-3. Requirements and specification (`FR-*`, `NFR-*`, `D-*` identifiers) are maintained outside this repository. If you do not have access to them, say so in your pull request rather than guessing at intended behaviour.
+3. If the intended behaviour of a change is unclear, ask in an issue or say so in your pull request rather than guessing.
 
 ## Reporting issues
 
@@ -35,7 +35,10 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo audit
+just licences-check
 ```
+
+After any dependency change, regenerate the third-party attribution file with `just licences` (it needs [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) 0.9.2) and commit it with the change; `just licences-check` fails when the file is stale or a dependency's licence is not in `about.toml`'s accepted list.
 
 Or run the full repository gate, including guidance checks:
 

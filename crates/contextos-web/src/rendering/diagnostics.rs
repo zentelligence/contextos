@@ -1,5 +1,4 @@
-//! Shared diagnostic-panel rendering (`web-rendering.md` §2 step 5, §3
-//! final paragraph, §4): a `.base`/`.canvas`/Mermaid parse or render
+//! Shared diagnostic-panel rendering: a `.base`/`.canvas`/Mermaid parse or render
 //! failure renders as an inline error panel instead of the structured
 //! content, never a server error.
 
@@ -26,8 +25,7 @@ struct DiagnosticPanelTemplate<'a> {
 }
 
 /// Renders `diagnostics` as the inline error panel every structured-content
-/// diagnostic (`.base`, `.canvas`, Mermaid) uses (`web-rendering.md` §2.5,
-/// §3, §4).
+/// diagnostic (`.base`, `.canvas`, Mermaid) uses.
 #[must_use]
 pub fn render_diagnostic_panel(diagnostics: &[Diagnostic]) -> String {
     DiagnosticPanelTemplate { diagnostics }

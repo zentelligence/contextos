@@ -1,0 +1,81 @@
+{% import "task_field_widget.html" as widgets %}
+<div class="task-detail" hx-ext="json-enc">
+  <div class="task-detail-header">
+    <h1>New task</h1>
+    <div class="task-close-actions">
+      <a class="btn small" href="{{ urls.tasks() }}">Back to tasks</a>
+    </div>
+  </div>
+
+  <form
+    id="task-create-form"
+    hx-post="{{ urls.tasks() }}"
+    hx-target="#task-create-result"
+    hx-swap="innerHTML"
+  >
+    <div class="task-detail-layout">
+      <div class="task-detail-main">
+        <div class="task-body-form">
+          <h3>Body</h3>
+          <div class="save-bar save-bar-top">
+            <button type="submit" class="btn primary small">Create task</button>
+          </div>
+          <div id="task-create-result"></div>
+          <textarea name="body" class="task-body-textarea"></textarea>
+          <div class="save-bar">
+            <button type="submit" class="btn primary small">Create task</button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="task-detail-sidebar">
+        <label class="task-field task-title-field">
+          <span class="task-field-label">{{ title_field.label }}</span>
+          {% call widgets::widget(title_field) %}{% endcall %}
+        </label>
+
+        {% include "task_folder_input.html" %}
+
+        <div class="task-field-group task-field-grid">
+        {% for field in identity_fields %}
+          <label class="task-field">
+            <span class="task-field-label">{{ field.label }}</span>
+            {% call widgets::widget(field) %}{% endcall %}
+          </label>
+        {% endfor %}
+        </div>
+      {% if let Some(note) = start_note %}
+        <p class="hint">{{ note }}</p>
+      {% endif %}
+
+        <div class="task-field-group task-field-grid">
+        {% for field in date_fields %}
+          <label class="task-field">
+            <span class="task-field-label">{{ field.label }}</span>
+            {% call widgets::widget(field) %}{% endcall %}
+          </label>
+        {% endfor %}
+        </div>
+
+        <div class="task-field-group task-field-grid">
+        {% include "task_link_fields.html" %}
+        </div>
+
+        <div class="task-field-group task-field-grid">
+        {% for field in remaining_fields %}
+          <label class="task-field">
+            <span class="task-field-label">{{ field.label }}</span>
+            {% call widgets::widget(field) %}{% endcall %}
+          </label>
+        {% endfor %}
+        </div>
+      </aside>
+    </div>
+  </form>
+  <script>
+  (function(){
+    var root = document.currentScript.closest('.task-detail');
+    if (root && window.contextosTasks) { window.contextosTasks.wireLinkChips(root); }
+  })();
+  </script>
+</div>

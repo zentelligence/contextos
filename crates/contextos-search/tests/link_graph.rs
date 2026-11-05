@@ -1,11 +1,18 @@
 use std::path::PathBuf;
 
-use contextos_obsidian::{LinkCollection, ObsidianLink};
-use contextos_search::{CatchUpKind, GraphBackend, GraphDirection, GraphEdgeKind, LinkGraph, LinkGraphConfig};
+use contextos_obsidian::{LinkCollection, LinkForm, ObsidianLink};
+use contextos_search::{CatchUpKind, GraphBackend, GraphDirection, LinkGraph, LinkGraphConfig};
 
 /// Every backend runs the same behaviour suite, which must pass identically
 /// under each one.
 const BACKENDS: [GraphBackend; 3] = [GraphBackend::Serde, GraphBackend::Fjall, GraphBackend::Sqlite];
+
+/// A vault that names no backend gets `sqlite`, the one backend that stays usable when a second `contextos` process
+/// opens the same vault (a host's general connector plus a per-task instance, or the CLI beside a running server).
+#[test]
+fn a_vault_that_names_no_backend_uses_sqlite() {
+    assert_eq!(GraphBackend::default(), GraphBackend::Sqlite);
+}
 
 /// Builds a fresh `LinkGraph` backed by `dir/.contextos/graph`, under the
 /// given `backend`.
@@ -14,6 +21,7 @@ fn graph_at(dir: &tempfile::TempDir, backend: GraphBackend) -> Result<LinkGraph,
     Ok(LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?)
 }
 
@@ -119,17 +127,17 @@ fn backlinks_reports_incoming_kinds() -> Result<(), Box<dyn std::error::Error>> 
         graph.upsert_note("c.md", "C", &links("![[b]]\n")?)?;
 
         let view = graph.backlinks("b.md")?;
-        let mut edges: Vec<(&str, &str, GraphEdgeKind)> = view
+        let mut edges: Vec<(&str, &str, LinkForm)> = view
             .edges
             .iter()
-            .map(|edge| (edge.from.as_str(), edge.to.as_str(), edge.kind))
+            .map(|edge| (edge.from.as_str(), edge.to.as_str(), edge.form))
             .collect();
         edges.sort_by_key(|(from, _, _)| *from);
         assert_eq!(
             edges,
             vec![
-                ("a.md", "b.md", GraphEdgeKind::Link),
-                ("c.md", "b.md", GraphEdgeKind::Embed),
+                ("a.md", "b.md", LinkForm::Wikilink),
+                ("c.md", "b.md", LinkForm::WikilinkEmbed),
             ],
             "backend {backend:?}"
         );
@@ -207,7 +215,7 @@ fn unresolved_link_becomes_phantom_then_resolves() -> Result<(), Box<dyn std::er
         let Some(ghost) = view.nodes.iter().find(|node| node.path == "ghost") else {
             return Err(format!("backend {backend:?}: expected a phantom node for the unresolved target").into());
         };
-        assert!(ghost.phantom, "backend {backend:?}");
+        assert!(ghost.phantom(), "backend {backend:?}");
         assert_eq!(
             graph.unresolved_targets("a.md")?,
             vec!["ghost".to_owned()],
@@ -220,7 +228,7 @@ fn unresolved_link_becomes_phantom_then_resolves() -> Result<(), Box<dyn std::er
         let Some(ghost) = view.nodes.iter().find(|node| node.path == "ghost") else {
             return Err(format!("backend {backend:?}: expected the resolved ghost node to remain reachable").into());
         };
-        assert!(!ghost.phantom, "backend {backend:?}");
+        assert!(!ghost.phantom(), "backend {backend:?}");
         assert!(graph.unresolved_targets("a.md")?.is_empty(), "backend {backend:?}");
     }
 
@@ -240,7 +248,7 @@ fn bare_name_resolves_to_nested_note() -> Result<(), Box<dyn std::error::Error>>
         let mut paths: Vec<&str> = view.nodes.iter().map(|node| node.path.as_str()).collect();
         paths.sort_unstable();
         assert_eq!(paths, vec!["b.md", "notes/alpha.md"], "backend {backend:?}");
-        assert!(view.nodes.iter().all(|node| !node.phantom), "backend {backend:?}");
+        assert!(view.nodes.iter().all(|node| !node.phantom()), "backend {backend:?}");
         assert_eq!(view.edges.len(), 1, "backend {backend:?}");
         assert_eq!(view.edges[0].from, "b.md", "backend {backend:?}");
         assert_eq!(view.edges[0].to, "notes/alpha.md", "backend {backend:?}");
@@ -275,7 +283,7 @@ fn upsert_replaces_previous_outgoing_links() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
-fn remove_note_keeps_phantom_when_referenced() -> Result<(), Box<dyn std::error::Error>> {
+fn remove_note_leaves_a_not_found_phantom_for_what_a_link_said() -> Result<(), Box<dyn std::error::Error>> {
     for backend in BACKENDS {
         let dir = tempfile::tempdir()?;
         let mut graph = graph_at(&dir, backend)?;
@@ -285,18 +293,19 @@ fn remove_note_keeps_phantom_when_referenced() -> Result<(), Box<dyn std::error:
 
         graph.remove_note("b.md")?;
 
+        // The link said `b`, so the stand-in is keyed `b`: what the author wrote, as Obsidian shows a broken link.
         let view = graph.neighbours("a.md", 1, GraphDirection::Out)?;
-        let Some(b_node) = view.nodes.iter().find(|node| node.path == "b.md") else {
-            return Err(format!("backend {backend:?}: expected the phantom b.md node to remain reachable").into());
+        let Some(b_node) = view.nodes.iter().find(|node| node.path == "b") else {
+            return Err(format!("backend {backend:?}: expected the phantom b node to remain reachable").into());
         };
-        assert!(b_node.phantom, "backend {backend:?}");
+        assert!(b_node.phantom(), "backend {backend:?}");
 
         graph.remove_note("a.md")?;
 
         let orphans = graph.orphans()?;
         assert!(orphans.nodes.is_empty(), "backend {backend:?}");
-        let Err(error) = graph.neighbours("b.md", 1, GraphDirection::Out) else {
-            return Err(format!("backend {backend:?}: expected the pruned phantom b.md node to be unknown").into());
+        let Err(error) = graph.neighbours("b", 1, GraphDirection::Out) else {
+            return Err(format!("backend {backend:?}: expected the pruned phantom b node to be unknown").into());
         };
         assert_eq!(error.code(), "path/not-found", "backend {backend:?}");
     }
@@ -322,6 +331,7 @@ fn parallel_links_survive_persistence_round_trip() -> Result<(), Box<dyn std::er
             let mut graph = LinkGraph::try_from(LinkGraphConfig {
                 store_directory: store_directory.clone(),
                 backend,
+                write_wait: contextos_search::DEFAULT_WRITE_WAIT,
             })?;
             let notes = vec![
                 ("b.md".to_owned(), "B".to_owned(), Vec::new()),
@@ -333,6 +343,7 @@ fn parallel_links_survive_persistence_round_trip() -> Result<(), Box<dyn std::er
         let mut reopened = LinkGraph::try_from(LinkGraphConfig {
             store_directory: store_directory.clone(),
             backend,
+            write_wait: contextos_search::DEFAULT_WRITE_WAIT,
         })?;
         assert!(!reopened.needs_rebuild(), "backend {backend:?}");
         let view = reopened.neighbours("a.md", 1, GraphDirection::Out)?;
@@ -357,7 +368,7 @@ fn parallel_links_survive_persistence_round_trip() -> Result<(), Box<dyn std::er
 /// `LinkGraph` does not recognise directly into the metadata keyspace,
 /// using `fjall` itself rather than any `LinkGraph` API. Kept backend-
 /// specific because simulating on-disk corruption this way is necessarily
-/// backend-specific; `fr_108_switching_backend_flags_rebuild_without_data_loss`
+/// backend-specific; `switching_backend_flags_rebuild_without_data_loss`
 /// below covers the same "untrustworthy store yields a rebuild flag, not an
 /// error" contract in a way that is backend-agnostic.
 #[test]
@@ -369,6 +380,7 @@ fn store_round_trips_and_flags_rebuild() -> Result<(), Box<dyn std::error::Error
         let mut graph = LinkGraph::try_from(LinkGraphConfig {
             store_directory: store_directory.clone(),
             backend: GraphBackend::Fjall,
+            write_wait: contextos_search::DEFAULT_WRITE_WAIT,
         })?;
         assert!(graph.needs_rebuild());
 
@@ -383,6 +395,7 @@ fn store_round_trips_and_flags_rebuild() -> Result<(), Box<dyn std::error::Error
     let mut reopened = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Fjall,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     assert!(!reopened.needs_rebuild());
     let view = reopened.neighbours("a.md", 1, GraphDirection::Out)?;
@@ -406,9 +419,14 @@ fn store_round_trips_and_flags_rebuild() -> Result<(), Box<dyn std::error::Error
     let mut corrupt = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Fjall,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     assert!(corrupt.needs_rebuild());
-    assert!(corrupt.orphans()?.nodes.is_empty());
+    assert!(
+        corrupt.orphans()?.nodes.is_empty(),
+        "`corrupt.orphans()?.nodes` should be empty, got {:?}",
+        corrupt.orphans()?.nodes
+    );
 
     let fresh_dir = tempfile::tempdir()?;
     let fresh = graph_at(&fresh_dir, GraphBackend::Fjall)?;
@@ -434,6 +452,7 @@ fn switching_backend_flags_rebuild_without_data_loss() -> Result<(), Box<dyn std
         let mut fjall_graph = LinkGraph::try_from(LinkGraphConfig {
             store_directory: store_directory.clone(),
             backend: GraphBackend::Fjall,
+            write_wait: contextos_search::DEFAULT_WRITE_WAIT,
         })?;
         let notes = vec![("a.md".to_owned(), "A".to_owned(), Vec::new())];
         fjall_graph.rebuild(&notes)?;
@@ -445,9 +464,14 @@ fn switching_backend_flags_rebuild_without_data_loss() -> Result<(), Box<dyn std
     let mut sqlite_graph = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     assert!(sqlite_graph.needs_rebuild());
-    assert!(sqlite_graph.orphans()?.nodes.is_empty());
+    assert!(
+        sqlite_graph.orphans()?.nodes.is_empty(),
+        "`sqlite_graph.orphans()?.nodes` should be empty, got {:?}",
+        sqlite_graph.orphans()?.nodes
+    );
 
     // Rebuilding under the new backend recovers a working graph.
     let notes = vec![("z.md".to_owned(), "Z".to_owned(), Vec::new())];
@@ -458,6 +482,7 @@ fn switching_backend_flags_rebuild_without_data_loss() -> Result<(), Box<dyn std
     let mut reopened_sqlite = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     assert!(!reopened_sqlite.needs_rebuild());
     assert_eq!(reopened_sqlite.orphans()?.nodes.len(), 1);
@@ -469,6 +494,7 @@ fn switching_backend_flags_rebuild_without_data_loss() -> Result<(), Box<dyn std
     let mut reopened_fjall = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Fjall,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     assert!(!reopened_fjall.needs_rebuild());
     let view = reopened_fjall.neighbours("a.md", 1, GraphDirection::Out)?;
@@ -494,10 +520,12 @@ fn two_sqlite_backed_instances_open_concurrently() -> Result<(), Box<dyn std::er
     let mut first = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     let second = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
 
     first.upsert_note("a.md", "A", &[])?;
@@ -507,16 +535,22 @@ fn two_sqlite_backed_instances_open_concurrently() -> Result<(), Box<dyn std::er
     let mut reopened = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
-    assert!(!reopened.needs_rebuild());
+    // The write persisted and reopens; the store was only ever written note by note, so it still needs the rebuild
+    // that makes it the vault's graph.
     assert_eq!(reopened.neighbours("a.md", 1, GraphDirection::Out)?.nodes.len(), 1);
+    assert!(
+        reopened.needs_rebuild(),
+        "a store written note by note before any rebuild is not the vault's graph"
+    );
 
     Ok(())
 }
 
 /// Regression test for a genuine concurrency bug the fixed-scale
 /// benchmark (`benches/graph_persistence.rs`) found and
-/// `fr_108_two_sqlite_backed_instances_open_concurrently` above did not:
+/// `two_sqlite_backed_instances_open_concurrently` above did not:
 /// that test opens its two instances sequentially, with the second opened
 /// only after the first has already fully completed its own open. Two
 /// threads racing to open a brand-new `sqlite`-backed store at the same
@@ -539,6 +573,7 @@ fn two_sqlite_backed_instances_open_and_write_under_genuine_concurrency() -> Res
         let mut graph = LinkGraph::try_from(LinkGraphConfig {
             store_directory: first_directory,
             backend: GraphBackend::Sqlite,
+            write_wait: contextos_search::DEFAULT_WRITE_WAIT,
         })
         .map_err(|error| error.to_string())?;
         graph.upsert_note("a.md", "A", &[]).map_err(|error| error.to_string())
@@ -551,6 +586,7 @@ fn two_sqlite_backed_instances_open_and_write_under_genuine_concurrency() -> Res
         let mut graph = LinkGraph::try_from(LinkGraphConfig {
             store_directory: second_directory,
             backend: GraphBackend::Sqlite,
+            write_wait: contextos_search::DEFAULT_WRITE_WAIT,
         })
         .map_err(|error| error.to_string())?;
         graph.upsert_note("b.md", "B", &[]).map_err(|error| error.to_string())
@@ -562,6 +598,7 @@ fn two_sqlite_backed_instances_open_and_write_under_genuine_concurrency() -> Res
     let mut reopened = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     let mut paths: Vec<String> = reopened.full_view()?.nodes.into_iter().map(|node| node.path).collect();
     paths.sort_unstable();
@@ -582,14 +619,20 @@ fn a_sibling_sqlite_instance_observes_a_change_without_reopening() -> Result<(),
     let mut writer = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     let mut reader = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
 
     // `reader` sees nothing yet: it opened before `writer` persisted.
-    assert!(reader.orphans()?.nodes.is_empty());
+    assert!(
+        reader.orphans()?.nodes.is_empty(),
+        "`reader.orphans()?.nodes` should be empty, got {:?}",
+        reader.orphans()?.nodes
+    );
 
     writer.upsert_note("a.md", "A", &[])?;
 
@@ -620,10 +663,12 @@ fn a_removal_propagates_to_a_sibling_instance() -> Result<(), Box<dyn std::error
     let mut writer = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     let mut reader = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
 
     writer.upsert_note("a.md", "A", &[])?;
@@ -638,12 +683,12 @@ fn a_removal_propagates_to_a_sibling_instance() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-/// A `rebuild` (which clears the store directly, `StoresGraph::clear`,
-/// bypassing the ordinary upsert/remove vocabulary) forces a sibling's
-/// next catch-up to a full reload rather than a stale partial merge of
-/// old-plus-new content. Without the `Reset` marker this would fail
-/// differently: the reader would still show `old.md` (never told it was
-/// dropped) alongside whatever the rebuild added.
+/// A `rebuild` (which replaces the whole stored graph rather than using the
+/// ordinary upsert/remove vocabulary) forces a sibling's next catch-up to a
+/// full reload rather than a stale partial merge of old-plus-new content.
+/// Without the `Reset` marker this would fail differently: the reader would
+/// still show `old.md` (never told it was dropped) alongside whatever the
+/// rebuild added.
 #[test]
 fn a_rebuild_forces_a_sibling_to_a_full_reload_not_a_stale_merge() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
@@ -652,10 +697,12 @@ fn a_rebuild_forces_a_sibling_to_a_full_reload_not_a_stale_merge() -> Result<(),
     let mut writer = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     let mut reader = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
 
     writer.upsert_note("old.md", "Old", &[])?;
@@ -691,10 +738,12 @@ fn a_local_mutation_catches_up_before_applying_its_own_change() -> Result<(), Bo
     let mut writer = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     let mut reader = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
 
     writer.upsert_note("shared.md", "Shared", &[])?;
@@ -725,10 +774,12 @@ fn a_sibling_past_the_retention_window_falls_back_to_a_full_reload() -> Result<(
     let mut writer = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     let mut reader = LinkGraph::try_from(LinkGraphConfig {
         store_directory,
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
 
     writer.upsert_note("original.md", "Original", &[])?;
@@ -773,11 +824,11 @@ fn fjall_and_serde_report_no_sync_status() -> Result<(), Box<dyn std::error::Err
 }
 
 /// Child process for
-/// `fr_110_genuine_two_process_propagation_observed_by_an_already_open_sibling`
+/// `genuine_two_process_propagation_observed_by_an_already_open_sibling`
 /// below: a no-op under a normal `cargo test` run (the env vars it needs are
 /// absent), doing real work only when spawned explicitly as a genuinely
 /// separate OS process, the same pattern `contextos-fs/tests/mutate.rs`'s
-/// `fr_14_trash_delete_child`/`nfr_03_process_kill_child` already establish
+/// `trash_delete_child`/`process_kill_child` already establish
 /// in this workspace.
 #[test]
 fn genuine_two_process_child_writer() -> Result<(), Box<dyn std::error::Error>> {
@@ -790,6 +841,7 @@ fn genuine_two_process_child_writer() -> Result<(), Box<dyn std::error::Error>> 
     let mut graph = LinkGraph::try_from(LinkGraphConfig {
         store_directory: PathBuf::from(store_directory),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     graph.upsert_note(&note_path.to_string_lossy(), "Child", &[])?;
     Ok(())
@@ -815,6 +867,7 @@ fn genuine_two_process_propagation_observed_by_an_already_open_sibling() -> Resu
     let mut reader = LinkGraph::try_from(LinkGraphConfig {
         store_directory: store_directory.clone(),
         backend: GraphBackend::Sqlite,
+        write_wait: contextos_search::DEFAULT_WRITE_WAIT,
     })?;
     assert!(
         reader.orphans()?.nodes.is_empty(),

@@ -2,6 +2,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use contextos_core::{ContentHash, PathError};
+
+use crate::FileVersion;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -11,6 +13,17 @@ pub struct FsErrorInfo {
     pub code: &'static str,
     pub message: String,
     pub remediation: &'static str,
+}
+
+/// Re-surfaces the I/O cause of a failure under its own kind, so callers that branch on the kind still see it, with
+/// the typed error kept as the source for its message.
+impl From<FsError> for std::io::Error {
+    fn from(error: FsError) -> Self {
+        let kind = std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<Self>())
+            .map_or(std::io::ErrorKind::Other, Self::kind);
+        Self::new(kind, error)
+    }
 }
 
 impl From<&FsError> for FsErrorInfo {
@@ -28,8 +41,23 @@ impl From<&FsError> for FsErrorInfo {
 pub enum FsError {
     #[error("path does not belong to an allowed vault root: {path}")]
     OutsideRoot { path: PathBuf },
+    #[error("another process held the host write lock {lock} for more than {seconds} seconds")]
+    HostLockBusy { lock: PathBuf, seconds: u64 },
+    #[error("could not open or take the host write lock {lock}")]
+    HostLock {
+        lock: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error("path is not a directory: {path}")]
     NotDirectory { path: PathBuf },
+    #[error("only the server writes below {folder}, so a tool cannot change {path}")]
+    ServerOwned {
+        path: PathBuf,
+        folder: String,
+        code: &'static str,
+        remediation: &'static str,
+    },
     #[error("path changed or no longer passes vault validation: {path}")]
     PathValidation {
         path: PathBuf,
@@ -42,6 +70,8 @@ pub enum FsError {
     NotFile { path: PathBuf },
     #[error("file is {size} bytes, above the unlimited-read maximum of {maximum} bytes: {path}")]
     TooLarge { path: PathBuf, size: u64, maximum: u64 },
+    #[error("content is {size} bytes, above the {maximum}-byte binary write maximum: {path}")]
+    TooLargeToWrite { path: PathBuf, size: u64, maximum: u64 },
     #[error("file is binary or is not valid UTF-8: {path}")]
     Binary { path: PathBuf },
     #[error("file changed since the caller observed it: {path}")]
@@ -54,6 +84,20 @@ pub enum FsError {
         /// again.
         current_hash: Option<ContentHash>,
     },
+    #[error("file changed since the caller read it: {path}")]
+    VersionConflict {
+        path: PathBuf,
+        /// The version of the file as it is now, so the caller can start reading it again.
+        current_version: FileVersion,
+    },
+    #[error("version token must be 32 lowercase hexadecimal characters")]
+    InvalidVersion,
+    #[error("a part must be at least {minimum} bytes long, not {length}")]
+    PartTooShort { length: u64, minimum: u64 },
+    #[error("part starts at byte {offset}, beyond the end of the {size}-byte file: {path}")]
+    PartOutOfRange { path: PathBuf, offset: u64, size: u64 },
+    #[error("part starts at byte {offset}, inside a multi-byte character: {path}")]
+    PartInsideCharacter { path: PathBuf, offset: u64 },
     #[error("expected_hash is required to overwrite an existing file: {path}")]
     ExpectedHashRequired { path: PathBuf, current_hash: ContentHash },
     #[error("destination already exists: {path}")]
@@ -62,6 +106,8 @@ pub enum FsError {
     EditNotFound { path: PathBuf },
     #[error("exact edit text occurs more than once: {path}")]
     EditAmbiguous { path: PathBuf },
+    #[error("the vault holds more than {maximum} files under {path}")]
+    TooManyFiles { path: PathBuf, maximum: usize },
     #[error("batch contains {count} paths, above the configured maximum of {maximum}")]
     BatchTooLarge { count: usize, maximum: usize },
     #[error("filesystem configuration has {limit_count} limit sets for {root_count} vault roots")]
@@ -168,6 +214,18 @@ pub enum FsError {
         #[source]
         source: io::Error,
     },
+    #[error("folder could not be replaced or recovered: {path}")]
+    ReplaceDirectory {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("folder was replaced but the previous folder could not be removed: {path}")]
+    ReplaceCleanup {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
     #[error("path could not be moved from {source_path} to {destination}")]
     MovePath {
         source_path: PathBuf,
@@ -219,16 +277,26 @@ impl FsError {
             | Self::InvalidLimits { .. }
             | Self::HiddenCountMismatch { .. }
             | Self::InvalidRange { .. }
+            | Self::InvalidVersion
+            | Self::PartTooShort { .. }
             | Self::InvalidGlob { .. }
             | Self::InvalidExclude { .. } => None,
             Self::OutsideRoot { path }
             | Self::NotDirectory { path }
+            | Self::ServerOwned { path, .. }
+            | Self::HostLockBusy { lock: path, .. }
+            | Self::HostLock { lock: path, .. }
             | Self::PathValidation { path, .. }
             | Self::NotFound { path }
             | Self::NotFile { path }
             | Self::TooLarge { path, .. }
+            | Self::TooManyFiles { path, .. }
+            | Self::TooLargeToWrite { path, .. }
             | Self::Binary { path }
             | Self::Conflict { path, .. }
+            | Self::VersionConflict { path, .. }
+            | Self::PartOutOfRange { path, .. }
+            | Self::PartInsideCharacter { path, .. }
             | Self::ExpectedHashRequired { path, .. }
             | Self::DestinationExists { path }
             | Self::EditNotFound { path }
@@ -250,6 +318,8 @@ impl FsError {
             | Self::DirectoryNotEmpty { path }
             | Self::TrashPath { path, .. }
             | Self::DeletePath { path, .. }
+            | Self::ReplaceDirectory { path, .. }
+            | Self::ReplaceCleanup { path, .. }
             | Self::OpenAppend { path, .. }
             | Self::AppendContent { path, .. }
             | Self::FlushAppend { path, .. } => Some(path),
@@ -267,11 +337,17 @@ impl FsError {
             Self::ExpectedHashRequired { current_hash, .. } => Some(current_hash),
             Self::OutsideRoot { .. }
             | Self::NotDirectory { .. }
+            | Self::ServerOwned { .. }
+            | Self::HostLockBusy { .. }
+            | Self::HostLock { .. }
             | Self::PathValidation { .. }
             | Self::NotFound { .. }
             | Self::NotFile { .. }
             | Self::TooLarge { .. }
+            | Self::TooManyFiles { .. }
+            | Self::TooLargeToWrite { .. }
             | Self::Binary { .. }
+            | Self::VersionConflict { .. }
             | Self::DestinationExists { .. }
             | Self::EditNotFound { .. }
             | Self::EditAmbiguous { .. }
@@ -280,6 +356,10 @@ impl FsError {
             | Self::InvalidLimits { .. }
             | Self::HiddenCountMismatch { .. }
             | Self::InvalidRange { .. }
+            | Self::InvalidVersion
+            | Self::PartTooShort { .. }
+            | Self::PartOutOfRange { .. }
+            | Self::PartInsideCharacter { .. }
             | Self::InvalidGlob { .. }
             | Self::InvalidExclude { .. }
             | Self::ReadDirectory { .. }
@@ -297,6 +377,8 @@ impl FsError {
             | Self::PersistTemporary { .. }
             | Self::CreateDirectory { .. }
             | Self::MovePath { .. }
+            | Self::ReplaceDirectory { .. }
+            | Self::ReplaceCleanup { .. }
             | Self::DirectoryNotEmpty { .. }
             | Self::TrashPath { .. }
             | Self::DeletePath { .. }
@@ -311,16 +393,26 @@ impl FsError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::OutsideRoot { .. } => "path/outside-root",
+            Self::ServerOwned { code, .. } => code,
             Self::PathValidation { source, .. } => source.code(),
             Self::NotFound { .. } => "path/not-found",
-            Self::Conflict { .. } => "io/conflict",
+            Self::NotDirectory { .. } => "path/not-a-directory",
+            Self::HostLockBusy { .. } => "io/vault-busy",
+            Self::HostLock { .. } => "io/write-lock",
+            Self::Conflict { .. } | Self::VersionConflict { .. } => "io/conflict",
             Self::ExpectedHashRequired { .. } => "io/expected-hash-required",
             Self::DestinationExists { .. } => "io/destination-exists",
             Self::EditNotFound { .. } => "edit/not-found",
             Self::EditAmbiguous { .. } => "edit/ambiguous",
             Self::TooLarge { .. } => "io/too-large",
+            Self::TooManyFiles { .. } => "io/too-many-files",
+            Self::TooLargeToWrite { .. } => "io/too-large-to-write",
             Self::Binary { .. } => "io/binary",
-            Self::InvalidRange { .. } => "io/invalid-range",
+            Self::InvalidRange { .. }
+            | Self::PartTooShort { .. }
+            | Self::PartOutOfRange { .. }
+            | Self::PartInsideCharacter { .. } => "io/invalid-range",
+            Self::InvalidVersion => "io/invalid-version",
             Self::InvalidGlob { .. } | Self::InvalidExclude { .. } => "io/invalid-pattern",
             Self::BatchTooLarge { .. } => "io/batch-too-large",
             Self::AtomicWriteInterrupted { .. } => "io/atomic-write-interrupted",
@@ -330,7 +422,6 @@ impl FsError {
                 "server/configuration"
             }
             Self::NotFile { .. }
-            | Self::NotDirectory { .. }
             | Self::ReadDirectory { .. }
             | Self::ReadDirectoryEntry { .. }
             | Self::WalkDirectory { .. }
@@ -345,6 +436,8 @@ impl FsError {
             | Self::PersistTemporary { .. }
             | Self::CreateDirectory { .. }
             | Self::MovePath { .. }
+            | Self::ReplaceDirectory { .. }
+            | Self::ReplaceCleanup { .. }
             | Self::OpenAppend { .. }
             | Self::AppendContent { .. }
             | Self::FlushAppend { .. } => "io/filesystem",
@@ -358,8 +451,12 @@ impl FsError {
             Self::OutsideRoot { .. } => "Use a path from an allowed vault root.",
             Self::PathValidation { source, .. } => source.remediation(),
             Self::NotFound { .. } => "Check the path and list its parent directory.",
+            Self::ServerOwned { remediation, .. } => remediation,
             Self::Conflict { .. } => {
                 "The file changed since it was last read. Read the current content and retry the write with its hash."
+            }
+            Self::VersionConflict { .. } => {
+                "The file changed since it was read. Read it again from the start, passing the version that read returns."
             }
             Self::ExpectedHashRequired { .. } => {
                 "expected_hash is required to overwrite an existing file. Read it first to obtain the current content_hash, then retry the write with that hash."
@@ -371,12 +468,33 @@ impl FsError {
                 "Correct the configured limits and hidden patterns for every vault root and restart the server."
             }
             Self::NotFile { .. } => "Pass the path of a regular file.",
-            Self::TooLarge { .. } => "Pass head, tail, or an explicit line range.",
+            Self::TooLarge { .. } => {
+                "Pass head, tail, or an explicit line range, or read the file in parts with offset and length."
+            }
+            Self::TooLargeToWrite { .. } => {
+                "Write content of 10 MiB or less; fs_attach_file's own read cap uses the same limit."
+            }
             Self::Binary { .. } => "Use fs_attach_file for binary content.",
+            Self::TooManyFiles { .. } => {
+                "Narrow the request to a smaller folder, or omit the option that indexes the whole vault."
+            }
             Self::BatchTooLarge { .. } => "Split the request into smaller batches.",
+            Self::InvalidVersion => {
+                "Pass the version exactly as an earlier read of the file returned it, or omit expected_version."
+            }
+            Self::PartTooShort { .. } => "Ask for a length of at least 4 bytes, or omit length.",
+            Self::PartOutOfRange { .. } | Self::PartInsideCharacter { .. } => {
+                "Start at offset 0, or at the next_offset an earlier part returned, which always begins a whole character."
+            }
             Self::InvalidRange { .. } => "Use positive 1-based line numbers with from_line no greater than to_line.",
             Self::InvalidGlob { .. } | Self::InvalidExclude { .. } => "Use a valid gitignore-style glob pattern.",
             Self::NotDirectory { .. } => "Pass the path of a directory.",
+            Self::HostLockBusy { .. } => {
+                "Retry shortly. If it persists, another contextos process is stuck mid-write on this vault: stop it."
+            }
+            Self::HostLock { .. } => {
+                "Check the vault's state directory is on a local disk the server can write, and retry."
+            }
             Self::DirectoryNotEmpty { .. } => "Delete the directory contents first.",
             Self::ReadDirectory { .. }
             | Self::ReadDirectoryEntry { .. }
@@ -393,6 +511,8 @@ impl FsError {
             | Self::PersistTemporary { .. }
             | Self::CreateDirectory { .. }
             | Self::MovePath { .. }
+            | Self::ReplaceDirectory { .. }
+            | Self::ReplaceCleanup { .. }
             | Self::TrashPath { .. }
             | Self::DeletePath { .. }
             | Self::OpenAppend { .. }

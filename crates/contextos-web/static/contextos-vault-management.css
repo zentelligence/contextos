@@ -1,0 +1,160 @@
+/* Vault Settings: the sidebar's two groups and the vault management pages (registers, libraries, activity log). */
+
+/* ---------- settings sidebar ---------- */
+.settings-nav-heading{margin:14px 10px 4px;font-size:calc(10.5rem / 14);font-weight:var(--fw-semibold);text-transform:uppercase;letter-spacing:var(--label-tracking);color:var(--fg-faint);}
+.settings-nav-heading:first-child{margin-top:0;}
+.settings-nav-link{display:flex;align-items:center;gap:8px;padding:8px 10px;border-left:2px solid transparent;border-radius:var(--radius-control);font-size:calc(13rem / 14);color:var(--fg-muted);text-decoration:none;}
+.settings-nav-link:hover{color:var(--fg);text-decoration:none;}
+.settings-nav-link.active{background:var(--bg-panel-raised);color:var(--fg);font-weight:var(--fw-semibold);border-left-color:var(--accent-primary);}
+.settings-nav-link.active .ic{color:var(--accent-primary);}
+.settings-nav-link.settings-nav-apart{margin-top:8px;border-top:1px solid var(--border);border-radius:0 0 var(--radius-control) var(--radius-control);padding-top:12px;}
+.settings-nav-label{flex:1;min-width:0;}
+.settings-nav-count{font-family:var(--font-mono);font-size:calc(11rem / 14);color:var(--fg-faint);}
+.settings-content{min-width:0;}
+
+/* ---------- shared page frame ---------- */
+.vm-panel{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.vm-header h2{display:flex;align-items:center;gap:8px;margin:0 0 4px;}
+.vm-header h2 .ic{color:var(--accent-primary);}
+.vm-header .hint{margin:0;}
+.vm-read-only{display:flex;align-items:flex-start;gap:6px;}
+.vm-read-only .ic{margin-top:2px;color:var(--fg-faint);}
+.vm-main-header{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.vm-main-header h3{margin:0;font-weight:var(--fw-semibold);}
+.vm-main-header .hint{margin:2px 0 0;}
+.vm-main-header .save-bar.save-bar-top{margin:0;padding:0;border:none;}
+.vm-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:160px;padding:24px;border:1px dashed var(--border);border-radius:var(--radius-nested);color:var(--fg-muted);text-align:center;}
+.vm-empty p{margin:0;}
+
+/* ---------- tabs and filters ---------- */
+.vm-tabs,.vm-filters{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--border);}
+.vm-tab,.vm-filter{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;margin-bottom:-1px;border-bottom:2px solid transparent;font-size:calc(12.5rem / 14);color:var(--fg-muted);text-decoration:none;}
+.vm-tab:hover,.vm-filter:hover{color:var(--fg);text-decoration:none;}
+.vm-tab.active,.vm-filter.active{color:var(--fg);font-weight:var(--fw-semibold);border-bottom-color:var(--accent-primary);}
+.vm-tab.unprovisioned{color:var(--fg-faint);}
+.vm-tab-count{font-family:var(--font-mono);font-size:calc(11rem / 14);color:var(--fg-faint);}
+.vm-tab-description{margin:0;}
+.vm-register-toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.vm-register-toolbar .vm-filters{flex:1;}
+.vm-register-toolbar .header-actions{display:flex;gap:6px;flex-wrap:wrap;}
+
+/* ---------- configured locations ---------- */
+.vm-paths{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-nested);background:var(--bg-panel-raised);}
+.vm-paths.editing{display:block;}
+.vm-paths-list{display:flex;flex-wrap:wrap;gap:6px 22px;margin:0;}
+.vm-paths-list div{display:flex;align-items:baseline;gap:8px;}
+.vm-paths-list dt{font-size:calc(10.5rem / 14);text-transform:uppercase;letter-spacing:var(--label-tracking);color:var(--fg-faint);}
+.vm-paths-list dd{margin:0;font-size:calc(12.5rem / 14);}
+.vm-paths-form .field-row input{font-family:var(--font-mono);}
+.vm-paths-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 14px;}
+.vm-paths-actions{display:flex;gap:8px;}
+
+/* ---------- library: tree beside the reader ---------- */
+.vm-library{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px;align-items:start;}
+.vm-tree{display:flex;flex-direction:column;gap:4px;min-width:0;position:sticky;top:var(--space-4);max-height:calc(100vh - var(--header-height) - 2 * var(--space-4));overflow-y:auto;}
+.vm-tree-root{display:flex;align-items:center;gap:8px;padding:6px 8px;border-left:2px solid transparent;border-radius:var(--radius-control);font-size:calc(12.5rem / 14);color:var(--fg-muted);text-decoration:none;}
+.vm-tree-root.active,.vm-tree-root:hover{background:var(--bg-panel-raised);color:var(--fg);text-decoration:none;}
+.vm-tree-root.active{border-left-color:var(--accent-primary);}
+.vm-main{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.vm-item-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.vm-item-list li{padding:10px 0;border-bottom:1px solid var(--border);}
+.vm-item-list li:last-child{border-bottom:none;}
+.vm-item-list a{display:inline-flex;align-items:center;gap:8px;font-weight:var(--fw-medium);color:var(--fg);}
+.vm-item-list .ic{color:var(--fg-faint);}
+.vm-item-description{margin:3px 0 0 22px;font-size:calc(12.5rem / 14);color:var(--fg-muted);}
+.vm-properties{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:0;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-nested);background:var(--bg-panel-raised);}
+.vm-properties div{display:contents;}
+.vm-properties dt{font-size:calc(11rem / 14);text-transform:uppercase;letter-spacing:var(--label-tracking);color:var(--fg-faint);padding-top:2px;}
+.vm-properties dd{margin:0;display:flex;flex-wrap:wrap;gap:4px;font-size:calc(12.5rem / 14);min-width:0;overflow-wrap:anywhere;}
+.vm-property-value{display:inline-block;}
+.vm-property-value + .vm-property-value::before{content:"·";margin-right:4px;color:var(--fg-faint);}
+.vm-raw-frontmatter{margin:0;}
+.template-token{color:var(--accent-relational);background:var(--tint-relational);}
+.vm-editor{display:flex;flex-direction:column;gap:12px;min-width:0;}
+.vm-source-editor{width:100%;min-height:60vh;resize:vertical;padding:12px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:calc(12.5rem / 14);line-height:1.55;tab-size:4;}
+.vm-editor .field-row{margin-bottom:0;}
+.vm-editor .field-row input[type=text]{font-family:var(--font-mono);}
+.vm-editor .save-bar{margin-top:0;}
+
+/* ---------- highlighted source ---------- */
+.code-view{margin:0;counter-reset:code-line;line-height:1.55;}
+/* Lines stay inline so the source's own newlines lay them out (and survive copying); the number is a pseudo-element. */
+.code-view .code-line{display:inline;}
+.code-view .code-line::before{counter-increment:code-line;content:counter(code-line);display:inline-block;width:3.5ch;margin-right:1.5ch;text-align:right;color:var(--fg-faint);user-select:none;}
+.tok-comment{color:var(--fg-faint);font-style:italic;}
+.tok-string{color:var(--accent-analytics);}
+.tok-number{color:var(--accent-warning);}
+.tok-keyword{color:var(--accent-primary);font-weight:var(--fw-semibold);}
+.tok-variable{color:var(--accent-relational);}
+
+/* ---------- registers ---------- */
+.vm-table{width:100%;border-collapse:collapse;font-size:calc(12.5rem / 14);}
+.vm-table th{text-align:left;padding:6px 10px;font-size:calc(10.5rem / 14);font-weight:var(--fw-semibold);text-transform:uppercase;letter-spacing:var(--label-tracking);color:var(--fg-faint);border-bottom:1px solid var(--border);}
+.vm-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+.vm-table tbody tr:hover{background:var(--bg-panel-raised);}
+.vm-table td.mono{white-space:nowrap;}
+.badge.attention{color:var(--status-attention);background:var(--tint-warning);}
+.badge.neutral{color:var(--fg-muted);}
+.vm-record{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.vm-record-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:20px;align-items:start;}
+.vm-record-fields{display:flex;flex-direction:column;gap:12px;min-width:0;}
+.vm-record-fields.vm-properties{display:grid;}
+.vm-record-fields textarea{display:block;width:100%;margin-top:4px;padding:7px 9px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg);color:var(--fg);font-family:var(--font-mono);font-size:calc(12.5rem / 14);resize:vertical;}
+.vm-record-fields input[type=date]{display:block;width:100%;margin-top:4px;padding:6px 9px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg);color:var(--fg);font:inherit;}
+.vm-record-body{min-width:0;display:flex;flex-direction:column;gap:10px;}
+.vm-record-fields .vm-property-value{display:block;}
+.vm-record-fields .vm-property-value + .vm-property-value::before{content:none;}
+.vm-guidance summary{cursor:pointer;font-size:calc(12.5rem / 14);color:var(--fg-muted);}
+.vm-guidance pre{white-space:pre-wrap;margin:8px 0 0;}
+
+/* ---------- activity log ---------- */
+.vm-day-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0;font-size:calc(12.5rem / 14);color:var(--fg-muted);}
+.vm-log-table{table-layout:fixed;}
+.vm-log-table .vm-log-time{width:11ch;}
+.vm-log-table .vm-log-origin{width:21ch;}
+.vm-log-table .vm-log-operation{width:11ch;}
+.vm-log-table td{overflow-wrap:anywhere;}
+.vm-log-table td:nth-child(-n+3){overflow-wrap:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.vm-log-files{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:1px;}
+.vm-log-files a{font-size:calc(11.5rem / 14);}
+.vm-log-unstructured td{color:var(--fg-muted);background:var(--bg-panel-raised);}
+
+/* ---------- tasks configuration editor ---------- */
+.tasks-editor{display:flex;flex-direction:column;gap:18px;}
+.tasks-editor-group{margin:0;padding:12px 14px 14px;border:1px solid var(--border);border-radius:var(--radius-nested);display:flex;flex-direction:column;gap:10px;align-items:flex-start;min-width:0;}
+.tasks-editor-group legend{padding:0 6px;font-weight:var(--fw-semibold);}
+.tasks-editor-group .hint{margin:0;}
+.tasks-editor-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:calc(12.5rem / 14);}
+.tasks-editor-col-select{width:21%;}
+.tasks-editor-col-prefix{width:10ch;}
+.tasks-editor-col-actions{width:118px;}
+.tasks-editor-table th{text-align:left;padding:4px 6px;font-size:calc(10.5rem / 14);font-weight:var(--fw-semibold);text-transform:uppercase;letter-spacing:var(--label-tracking);color:var(--fg-faint);}
+.tasks-editor-table td{padding:3px 6px;vertical-align:middle;}
+.tasks-editor input[type=text],.tasks-editor select{width:100%;min-width:0;padding:5px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg);color:var(--fg);font:inherit;font-size:calc(12.5rem / 14);}
+.tasks-editor input.tasks-editor-narrow{font-family:var(--font-mono);}
+.tasks-editor-row-actions{display:inline-flex;gap:2px;white-space:nowrap;}
+.tasks-editor-row-actions .icon-button:disabled{opacity:0.35;cursor:default;}
+.tasks-editor-labels{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px;width:100%;}
+.tasks-editor-labels li{display:flex;align-items:center;gap:8px;}
+.tasks-editor-labels input[type=text]{max-width:320px;}
+.tasks-editor-unsaved{color:var(--status-attention);}
+.tasks-editor .save-bar{width:100%;}
+
+/* Narrow viewports: the settings sidebar, every tree, and every record sidebar stack above what they accompany. Kept
+   after the base rules so it wins the cascade at every width it applies to. */
+@media (max-width: 900px){
+  .settings-grid{grid-template-columns:1fr;}
+  .settings-nav{position:static;flex-direction:row;align-items:center;gap:4px;overflow-x:auto;padding-bottom:8px;border-bottom:1px solid var(--border);}
+  .settings-nav-heading{margin:0 4px 0 8px;white-space:nowrap;}
+  .settings-nav button,.settings-nav-link{flex:0 0 auto;white-space:nowrap;border-left:none;border-bottom:2px solid transparent;border-radius:var(--radius-control) var(--radius-control) 0 0;}
+  .settings-nav button.active,.settings-nav-link.active{border-bottom-color:var(--accent-primary);}
+  .settings-nav button.settings-nav-apart,.settings-nav-link.settings-nav-apart{margin:0;border-top:none;padding-top:8px;}
+  .settings-nav-label{flex:0 0 auto;}
+  .vm-library,.vm-record-layout{grid-template-columns:1fr;}
+  .vm-tree{position:static;max-height:40vh;}
+  .vm-source-editor{min-height:45vh;}
+  .vm-table th:nth-child(3),.vm-table td:nth-child(3){display:none;}
+  .tasks-editor-table thead{display:none;}
+  .tasks-editor-table tr{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:8px 0;border-bottom:1px solid var(--border);}
+  .tasks-editor-table td{padding:0;}
+}

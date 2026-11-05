@@ -8,19 +8,27 @@ use crate::LogLevel;
 
 /// A scripted [`Interviewer`] double: consumes fixed confirm/text answers in
 /// call order, so [`run_interview`] is exercised deterministically with no
-/// real terminal I/O (`specification/delivery-plan.md` Phase 13 gate).
-struct ScriptedInterviewer {
+/// real terminal I/O.
+pub(super) struct ScriptedInterviewer {
     confirms: VecDeque<bool>,
     texts: VecDeque<String>,
     choices: VecDeque<usize>,
+    /// Every free-text prompt with the default it was offered, in call order.
+    pub(super) asked: Vec<(String, Option<String>)>,
+    /// Every yes/no prompt with the default it was offered, in call order.
+    pub(super) confirm_defaults: Vec<(String, bool)>,
+    pub(super) notices: Vec<String>,
 }
 
 impl ScriptedInterviewer {
-    fn new(confirms: Vec<bool>, texts: Vec<String>) -> Self {
+    pub(super) fn new(confirms: Vec<bool>, texts: Vec<String>) -> Self {
         Self {
             confirms: confirms.into(),
             texts: texts.into(),
             choices: VecDeque::new(),
+            asked: Vec::new(),
+            confirm_defaults: Vec::new(),
+            notices: Vec::new(),
         }
     }
 
@@ -31,25 +39,35 @@ impl ScriptedInterviewer {
             confirms: confirms.into(),
             texts: texts.into(),
             choices: choices.into(),
+            asked: Vec::new(),
+            confirm_defaults: Vec::new(),
+            notices: Vec::new(),
         }
     }
 }
 
 impl Interviewer for ScriptedInterviewer {
-    fn confirm(&mut self, prompt: &str, _default: bool) -> Result<bool, InterviewError> {
+    fn confirm(&mut self, prompt: &str, default: bool) -> Result<bool, InterviewError> {
+        self.confirm_defaults.push((prompt.to_owned(), default));
         self.confirms.pop_front().ok_or_else(|| script_exhausted(prompt))
     }
 
     fn ask(&mut self, prompt: &str) -> Result<String, InterviewError> {
+        self.asked.push((prompt.to_owned(), None));
         self.texts.pop_front().ok_or_else(|| script_exhausted(prompt))
     }
 
-    fn ask_with_default(&mut self, prompt: &str, _default: &str) -> Result<String, InterviewError> {
+    fn ask_with_default(&mut self, prompt: &str, default: &str) -> Result<String, InterviewError> {
+        self.asked.push((prompt.to_owned(), Some(default.to_owned())));
         self.texts.pop_front().ok_or_else(|| script_exhausted(prompt))
     }
 
     fn choose(&mut self, prompt: &str, _options: &[&str]) -> Result<usize, InterviewError> {
         self.choices.pop_front().ok_or_else(|| script_exhausted(prompt))
+    }
+
+    fn notify(&mut self, message: &str) {
+        self.notices.push(message.to_owned());
     }
 }
 
@@ -64,9 +82,40 @@ fn script_exhausted(prompt: &str) -> InterviewError {
     ))
 }
 
+/// Deletes the derived-state directory `state_dir::resolve_state_directory`'s
+/// own default resolves for `vault_root`, undoing what `run_interview`'s own
+/// `IndexReport::try_from(&config)` call creates there as a side effect of
+/// computing the index summary it reports. That default is a deliberate,
+/// platform-standard location outside the vault itself
+/// (`state_dir.rs`'s own doc covers why), never asked about by the
+/// interview flow and never meant to be, so a test exercising the real
+/// interview end to end against a real, if disposable, vault path is the
+/// one caller responsible for cleaning up after itself rather than
+/// overriding the default away. Constructed right after the vault
+/// directory it covers, so it lives for the rest of the test and cleans up
+/// on every exit path, including an early `?` or a panic.
+pub(super) struct StateDirectoryCleanup(Option<PathBuf>);
+
+impl StateDirectoryCleanup {
+    pub(super) fn for_vault(vault_root: &Path) -> Self {
+        // The state directory is keyed to the resolved root, which a temporary folder's path need not be: Windows can
+        // reach it through a short name.
+        let resolved = dunce::canonicalize(vault_root).unwrap_or_else(|_| vault_root.to_path_buf());
+        Self(crate::state_dir::resolve_state_directory(None, &resolved).ok())
+    }
+}
+
+impl Drop for StateDirectoryCleanup {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
 /// A [`DetectsRunningProcesses`] test double that never reports Claude
 /// Desktop as running, so `register` proceeds without a real process scan.
-struct NeverRunning;
+pub(super) struct NeverRunning;
 
 impl DetectsRunningProcesses for NeverRunning {
     fn is_running(&self, _name_needle: &str) -> bool {
@@ -88,24 +137,24 @@ fn parse_manual_path_strips_matching_surrounding_double_quotes() {
 #[test]
 fn parse_manual_path_strips_matching_surrounding_single_quotes() {
     assert_eq!(
-        parse_manual_path("'/home/pj/config.toml'"),
-        PathBuf::from("/home/pj/config.toml")
+        parse_manual_path("'/home/someone/config.toml'"),
+        PathBuf::from("/home/someone/config.toml")
     );
 }
 
 #[test]
 fn parse_manual_path_leaves_an_unquoted_path_unchanged() {
     assert_eq!(
-        parse_manual_path("/home/pj/config.toml"),
-        PathBuf::from("/home/pj/config.toml")
+        parse_manual_path("/home/someone/config.toml"),
+        PathBuf::from("/home/someone/config.toml")
     );
 }
 
 #[test]
 fn parse_manual_path_leaves_mismatched_quotes_unchanged() {
     assert_eq!(
-        parse_manual_path("\"/home/pj/config.toml"),
-        PathBuf::from("\"/home/pj/config.toml")
+        parse_manual_path("\"/home/someone/config.toml"),
+        PathBuf::from("\"/home/someone/config.toml")
     );
 }
 
@@ -114,6 +163,7 @@ fn run_interview_strips_quotes_from_a_manually_entered_host_path_once_discovery_
 -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = tempdir()?;
     let vault_dir = tempdir()?;
+    let _state_cleanup = StateDirectoryCleanup::for_vault(vault_dir.path());
     let host_dir = tempdir()?;
     let config_path = config_dir.path().join("config.toml");
     let host_path = host_dir.path().join("claude_desktop_config.json");
@@ -133,6 +183,7 @@ fn run_interview_strips_quotes_from_a_manually_entered_host_path_once_discovery_
         process_detector: &detector,
         wait_tick: &|| {},
         server_command: "/usr/local/bin/contextos".to_owned(),
+        default_log_file: None,
     };
 
     // Pasted as a quoted string, mirroring "Copy as path" from a file
@@ -147,6 +198,7 @@ fn run_interview_strips_quotes_from_a_manually_entered_host_path_once_discovery_
         vec![
             "mine".to_owned(),
             vault_dir.path().display().to_string(),
+            String::new(), // "Log file path ...:" blank for stderr
             quoted_host_path,
         ],
     );
@@ -169,6 +221,7 @@ fn run_interview_completes_the_full_happy_path_with_no_terminal_or_network_acces
 -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = tempdir()?;
     let vault_dir = tempdir()?;
+    let _state_cleanup = StateDirectoryCleanup::for_vault(vault_dir.path());
     let model_dir = tempdir()?;
     let host_dir = tempdir()?;
     let config_path = config_dir.path().join("config.toml");
@@ -190,6 +243,7 @@ fn run_interview_completes_the_full_happy_path_with_no_terminal_or_network_acces
         process_detector: &detector,
         wait_tick: &|| {},
         server_command: "/usr/local/bin/contextos".to_owned(),
+        default_log_file: None,
     };
 
     let mut interviewer = ScriptedInterviewer::new(
@@ -199,7 +253,11 @@ fn run_interview_completes_the_full_happy_path_with_no_terminal_or_network_acces
             true,  // "Download the local embedding model now?"
             true,  // "Register this server with Claude Desktop now?"
         ],
-        vec!["mine".to_owned(), vault_dir.path().display().to_string()],
+        vec![
+            "mine".to_owned(),
+            vault_dir.path().display().to_string(),
+            String::new(), // "Log file path ...:" blank for stderr
+        ],
     );
 
     let report = run_interview(&mut interviewer, &environment)?;
@@ -236,6 +294,7 @@ fn run_interview_skips_every_optional_step_and_touches_neither_network_nor_host(
 -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = tempdir()?;
     let vault_dir = tempdir()?;
+    let _state_cleanup = StateDirectoryCleanup::for_vault(vault_dir.path());
     let config_path = config_dir.path().join("config.toml");
 
     // Neither closure should ever run in this path: `run_interview` must
@@ -256,6 +315,7 @@ fn run_interview_skips_every_optional_step_and_touches_neither_network_nor_host(
         process_detector: &detector,
         wait_tick: &|| {},
         server_command: "/usr/local/bin/contextos".to_owned(),
+        default_log_file: None,
     };
 
     let mut interviewer = ScriptedInterviewer::new(
@@ -264,7 +324,11 @@ fn run_interview_skips_every_optional_step_and_touches_neither_network_nor_host(
             false, // "Enable semantic search ...?"
             false, // "Register this server with Claude Desktop now?"
         ],
-        vec!["mine".to_owned(), vault_dir.path().display().to_string()],
+        vec![
+            "mine".to_owned(),
+            vault_dir.path().display().to_string(),
+            String::new(), // "Log file path ...:" blank for stderr
+        ],
     );
 
     let report = run_interview(&mut interviewer, &environment)?;
@@ -293,6 +357,7 @@ fn run_interview_reports_host_running_instead_of_failing_the_whole_interview() -
 
     let config_dir = tempdir()?;
     let vault_dir = tempdir()?;
+    let _state_cleanup = StateDirectoryCleanup::for_vault(vault_dir.path());
     let host_dir = tempdir()?;
     let config_path = config_dir.path().join("config.toml");
     let host_path = host_dir.path().join("claude_desktop_config.json");
@@ -315,6 +380,7 @@ fn run_interview_reports_host_running_instead_of_failing_the_whole_interview() -
         process_detector: &detector,
         wait_tick: &|| {},
         server_command: "/usr/local/bin/contextos".to_owned(),
+        default_log_file: None,
     };
 
     let mut interviewer = ScriptedInterviewer::new(
@@ -324,7 +390,11 @@ fn run_interview_reports_host_running_instead_of_failing_the_whole_interview() -
             true,  // "Register this server with Claude Desktop now?"
             false, // "... Wait for it to close and register automatically?"
         ],
-        vec!["mine".to_owned(), vault_dir.path().display().to_string()],
+        vec![
+            "mine".to_owned(),
+            vault_dir.path().display().to_string(),
+            String::new(), // "Log file path ...:" blank for stderr
+        ],
     );
 
     let report = run_interview(&mut interviewer, &environment)?;
@@ -343,11 +413,11 @@ fn run_interview_reports_host_running_instead_of_failing_the_whole_interview() -
 /// Every test past this point loads a `config.toml` that already has
 /// vault(s) configured, exercising the reload behaviour rather than the
 /// fresh-install path the tests above cover.
-fn write_existing_config(path: &std::path::Path, contents: &str) -> Result<(), std::io::Error> {
+pub(super) fn write_existing_config(path: &std::path::Path, contents: &str) -> Result<(), std::io::Error> {
     fs::write(path, contents)
 }
 
-fn no_network_environment<'a>(
+pub(super) fn no_network_environment<'a>(
     config_path: PathBuf,
     detector: &'a NeverRunning,
     download_model: &'a dyn Fn(&Path) -> Result<PathBuf, ModelCliError>,
@@ -361,6 +431,7 @@ fn no_network_environment<'a>(
         process_detector: detector,
         wait_tick: &|| {},
         server_command: "/usr/local/bin/contextos".to_owned(),
+        default_log_file: None,
     }
 }
 
@@ -369,6 +440,7 @@ fn run_interview_prefills_a_single_existing_vault_and_accepts_every_default() ->
 {
     let config_dir = tempdir()?;
     let vault_dir = tempdir()?;
+    let _state_cleanup = StateDirectoryCleanup::for_vault(vault_dir.path());
     let config_path = config_dir.path().join("config.toml");
     write_existing_config(
         &config_path,
@@ -391,13 +463,18 @@ fn run_interview_prefills_a_single_existing_vault_and_accepts_every_default() ->
         vec![
             "mine".to_owned(),                      // "Vault name:" default accepted verbatim
             vault_dir.path().display().to_string(), // "Vault path ...:" default accepted verbatim
+            String::new(),                          // "Log file path ...:" blank for stderr
         ],
     );
 
     let report = run_interview(&mut interviewer, &environment)?;
 
     assert_eq!(report.edited_vaults, vec!["mine".to_owned()]);
-    assert!(report.added_vaults.is_empty());
+    assert!(
+        report.added_vaults.is_empty(),
+        "`report.added_vaults` should be empty, got {:?}",
+        report.added_vaults
+    );
     let written = fs::read_to_string(&config_path)?;
     let config = Config::try_from(written.as_str())?;
     assert_eq!(config.vaults.len(), 1);
@@ -409,6 +486,7 @@ fn run_interview_prefills_a_single_existing_vault_and_accepts_every_default() ->
 fn run_interview_prefills_a_single_existing_vault_and_renames_it() -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = tempdir()?;
     let vault_dir = tempdir()?;
+    let _state_cleanup = StateDirectoryCleanup::for_vault(vault_dir.path());
     let config_path = config_dir.path().join("config.toml");
     write_existing_config(
         &config_path,
@@ -428,7 +506,11 @@ fn run_interview_prefills_a_single_existing_vault_and_renames_it() -> Result<(),
             false, // "Add a new vault?"
             false, // "Register this server with Claude Desktop now?"
         ],
-        vec!["renamed".to_owned(), vault_dir.path().display().to_string()],
+        vec![
+            "renamed".to_owned(),
+            vault_dir.path().display().to_string(),
+            String::new(), // "Log file path ...:" blank for stderr
+        ],
     );
 
     let report = run_interview(&mut interviewer, &environment)?;
@@ -443,7 +525,9 @@ fn run_interview_prefills_a_single_existing_vault_and_renames_it() -> Result<(),
 fn run_interview_multi_vault_focus_edits_general_server_settings() -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = tempdir()?;
     let first_dir = tempdir()?;
+    let _state_cleanup_first = StateDirectoryCleanup::for_vault(first_dir.path());
     let second_dir = tempdir()?;
+    let _state_cleanup_second = StateDirectoryCleanup::for_vault(second_dir.path());
     let config_path = config_dir.path().join("config.toml");
     write_existing_config(
         &config_path,
@@ -477,7 +561,11 @@ fn run_interview_multi_vault_focus_edits_general_server_settings() -> Result<(),
     let report = run_interview(&mut interviewer, &environment)?;
 
     assert!(report.server_settings_changed);
-    assert!(report.edited_vaults.is_empty());
+    assert!(
+        report.edited_vaults.is_empty(),
+        "`report.edited_vaults` should be empty, got {:?}",
+        report.edited_vaults
+    );
     let config = Config::try_from(fs::read_to_string(&config_path)?.as_str())?;
     assert_eq!(config.server.transports.len(), 2);
     Ok(())
@@ -493,7 +581,9 @@ fn run_interview_general_server_settings_focus_lowercases_a_mixed_case_log_level
     // an unrecognised-value error.
     let config_dir = tempdir()?;
     let first_dir = tempdir()?;
+    let _state_cleanup_first = StateDirectoryCleanup::for_vault(first_dir.path());
     let second_dir = tempdir()?;
+    let _state_cleanup_second = StateDirectoryCleanup::for_vault(second_dir.path());
     let config_path = config_dir.path().join("config.toml");
     write_existing_config(
         &config_path,
@@ -536,7 +626,9 @@ fn run_interview_general_server_settings_focus_lowercases_a_mixed_case_log_level
 fn run_interview_multi_vault_focus_edits_all_vaults_in_turn() -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = tempdir()?;
     let first_dir = tempdir()?;
+    let _state_cleanup_first = StateDirectoryCleanup::for_vault(first_dir.path());
     let second_dir = tempdir()?;
+    let _state_cleanup_second = StateDirectoryCleanup::for_vault(second_dir.path());
     let config_path = config_dir.path().join("config.toml");
     write_existing_config(
         &config_path,
@@ -580,7 +672,9 @@ fn run_interview_multi_vault_focus_edits_all_vaults_in_turn() -> Result<(), Box<
 fn run_interview_multi_vault_focus_removes_a_specific_vault() -> Result<(), Box<dyn std::error::Error>> {
     let config_dir = tempdir()?;
     let first_dir = tempdir()?;
+    let _state_cleanup_first = StateDirectoryCleanup::for_vault(first_dir.path());
     let second_dir = tempdir()?;
+    let _state_cleanup_second = StateDirectoryCleanup::for_vault(second_dir.path());
     let config_path = config_dir.path().join("config.toml");
     write_existing_config(
         &config_path,
@@ -642,6 +736,7 @@ fn run_interview_waits_for_claude_desktop_to_close_then_registers_automatically(
 
     let config_dir = tempdir()?;
     let vault_dir = tempdir()?;
+    let _state_cleanup = StateDirectoryCleanup::for_vault(vault_dir.path());
     let host_dir = tempdir()?;
     let config_path = config_dir.path().join("config.toml");
     let host_path = host_dir.path().join("claude_desktop_config.json");
@@ -662,6 +757,7 @@ fn run_interview_waits_for_claude_desktop_to_close_then_registers_automatically(
         process_detector: &detector,
         wait_tick: &wait_tick,
         server_command: "/usr/local/bin/contextos".to_owned(),
+        default_log_file: None,
     };
 
     let mut interviewer = ScriptedInterviewer::new(
@@ -671,7 +767,11 @@ fn run_interview_waits_for_claude_desktop_to_close_then_registers_automatically(
             true,  // "Register this server with Claude Desktop now?"
             true,  // "... Wait for it to close and register automatically?"
         ],
-        vec!["mine".to_owned(), vault_dir.path().display().to_string()],
+        vec![
+            "mine".to_owned(),
+            vault_dir.path().display().to_string(),
+            String::new(), // "Log file path ...:" blank for stderr
+        ],
     );
 
     let report = run_interview(&mut interviewer, &environment)?;

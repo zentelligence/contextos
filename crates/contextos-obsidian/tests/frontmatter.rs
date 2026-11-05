@@ -1,5 +1,5 @@
-use contextos_obsidian::{FrontmatterDocument, FrontmatterError};
-use serde_json::json;
+use contextos_obsidian::{FrontmatterDocument, FrontmatterError, FrontmatterInput};
+use serde_json::{Map, json};
 
 #[test]
 fn reads_ordered_yaml_frontmatter_and_preserves_body() -> Result<(), Box<dyn std::error::Error>> {
@@ -73,7 +73,7 @@ fn merge_patch_preserves_existing_key_order_and_body_bytes() -> Result<(), Box<d
         "title: Original\n",
         "status: draft\n",
         "metadata:\n",
-        "  owner: Peter\n",
+        "  owner: Piper\n",
         "  obsolete: true\n",
         "---\n",
         "\n# Body\n\nUntouched.\n",
@@ -83,7 +83,7 @@ fn merge_patch_preserves_existing_key_order_and_body_bytes() -> Result<(), Box<d
         "title": "Revised",
         "status": null,
         "metadata": {"obsolete": null, "priority": 2},
-        "entity": "zentelligence"
+        "entity": "zenith"
     }))?;
 
     document.apply_merge_patch(patch, "2026-07-18T08:30:00+10:00");
@@ -95,7 +95,7 @@ fn merge_patch_preserves_existing_key_order_and_body_bytes() -> Result<(), Box<d
     assert_eq!(reparsed.frontmatter().get("title"), Some(&json!("Revised")));
     assert_eq!(
         reparsed.frontmatter().get("metadata"),
-        Some(&json!({"owner": "Peter", "priority": 2}))
+        Some(&json!({"owner": "Piper", "priority": 2}))
     );
     assert_eq!(
         reparsed.frontmatter().get("updated"),
@@ -113,5 +113,71 @@ fn explicit_updated_value_is_not_replaced() -> Result<(), Box<dyn std::error::Er
     document.apply_merge_patch(patch, "automatic-value");
 
     assert_eq!(document.frontmatter().get("updated"), Some(&json!("operator-value")));
+    Ok(())
+}
+
+#[test]
+fn merge_frontmatter_applies_a_patch_without_stamping_a_generic_updated_field() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = "---\nkey_id: 1\nlast_update: old\n---\nBody.\n";
+    let mut document = FrontmatterDocument::try_from(source)?;
+    let patch = serde_json::from_value(json!({"key_id": 2, "last_update": "new"}))?;
+
+    document.merge_frontmatter(patch);
+
+    assert_eq!(document.frontmatter().get("key_id"), Some(&json!(2)));
+    assert_eq!(document.frontmatter().get("last_update"), Some(&json!("new")));
+    assert_eq!(document.frontmatter().get("updated"), None);
+    Ok(())
+}
+
+#[test]
+fn a_document_can_be_built_directly_from_frontmatter_and_body() -> Result<(), Box<dyn std::error::Error>> {
+    let mut frontmatter = Map::new();
+    frontmatter.insert("key_format".to_owned(), json!("FILEPATH"));
+    let document = FrontmatterDocument::from(FrontmatterInput {
+        frontmatter,
+        body: "![[example.base|example]]\n".to_owned(),
+    });
+
+    let rendered = String::try_from(&document)?;
+    let reparsed = FrontmatterDocument::try_from(rendered.as_str())?;
+
+    assert_eq!(reparsed.frontmatter().get("key_format"), Some(&json!("FILEPATH")));
+    assert_eq!(reparsed.body(), "![[example.base|example]]\n");
+    Ok(())
+}
+
+#[test]
+fn a_windows_line_ending_note_is_read_and_its_frontmatter_written_with_unix_line_endings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "---\r\ntitle: Example\r\nstatus: open\r\n---\r\nBody.\n";
+    let mut document = FrontmatterDocument::try_from(source)?;
+
+    assert_eq!(document.frontmatter().get("title"), Some(&json!("Example")));
+    document.apply_merge_patch(
+        serde_json::from_value(json!({"status": "done"}))?,
+        "2026-10-08T11:30+10:00",
+    );
+    assert_eq!(
+        String::try_from(&document)?,
+        "---\ntitle: Example\nstatus: done\nupdated: 2026-10-08T11:30+10:00\n---\nBody.\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_byte_order_mark_before_the_frontmatter_is_recognised_and_written_back() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "\u{feff}---\ntitle: Example\n---\nBody.\n";
+    let mut document = FrontmatterDocument::try_from(source)?;
+
+    assert_eq!(document.frontmatter().get("title"), Some(&json!("Example")));
+    assert_eq!(document.body(), "Body.\n");
+    assert_eq!(document.body_start_line(), 4);
+    document.apply_merge_patch(serde_json::from_value(json!({"status": "done"}))?, "T");
+    assert_eq!(
+        String::try_from(&document)?,
+        "\u{feff}---\ntitle: Example\nstatus: done\nupdated: T\n---\nBody.\n"
+    );
     Ok(())
 }

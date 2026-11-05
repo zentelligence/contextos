@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use contextos_core::{
-    AppendMutation, AppendOutcome, AppendsVault, LogsOperations, OpKind, OperationEvent, Origin, PipelineResult,
-    VaultPath, VaultPathInput, VaultRoot, VaultRootInput, VaultSet,
+    AppendMutation, AppendOutcome, AppendsVault, LogsOperations, NoSubstrateServices, OpKind, OperationEvent, Origin,
+    PipelineResult, VaultPath, VaultPathInput, VaultRoot, VaultRootInput, VaultSet,
 };
 use contextos_oplog::{OperationLog, OperationLogConfig};
 use tempfile::tempdir;
@@ -135,12 +135,13 @@ fn graceful_flush_retries_a_buffered_entry_without_creating_another_record() -> 
     })?;
     assert!(log.append(&event(note, 1, "Buffered entry")).is_err());
 
-    let events = log.flush()?;
+    let events = log.flush(&NoSubstrateServices)?.events;
     let records = state.lock().map_err(|_| InjectedFailure)?.records.clone();
 
     assert_eq!(events.len(), 1);
     assert_eq!(records.len(), 1);
     assert!(records[0].contains("Buffered entry"));
-    assert!(log.flush()?.is_empty());
+    let flushed = log.flush(&NoSubstrateServices)?.events;
+    assert!(flushed.is_empty(), "flushed events should be empty, got {flushed:?}");
     Ok(())
 }

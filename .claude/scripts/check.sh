@@ -12,7 +12,6 @@ required_files=(
   .claude/rules/00-index.md
   .claude/rules/architecture.md
   .claude/rules/mcp-contracts.md
-  .claude/rules/memory.md
   .claude/rules/rust-quality.md
   .claude/rules/security.md
   .claude/rules/testing.md
@@ -42,38 +41,17 @@ if rg --line-number '[[:blank:]]+$' AGENTS.md README.md .claude --glob '*.md'; t
   exit 1
 fi
 
-# THIRD_PARTY_LICENSES.md reproduces upstream licence texts verbatim; those texts can contain
-# bracket-paren sequences that look like Markdown links but point at paths inside the original
-# upstream source tree, not this repository. Excluded from link validation for that reason only.
-mapfile -t markdown_files < <(rg --files -g '*.md' -g '!THIRD_PARTY_LICENSES.md' . | sort)
-for markdown_file in "${markdown_files[@]}"; do
-  while IFS= read -r markdown_link; do
-    link_target="${markdown_link#*](}"
-    link_target="${link_target%)}"
-    link_target="${link_target%%#*}"
-
-    case "${link_target}" in
-      ''|'#'*|http:*|https:*|mailto:*) continue ;;
-    esac
-
-    link_target="${link_target#<}"
-    link_target="${link_target%>}"
-    link_source_dir="$(dirname -- "${markdown_file}")"
-    if [[ ! -e "${link_source_dir}/${link_target}" ]]; then
-      printf 'broken local Markdown link: %s -> %s\n' \
-        "${markdown_file}" "${link_target}" >&2
-      exit 1
-    fi
-  done < <(rg --no-filename --only-matching \
-    '\[[^]]+\]\([^)]*\)' "${markdown_file}" || true)
-done
+# A crate's test fixtures are vault notes, whose links name vault paths rather than files in this repository.
+mapfile -t markdown_files < <(rg --files -g '*.md' -g '!crates/*/tests/fixtures/**' . | sort)
+bash "${script_dir}/check-markdown-links.sh" "${markdown_files[@]}"
 
 if ! command -v shellcheck >/dev/null 2>&1; then
   printf 'shellcheck is required to validate repository shell scripts.\n' >&2
   exit 1
 fi
 
-shellcheck .claude/scripts/check.sh .claude/hooks/rustfmt-check.sh .claude/hooks/markdown-check.sh
+shellcheck .claude/scripts/*.sh .claude/hooks/*.sh
+bash "${script_dir}/check-markdown-links-test.sh"
 
 if [[ ! -f Cargo.toml ]]; then
   printf 'Guidance checks passed. Cargo workspace not yet present; Rust checks skipped.\n'
@@ -88,6 +66,7 @@ fi
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+bash "${script_dir}/check-plugin-skill.sh"
 
 if ! command -v cargo-audit >/dev/null 2>&1; then
   printf 'cargo-audit is required for the completion gate but is not installed.\n' >&2

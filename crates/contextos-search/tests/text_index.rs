@@ -7,6 +7,7 @@ use support::{document, timestamp, vault_note};
 fn index_at(directory: &std::path::Path) -> Result<TantivyIndex, Box<dyn std::error::Error>> {
     Ok(TantivyIndex::try_from(TextIndexConfig {
         directory: directory.join(".contextos").join("index"),
+        writer_lock_wait: TextIndexConfig::DEFAULT_WRITER_LOCK_WAIT,
     })?)
 }
 
@@ -71,7 +72,7 @@ fn title_match_outranks_single_body_mention() -> Result<(), Box<dyn std::error::
 
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].path, "guides/tantivy.md");
-    assert!(!hits[0].snippet.is_empty());
+    assert!(!hits[0].snippet.is_empty(), "`hits[0].snippet` should not be empty");
     Ok(())
 }
 
@@ -104,7 +105,10 @@ fn path_prefix_filter_scopes_to_component_boundaries() -> Result<(), Box<dyn std
         fields: &no_fields,
         limit: 20,
     })?;
-    assert!(partial_component.is_empty());
+    assert!(
+        partial_component.is_empty(),
+        "`partial_component` should be empty, got {partial_component:?}"
+    );
     Ok(())
 }
 
@@ -214,8 +218,8 @@ fn frontmatter_field_filter_requires_exact_equality() -> Result<(), Box<dyn std:
     index.index(&[
         document(
             &vault,
-            "zentelligence/plan.md",
-            "---\nentity: zentelligence\nregion: New South Wales\n---\n\nQuarterly budget plan.\n",
+            "zenith/plan.md",
+            "---\nentity: zenith\nregion: New South Wales\n---\n\nQuarterly budget plan.\n",
         )?,
         document(
             &vault,
@@ -225,21 +229,21 @@ fn frontmatter_field_filter_requires_exact_equality() -> Result<(), Box<dyn std:
     ])?;
 
     let mut entity_filter = Map::new();
-    entity_filter.insert("entity".to_owned(), Value::String("zentelligence".to_owned()));
+    entity_filter.insert("entity".to_owned(), Value::String("zenith".to_owned()));
     let by_entity = index.query(&plain_query("budget", &entity_filter))?;
     assert_eq!(by_entity.len(), 1);
-    assert_eq!(by_entity[0].path, "zentelligence/plan.md");
+    assert_eq!(by_entity[0].path, "zenith/plan.md");
 
     let mut region_filter = Map::new();
     region_filter.insert("region".to_owned(), Value::String("New South Wales".to_owned()));
     let by_region = index.query(&plain_query("budget", &region_filter))?;
     assert_eq!(by_region.len(), 1);
-    assert_eq!(by_region[0].path, "zentelligence/plan.md");
+    assert_eq!(by_region[0].path, "zenith/plan.md");
 
     let mut absent_filter = Map::new();
     absent_filter.insert("entity".to_owned(), Value::String("missing".to_owned()));
     let by_absent = index.query(&plain_query("budget", &absent_filter))?;
-    assert!(by_absent.is_empty());
+    assert!(by_absent.is_empty(), "`by_absent` should be empty, got {by_absent:?}");
     Ok(())
 }
 
@@ -267,7 +271,7 @@ fn remove_deletes_the_stored_document() -> Result<(), Box<dyn std::error::Error>
 
     let no_fields = Map::new();
     let hits = index.query(&plain_query("gadget", &no_fields))?;
-    assert!(hits.is_empty());
+    assert!(hits.is_empty(), "`hits` should be empty, got {hits:?}");
     Ok(())
 }
 
@@ -280,7 +284,7 @@ fn reindexing_a_path_replaces_the_previous_document() -> Result<(), Box<dyn std:
 
     let no_fields = Map::new();
     let stale = index.query(&plain_query("gadget", &no_fields))?;
-    assert!(stale.is_empty());
+    assert!(stale.is_empty(), "`stale` should be empty, got {stale:?}");
     let fresh = index.query(&plain_query("widget", &no_fields))?;
     assert_eq!(fresh.len(), 1);
     assert_eq!(fresh[0].path, "notes/item.md");

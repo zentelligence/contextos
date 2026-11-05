@@ -6,16 +6,16 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use contextos_host::HostFolders;
 use contextos_mcp::{
-    Config, ConfigEnvironment, ConfigLoadInput, ContextOsServer, DeregisterOutcome, DoctorReport, HostPathResolution,
-    IndexReport, InterviewEnvironment, LogLevel, ModelReport, RegisteredServer, RegistrationStatus,
-    SystemProcessDetector, TerminalInterviewer, Transport, default_claude_desktop_config_path, default_model_cache_dir,
-    deregister, download_default_model, load_config_document, register, run_interview, status as host_status,
-    write_config_document,
+    CliHttp, Config, ConfigEnvironment, ConfigLoadInput, ContextOsServer, DeregisterOutcome, DoctorReport,
+    HostPathResolution, IndexReport, InterviewEnvironment, LogLevel, ModelReport, RegisteredServer, RegistrationStatus,
+    ServerConfig, ServiceCommand, SystemProcessDetector, TerminalInterviewer, Transport, claim_process_record,
+    default_claude_desktop_config_path, default_model_cache_dir, deregister, download_default_model,
+    load_config_document, register, run_interview, run_service_command, status as host_status, write_config_document,
 };
-use directories::BaseDirs;
-use rmcp::{ServiceExt, transport::stdio};
-use tokio::net::TcpListener;
+use contextos_service::cli::ServiceAction;
+use rmcp::{ServiceExt, service::ServerInitializeError, transport::stdio};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
@@ -44,6 +44,11 @@ struct Cli {
     #[arg(long, global = true, num_args = 0..=1, default_missing_value = "", value_name = "ADDR")]
     http: Option<String>,
 
+    /// Serve no stdio for this run, whatever `[server] transports` says: with `--http`, this process serves HTTP
+    /// alone and keeps running with no client on its standard input, as a background service does.
+    #[arg(long, global = true)]
+    no_stdio: bool,
+
     /// Register the ephemeris tools (`ephemeris_moon_phase`,
     /// `ephemeris_solar_events`, and the rest) for this run, overriding
     /// `[server] astro` in config. Enable only; there is no `--no-astro` to
@@ -60,7 +65,8 @@ enum CliCommand {
     /// Validate configuration, vault indexes, and local Git recovery state.
     Doctor {
         /// Resolve every currently auto-fixable finding (a stale or missing
-        /// managed index, or an absent Git repository) instead of only
+        /// managed index, MCP-made changes left uncommitted, or a Git
+        /// repository that is absent or has no commits yet) instead of only
         /// reporting it. Mirrors the `doctor_resolve` MCP tool.
         #[arg(long)]
         resolve: bool,
@@ -91,6 +97,41 @@ enum CliCommand {
         #[command(subcommand)]
         action: Option<ConfigAction>,
     },
+    /// Suite-level self-update operations: check, install, clean up, or diagnose. With no
+    /// subcommand, installs the newest available release set. Vault-independent.
+    Update {
+        #[command(subcommand)]
+        action: Option<UpdateAction>,
+        /// Install without an interactive confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Roll back to the previously active release set. Vault-independent.
+    Rollback,
+    /// Install a specific, pinned release set, for CI and automation. Vault-independent.
+    Install {
+        #[arg(long)]
+        version: String,
+    },
+    /// Install, remove, or report on one per-user background `contextos` that serves MCP over HTTP alone
+    /// (`systemd --user` on Linux, a `launchd` `LaunchAgent` on macOS, a Startup App on Windows), and start, stop, or
+    /// restart it. It runs `contextos --config <path> --http [ADDR] --no-stdio`: give `--http ADDR` to install to
+    /// serve on that address, or none to serve on the configured bind. Vault-independent: the configuration it loads
+    /// is checked, not used, by these commands.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum UpdateAction {
+    /// Report whether a newer release set is available, without installing it.
+    Check,
+    /// Delete obsolete release sets, best-effort.
+    Cleanup,
+    /// Print a structured summary of the installation.
+    Diagnostics,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -141,9 +182,8 @@ enum ConfigMcpAction {
     },
 }
 
-/// Supported MCP hosts for `contextos config mcp`. Only Claude Desktop is
-/// named anywhere in the governing specification today; a second variant
-/// is additive when a second host is actually specified.
+/// Supported MCP hosts for `contextos config mcp`. Only Claude Desktop today;
+/// another host is a new variant.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum HostChoice {
     #[value(name = "claude-desktop")]
@@ -158,8 +198,9 @@ enum ConfigVaultAction {
         name: String,
         /// Absolute path to an existing vault root directory.
         path: PathBuf,
-        /// Mark this vault filesystem-only: mutating tools reject writes,
-        /// and managed indexes, the oplog, and Git recovery are disabled.
+        /// Mark this vault filesystem-only: the tools still read and write
+        /// its files, but managed indexes, the oplog, Git recovery, and
+        /// search are disabled.
         #[arg(long)]
         unmanaged: bool,
     },
@@ -201,61 +242,26 @@ impl From<CliLogLevel> for LogLevel {
     }
 }
 
-// Best-effort startup diagnostic: unconditionally records this invocation's
-// argv and environment to a fixed path next to the running executable,
-// before anything fallible (CLI parsing, config loading) runs, so a launch
-// that fails or is silently swallowed by the host still leaves behind what
-// it was actually invoked with. Every failure inside is discarded rather
-// than propagated, so this can never itself become the reason startup
-// fails.
-fn record_startup_diagnostic() {
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let Some(dir) = exe.parent() else {
-        return;
-    };
-    let path = dir.join("contextos-startup-debug.log");
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
-        return;
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or_default();
-    let _ = writeln!(
-        file,
-        "=== invocation at unix time {now} (pid {}) ===",
-        std::process::id()
-    );
-    let _ = writeln!(file, "argv: {:?}", std::env::args().collect::<Vec<_>>());
-    let mut vars: Vec<(String, String)> = std::env::vars().collect();
-    vars.sort();
-    let _ = writeln!(file, "env ({} vars):", vars.len());
-    for (key, value) in vars {
-        let value = if is_secret_env_var_name(&key) {
-            "<redacted>"
-        } else {
-            value.as_str()
-        };
-        let _ = writeln!(file, "  {key}={value}");
-    }
-    let _ = writeln!(file);
-}
-
-/// Whether an environment variable's name suggests its value is a secret
-/// (a token, key, or password) that this diagnostic must never write out in
-/// full, regardless of which specific variable ends up carrying one.
-fn is_secret_env_var_name(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    ["TOKEN", "SECRET", "KEY", "PASSWORD", "PASS"]
-        .iter()
-        .any(|marker| upper.contains(marker))
-}
-
+/// Runs the command, and reports a failure as its own message rather than its `Debug` form, which is what a bare
+/// `Result` from `main` prints and which gives an operator no remedy.
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    record_startup_diagnostic();
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a command that failed before it had a logger says so on standard error, the last resort"
+)]
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!(%error, "contextos stopped");
+            // Ignored on purpose: with stderr closed there is nowhere left to report that it is.
+            let _ = writeln!(std::io::stderr().lock(), "Error: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut cli = Cli::parse();
     // Taken once and re-bound after each independent-of-`Config` branch
     // below returns, rather than matched on `cli.command` directly:
@@ -269,6 +275,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             let config_path = resolve_config_toml_path(cli.config.clone())?;
             return dispatch_config_command(action, config_path).await;
         }
+        Some(CliCommand::Service { action }) => {
+            return dispatch_service_command(action, resolve_config_toml_path(cli.config.clone())?, cli.http).await;
+        }
+        Some(command @ (CliCommand::Update { .. } | CliCommand::Rollback | CliCommand::Install { .. })) => {
+            return dispatch_update_command(command).await;
+        }
         other => other,
     };
     let mut config = Config::try_from(ConfigLoadInput {
@@ -276,13 +288,16 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         default_config_path: default_config_path(),
         cli_vaults: cli.vaults,
         cli_log_level: cli.log_level.map(LogLevel::from),
+        cli_http: cli.http.map(CliHttp::from),
+        cli_no_stdio: cli.no_stdio,
         environment: ConfigEnvironment {
             config_path: env::var_os("CONTEXTOS_MCP_CONFIG").map(PathBuf::from),
             token: env::var("CONTEXTOS_MCP_TOKEN").ok(),
             log_level: env::var("CONTEXTOS_MCP_LOG_LEVEL").ok(),
+            home: HostFolders::detect().map(|folders| folders.home().to_path_buf()),
         },
     })?;
-    initialise_tracing(config.server.log_level)?;
+    initialise_tracing(&config.server)?;
     // Emitted before any fallible construction below (config validation
     // already succeeded by this point, but `ContextOsServer::try_from` and
     // the CLI subcommand handlers have not run yet): the one log line
@@ -298,9 +313,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         vaults = config.vaults.len(),
         "contextos starting"
     );
-    if let Some(addr) = cli.http {
-        apply_http_override(&mut config, addr);
-    }
     if cli.astro {
         config.server.astro = true;
     }
@@ -311,18 +323,27 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         other => other,
     };
     if matches!(command, Some(CliCommand::Index)) {
-        let report = tokio::task::spawn_blocking(move || IndexReport::try_from(&config)).await??;
-        let failed = report.has_failures();
-        std::io::stdout().lock().write_all(report.to_string().as_bytes())?;
-        if failed {
-            return Err(std::io::Error::other("index rebuild found checks requiring action").into());
-        }
-        return Ok(());
+        return run_index_command(config).await;
     }
 
+    serve(config).await
+}
+
+/// Serves the configured transports until stdio closes or the process is asked to stop, then flushes what the
+/// substrates hold.
+async fn serve(config: Config) -> Result<(), Box<dyn Error + Send + Sync>> {
     let run_stdio = config.server.transports.contains(&Transport::Stdio);
     let run_http = config.server.transports.contains(&Transport::Http);
     let http_config = config.server.http.clone();
+    // Listening comes before the server is built, so a process that cannot serve HTTP, most often because another
+    // already holds the address, stops before it opens a single vault store.
+    let http_listener = if run_http {
+        let token = http_config.resolve_token(|name| env::var(name).ok())?;
+        Some(contextos_mcp::listen(&http_config.bind, &token).await?)
+    } else {
+        None
+    };
+    let process_record = claim_record_when_serving_http(http_listener.is_some(), config.provenance.path.clone()).await;
     let server = tokio::task::spawn_blocking(move || ContextOsServer::try_from(config)).await??;
 
     // One `CancellationToken` signals both transports to stop; dropping the
@@ -331,37 +352,37 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // accepting new connections while in-flight requests finish.
     let shutdown = CancellationToken::new();
     let semantic_drain_tasks = server.spawn_semantic_drain(&shutdown);
+    server.warm_file_name_indexes();
+    let events_task = server.spawn_events_maintenance(&shutdown);
 
-    let http_task = if run_http {
-        contextos_mcp::validate_bind(&http_config.bind, &http_config.token)?;
-        let listener = TcpListener::bind(&http_config.bind).await?;
-        let bound = listener.local_addr()?;
-        let router = contextos_mcp::build_router(server.clone(), &http_config)?;
-        tracing::info!(transport = "http", bind = %bound, "starting ContextOS MCP HTTP server");
-        let shutdown = shutdown.clone();
-        Some(tokio::spawn(async move {
-            axum::serve(listener, router)
-                .with_graceful_shutdown(async move { shutdown.cancelled().await })
-                .await
-        }))
-    } else {
-        None
+    let http_task = match http_listener {
+        Some(listener) => Some(spawn_http(listener, &server, &http_config, &shutdown)?),
+        None => None,
     };
 
     let stdio_running = if run_stdio {
         tracing::info!(transport = "stdio", "starting ContextOS MCP server");
-        Some(server.clone().serve(stdio()).await?)
+        Some(server.clone().serve(stdio()).await)
     } else {
         None
     };
 
     match stdio_running {
-        Some(running) => {
+        Some(Ok(running)) => {
             tokio::select! {
                 result = running.waiting() => { let _reason = result?; },
                 result = shutdown_signal() => { result?; },
             }
         }
+        // A client that closes stdio before it initialises the session has ended the conversation, exactly as one
+        // that closes it later does, so the server stops the same way rather than reporting a failure.
+        Some(Err(ServerInitializeError::ConnectionClosed(_))) => {
+            tracing::info!(
+                transport = "stdio",
+                "the client closed stdio before initialising the session"
+            );
+        }
+        Some(Err(error)) => return Err(error.into()),
         None => shutdown_signal().await?,
     }
     shutdown.cancel();
@@ -371,33 +392,180 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     for task in semantic_drain_tasks {
         task.await?;
     }
+    events_task.await?;
 
     tokio::task::spawn_blocking(move || server.flush_substrates()).await??;
+    if let Some(guard) = process_record {
+        let _ = tokio::task::spawn_blocking(move || drop(guard)).await;
+    }
     Ok(())
 }
 
-/// Runs `contextos doctor`, or `contextos doctor --resolve`, which reuses
-/// the exact same resolution path as the `doctor_resolve` MCP tool
-/// (`contextos_mcp::resolve_for_cli`) so CLI and MCP stay behaviourally
+/// Only the process serving HTTP claims a record: the port admits one such process at a time, so it is the one
+/// `contextos service` must find. Stdio-only processes, of which there may be many, never write it.
+async fn claim_record_when_serving_http(
+    serving_http: bool,
+    config_path: Option<PathBuf>,
+) -> Option<contextos_service::process_record::ProcessRecordGuard> {
+    match config_path {
+        Some(path) if serving_http => claim_process_record_blocking(path).await,
+        _ => None,
+    }
+}
+
+/// Writes this process's record beside the configuration it loaded (`contextos_service::process_record`), or logs why
+/// not. A server that cannot write it still serves, and only `contextos service` loses sight of it.
+async fn claim_process_record_blocking(
+    config_path: PathBuf,
+) -> Option<contextos_service::process_record::ProcessRecordGuard> {
+    let outcome = tokio::task::spawn_blocking(move || {
+        // Named as `contextos service` names it, which makes the path absolute first.
+        let absolute = std::path::absolute(&config_path)?;
+        claim_process_record(&absolute)
+    })
+    .await;
+    match outcome {
+        Ok(Ok(guard)) => Some(guard),
+        // Only Windows' service commands read the record, so only there is a missing one worth a warning.
+        Ok(Err(error)) if cfg!(windows) => {
+            tracing::warn!(%error, "no process record written; `contextos service` cannot see this server");
+            None
+        }
+        Ok(Err(error)) => {
+            tracing::debug!(%error, "the process record could not be written");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%error, "writing the process record failed; `contextos service` cannot see this server");
+            None
+        }
+    }
+}
+
+/// Serves HTTP on `listener` until `shutdown` is cancelled, then lets in-flight requests finish.
+fn spawn_http(
+    listener: tokio::net::TcpListener,
+    server: &ContextOsServer,
+    http_config: &contextos_mcp::HttpConfig,
+    shutdown: &CancellationToken,
+) -> Result<tokio::task::JoinHandle<std::io::Result<()>>, Box<dyn Error + Send + Sync>> {
+    let bound = listener.local_addr()?;
+    let router = contextos_mcp::build_router(server.clone(), http_config)?;
+    tracing::info!(transport = "http", bind = %bound, "starting ContextOS MCP HTTP server");
+    let shutdown = shutdown.clone();
+    Ok(tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move { shutdown.cancelled().await })
+            .await
+    }))
+}
+
+/// Runs `contextos index`: rebuilds every enabled vault search index and prints the report.
+async fn run_index_command(config: Config) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let report = tokio::task::spawn_blocking(move || IndexReport::try_from(&config)).await??;
+    let failed = report.has_failures();
+    std::io::stdout().lock().write_all(report.to_string().as_bytes())?;
+    if failed {
+        return Err(std::io::Error::other("index rebuild found checks requiring action").into());
+    }
+    Ok(())
+}
+
+/// Runs `contextos service ...` on a blocking thread: it runs platform commands and reads files, which never happens
+/// on an async executor thread.
+async fn dispatch_service_command(
+    action: ServiceAction,
+    config_path: PathBuf,
+    http: Option<String>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let command = ServiceCommand {
+        config_path,
+        http: http.map(CliHttp::from),
+    };
+    let report = tokio::task::spawn_blocking(move || run_service_command(action, &command)).await??;
+    writeln!(std::io::stdout().lock(), "{report}")?;
+    Ok(())
+}
+
+/// Runs a `contextos update`/`rollback`/`install` subcommand's blocking body (network retrieval,
+/// signature verification, extraction, and filesystem writes) off the async runtime thread, and
+/// prints its human-readable result.
+async fn run_update_transaction(
+    body: impl FnOnce() -> Result<String, Box<dyn Error + Send + Sync>> + Send + 'static,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let output = tokio::task::spawn_blocking(body).await??;
+    println!("{output}");
+    Ok(())
+}
+
+/// Dispatches `contextos update[/check/cleanup/diagnostics]`, `rollback`, and
+/// `install --version`, all of which are vault-independent and never reach `Config::try_from`.
+async fn dispatch_update_command(command: CliCommand) -> Result<(), Box<dyn Error + Send + Sync>> {
+    match command {
+        CliCommand::Update { action, yes } => {
+            run_update_transaction(move || match action {
+                None => contextos_mcp::run_update(yes),
+                Some(UpdateAction::Check) => contextos_mcp::run_check(),
+                Some(UpdateAction::Cleanup) => contextos_mcp::run_cleanup(),
+                Some(UpdateAction::Diagnostics) => contextos_mcp::run_diagnostics(),
+            })
+            .await
+        }
+        CliCommand::Rollback => run_update_transaction(contextos_mcp::run_rollback).await,
+        CliCommand::Install { version } => run_update_transaction(move || contextos_mcp::run_install(version)).await,
+        _ => Err("dispatch_update_command received a command it does not handle".into()),
+    }
+}
+
+/// Runs `contextos doctor`, or `contextos doctor --resolve`, which resolves through the same dispatch as the
+/// `doctor_resolve` MCP tool (`contextos_mcp::resolve_for_cli`), or with `--dry-run` previews through the same
+/// selection as that tool's dry run (`contextos_mcp::preview_resolution_for_cli`), so CLI and MCP stay behaviourally
 /// identical for the auto-fixable set.
 async fn run_doctor_command(config: Config, resolve: bool, dry_run: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
     if resolve {
-        let config_for_resolve = config.clone();
-        let outcomes = tokio::task::spawn_blocking(move || -> Result<_, Box<dyn Error + Send + Sync>> {
-            let server = ContextOsServer::try_from(config_for_resolve)?;
-            Ok(contextos_mcp::resolve_for_cli(&server, dry_run)?)
-        })
-        .await??;
+        let (outcomes, search_unavailable) = if dry_run {
+            // A dry run must write nothing, and composing a server opens derived state, so the preview is computed
+            // from the configuration alone.
+            let config_for_preview = config.clone();
+            let outcomes =
+                tokio::task::spawn_blocking(move || contextos_mcp::preview_resolution_for_cli(&config_for_preview))
+                    .await??;
+            (outcomes, Vec::new())
+        } else {
+            let report = contextos_mcp::resolve_for_cli(config.clone()).await?;
+            (report.outcomes, report.search_unavailable)
+        };
         let mut stdout = std::io::stdout().lock();
         for outcome in &outcomes {
-            let verb = if outcome.resolved { "Resolved" } else { "Would resolve" };
+            let verb = match (dry_run, outcome.resolved) {
+                (true, _) => "Would resolve",
+                (false, true) => "Resolved",
+                (false, false) => "Not resolved",
+            };
             writeln!(
                 stdout,
                 "{verb}: {} ({}): {}",
-                outcome.subject, outcome.vault, outcome.message
+                outcome.subject,
+                outcome.vault_path.as_deref().unwrap_or("no single vault"),
+                outcome.message
             )?;
         }
-        let report = tokio::task::spawn_blocking(move || DoctorReport::try_from(&config)).await??;
+        for skipped in &search_unavailable {
+            writeln!(
+                stdout,
+                "Warning: search could not be opened for {} ({}), so its indexes do not yet reflect what was resolved: \
+                 {}. Correct the cause, then run `contextos index`.",
+                skipped.vault_name, skipped.vault_path, skipped.reason
+            )?;
+        }
+        let report = tokio::task::spawn_blocking(move || {
+            if dry_run {
+                DoctorReport::without_derived_state(&config)
+            } else {
+                DoctorReport::try_from(&config)
+            }
+        })
+        .await??;
         let failed = report.has_failures();
         stdout.write_all(report.to_string().as_bytes())?;
         if failed {
@@ -483,6 +651,7 @@ async fn run_config_interview(config_path: PathBuf) -> Result<(), Box<dyn Error 
             process_detector: &detector,
             wait_tick: &wait_tick,
             server_command: command,
+            default_log_file: contextos_mcp::default_log_file(),
         };
         let mut interviewer = TerminalInterviewer;
         Ok(run_interview(&mut interviewer, &environment)?)
@@ -680,17 +849,6 @@ fn resolve_config_toml_path(cli_config_path: Option<PathBuf>) -> Result<PathBuf,
         })
 }
 
-/// Applies the `--http [addr]` CLI override: enables the HTTP transport for
-/// this run and, when `addr` is non-empty, overrides the configured bind.
-fn apply_http_override(config: &mut Config, addr: String) {
-    if !config.server.transports.contains(&Transport::Http) {
-        config.server.transports.push(Transport::Http);
-    }
-    if !addr.is_empty() {
-        config.server.http.bind = addr;
-    }
-}
-
 #[cfg(unix)]
 async fn shutdown_signal() -> Result<(), std::io::Error> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -711,132 +869,39 @@ async fn shutdown_signal() -> Result<(), std::io::Error> {
 /// subcommand) without ever passing a path, by simply placing their config
 /// at this one well-known, documented location.
 fn default_config_path() -> Option<PathBuf> {
-    let base_dirs = BaseDirs::new()?;
-    Some(
-        base_dirs
-            .home_dir()
-            .join(".config")
-            .join("contextos")
-            .join("config.toml"),
-    )
+    let folders = HostFolders::detect()?;
+    Some(folders.home().join(".config").join("contextos").join("config.toml"))
 }
 
-fn initialise_tracing(level: LogLevel) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let filter = match level {
+/// Builds the actual `tracing` subscriber from `[server]`'s logging fields:
+/// `log_level` always applied, `log_file` (with its `log_max_size_mb`,
+/// `log_rotate_daily`, `log_retention_days`, `log_retention_files`
+/// companions) opened as a real rotating destination when set, stderr (the
+/// prior, still-default behaviour) when it is empty. Mirrors
+/// `contextos-web`'s own `initialise_tracing`/`logging::open` pairing.
+fn initialise_tracing(server: &ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let filter = match server.log_level {
         LogLevel::Error => "error",
         LogLevel::Warn => "warn",
         LogLevel::Info => "info",
         LogLevel::Debug => "debug",
         LogLevel::Trace => "trace",
     };
+    let writer = match contextos_mcp::open_log(server)? {
+        Some(rotating) => tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::sync::Mutex::new(rotating)),
+        None => tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr),
+    };
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(filter))
-        .with_writer(std::io::stderr)
+        .with_writer(writer)
         .with_ansi(false)
+        // A log write that fails, as every one does once whatever read standard error has gone, is dropped: reporting
+        // it would mean `eprintln!` to that same closed stream, which panics and takes the server down with it.
+        .log_internal_errors(false)
         .try_init()?;
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use tempfile::tempdir;
-
-    use contextos_mcp::{ConfigEnvironment, ConfigLoadInput, Transport};
-
-    use super::{Config, LogLevel, apply_http_override, default_config_path, is_secret_env_var_name};
-
-    #[test]
-    fn secret_env_var_names_are_detected_case_insensitively() {
-        for name in [
-            "CONTEXTOS_MCP_TOKEN",
-            "token",
-            "MY_API_KEY",
-            "SOME_SECRET",
-            "DB_PASSWORD",
-            "PASS",
-        ] {
-            assert!(is_secret_env_var_name(name), "expected {name:?} to match");
-        }
-    }
-
-    #[test]
-    fn ordinary_env_var_names_are_not_flagged_as_secret() {
-        for name in ["PATH", "HOME", "CONTEXTOS_MCP_CONFIG", "RUST_LOG"] {
-            assert!(!is_secret_env_var_name(name), "expected {name:?} not to match");
-        }
-    }
-
-    #[test]
-    fn default_config_path_is_under_the_home_directory_config_folder()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let resolved = default_config_path().ok_or("home directory unavailable")?;
-
-        assert_eq!(
-            resolved.strip_prefix(
-                directories::BaseDirs::new()
-                    .ok_or("home directory unavailable")?
-                    .home_dir()
-            )?,
-            std::path::Path::new(".config/contextos/config.toml")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn http_cli_flag_enables_transport_and_optionally_overrides_bind()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let fixture = tempdir()?;
-        let vault = fixture.path().join("vault");
-        fs::create_dir_all(&vault)?;
-        let mut config = Config::try_from(vec![vault])?;
-        assert!(!config.server.transports.contains(&Transport::Http));
-
-        apply_http_override(&mut config, String::new());
-
-        assert!(config.server.transports.contains(&Transport::Http));
-        assert_eq!(config.server.http.bind, "127.0.0.1:7331");
-
-        apply_http_override(&mut config, "127.0.0.1:9000".to_owned());
-
-        assert_eq!(
-            config
-                .server
-                .transports
-                .iter()
-                .filter(|transport| **transport == Transport::Http)
-                .count(),
-            1
-        );
-        assert_eq!(config.server.http.bind, "127.0.0.1:9000");
-        Ok(())
-    }
-
-    #[test]
-    fn cli_vaults_replace_file_vaults_without_discarding_server_settings()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let fixture = tempdir()?;
-        let file_vault = fixture.path().join("file-vault");
-        let cli_vault = fixture.path().join("cli-vault");
-        fs::create_dir_all(&file_vault)?;
-        fs::create_dir_all(&cli_vault)?;
-        let config_path = fixture.path().join("config.toml");
-        fs::write(
-            &config_path,
-            format!("[server]\nlog_level = \"debug\"\n[[vault]]\npath = {file_vault:?}\n"),
-        )?;
-
-        let config = Config::try_from(ConfigLoadInput {
-            cli_config_path: Some(config_path),
-            cli_vaults: vec![cli_vault.clone()],
-            environment: ConfigEnvironment::default(),
-            ..ConfigLoadInput::default()
-        })?;
-
-        assert_eq!(config.server.log_level, LogLevel::Debug);
-        assert_eq!(config.vaults.len(), 1);
-        assert_eq!(config.vaults[0].path, cli_vault);
-        Ok(())
-    }
-}
+#[path = "main_test.rs"]
+mod tests;

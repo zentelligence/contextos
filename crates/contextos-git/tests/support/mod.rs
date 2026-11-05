@@ -14,6 +14,7 @@ impl Clock for FixedClock {
     }
 }
 
+#[allow(dead_code, reason = "not every integration-test crate needs a vault writer")]
 pub fn writer(
     root: &VaultRoot,
 ) -> Result<impl WritesVault<Error = contextos_fs::FsError> + Clone, Box<dyn std::error::Error>> {
@@ -24,6 +25,7 @@ pub fn writer(
     }))
 }
 
+#[allow(dead_code, reason = "not every integration-test crate needs a vault reader")]
 pub fn filesystem(root: &VaultRoot) -> Result<Filesystem, Box<dyn std::error::Error>> {
     let roots = VaultSet::try_from(vec![root.clone()])?;
     Ok(Filesystem::try_from(FilesystemConfig {

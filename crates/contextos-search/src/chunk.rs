@@ -1,10 +1,10 @@
 use contextos_core::{ContentHash, VaultPath};
 use sha2::{Digest, Sha256};
 
-use crate::document::{detect_atx_heading, relative_display};
+use crate::document::detect_atx_heading;
 
-/// Target lower bound, in estimated tokens, for a heading-bounded chunk
-/// (services specification §4 "Vectors"). A heuristic band, not a contract:
+/// Target lower bound, in estimated tokens, for a heading-bounded chunk.
+/// A heuristic band, not a contract:
 /// the final chunk of a section, and any section shorter than the band, are
 /// intentionally allowed to fall under this bound rather than being padded
 /// or merged across a heading boundary.
@@ -41,7 +41,7 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 /// Inputs for deriving heading-bounded chunks from one vault markdown
-/// document (services specification §4 "Vectors").
+/// document.
 ///
 /// `content` is the complete markdown source to chunk. Callers that also
 /// index the document for text search (see [`crate::DocumentSource`])
@@ -299,7 +299,7 @@ fn split_section_words(words: &[&str]) -> Vec<(usize, usize)> {
 /// including internal whitespace and newlines (see [`word_spans`]).
 #[must_use]
 pub fn chunk_document(source: ChunkSource<'_>) -> Vec<Chunk> {
-    let path = relative_display(source.path);
+    let path = source.path.portable_relative();
     let mut chunks = Vec::new();
     let mut ordinal = 0_usize;
     for section in parse_sections(source.content) {

@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use directories::BaseDirs;
+use contextos_host::HostFolders;
 use thiserror::Error;
 
 /// Where Claude Desktop's config file lives, relative to a macOS home
@@ -207,11 +207,11 @@ pub fn resolve_linux_config_path() -> HostPathResolution {
 /// home directory cannot be determined, and propagates
 /// [`HostPathError::ReadPackagesDirectory`] on Windows.
 pub fn default_claude_desktop_config_path() -> Result<HostPathResolution, HostPathError> {
-    let base_dirs = BaseDirs::new().ok_or(HostPathError::HomeDirectoryUnavailable)?;
+    let folders = HostFolders::detect().ok_or(HostPathError::HomeDirectoryUnavailable)?;
     if cfg!(target_os = "macos") {
-        Ok(resolve_macos_config_path(base_dirs.home_dir()))
+        Ok(resolve_macos_config_path(folders.home()))
     } else if cfg!(target_os = "windows") {
-        resolve_windows_config_paths(&base_dirs.data_local_dir().join("Packages"), base_dirs.config_dir())
+        resolve_windows_config_paths(&folders.data_local().join("Packages"), folders.config())
     } else {
         Ok(resolve_linux_config_path())
     }

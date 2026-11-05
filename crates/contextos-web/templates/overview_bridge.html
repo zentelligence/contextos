@@ -1,0 +1,23 @@
+<section class="settings-section overview-panel" hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-swap="outerHTML">
+  <div class="tasks-dashboard-header">
+    <h2><span class="ic ic-users" aria-hidden="true"></span> Bridge</h2>
+    <span class="hint">chief of staff</span>
+  </div>
+{% if let Some(card) = chief %}
+  <div class="chief-card">
+    <div class="chief-card-head">
+      <span class="chief-name">{{ card.name }}</span>
+      <span class="status-chip {{ card.state }}">{{ card.state }}</span>
+      <a class="btn small primary chief-action" href="{{ decisions_href }}">Open decisions</a>
+    </div>
+    <dl class="chief-facts">
+    {% for fact in card.facts %}
+      <div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>
+    {% endfor %}
+    </dl>
+  </div>
+  <p class="hint"><a href="{{ agents_href }}">All agents</a></p>
+{% else %}
+  <p class="hint">No team member is flagged as chief of staff. Flag one in the team (<code>chief_of_staff = true</code>) to see their summary here, or see <a href="{{ agents_href }}">Agents</a>.</p>
+{% endif %}
+</section>

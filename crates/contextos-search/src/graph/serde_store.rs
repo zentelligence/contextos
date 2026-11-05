@@ -16,10 +16,11 @@ use std::sync::{Mutex, PoisonError};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    GraphChange, GraphDelta, GraphEdge, GraphNode, GraphRecords, STORE_FORMAT, StoredGraphMetadata, StoresGraph,
-    graph_storage_error,
+    GraphChange, GraphDelta, GraphEdge, GraphNode, GraphRecords, GraphWriteGuard, JsonDecodeFailure, STORE_FORMAT,
+    StoreCompleteness, StoreFailure, StoredGraphMetadata, StoredGraphState, StoresGraph, graph_storage_error,
 };
 use crate::SearchError;
+use crate::store::DerivedStore;
 
 const FILE_NAME: &str = "graph.json";
 
@@ -30,6 +31,10 @@ const FILE_NAME: &str = "graph.json";
 struct SerdeDocument {
     format: u32,
     next_edge_id: u64,
+    /// Set while the store has only ever been written note by note since it was created; cleared by a rebuild. Absent
+    /// in a document written before it existed, which reads as complete.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    incomplete: bool,
     nodes: Vec<GraphNode>,
     edges: Vec<SerdeEdgeRecord>,
 }
@@ -40,144 +45,213 @@ struct SerdeEdgeRecord {
     edge: GraphEdge,
 }
 
+/// Just the format identifier of a document, read before the rest so a document in another format is reported as
+/// incompatible even when its other fields have a different shape.
+#[derive(Deserialize)]
+struct SerdeFormat {
+    format: u32,
+}
+
+/// What the document on disk held when this store last read or wrote it.
+enum SerdeLoad {
+    /// No document has been written.
+    Empty,
+    /// The document is in another format.
+    Incompatible,
+    /// The mirror holds the document's complete content.
+    Ready,
+    /// The document could not be read or decoded.
+    Unreadable(StoreFailure),
+}
+
 /// The in-memory mirror kept between `persist` calls, so a call carrying
 /// only a delta (per [`GraphChange`]) can still emit a complete document.
-/// `valid` is `false` when no on-disk document was ever successfully
-/// loaded (missing file, unreadable, malformed JSON, or a format mismatch):
-/// every such case reports [`StoresGraph::read_metadata`] as `None`, the
-/// same all-or-nothing "cannot be trusted" contract every other backend
-/// shares.
 struct SerdeState {
     nodes: HashMap<String, GraphNode>,
     edges: HashMap<u64, GraphEdge>,
     next_edge_id: u64,
-    valid: bool,
+    incomplete: bool,
+    load: SerdeLoad,
 }
 
 pub(super) struct SerdeGraphStore {
     file_path: PathBuf,
+    directory: PathBuf,
     state: Mutex<SerdeState>,
 }
 
 impl SerdeGraphStore {
-    /// Opens (without creating) the JSON document at
-    /// `directory/graph.json`, creating `directory` itself if absent so a
-    /// later `persist` call has somewhere to write. A missing, unreadable,
-    /// malformed, or format-mismatched document is not an error here: it
-    /// simply yields an empty, `valid: false` starting state, exactly as
-    /// [`super::LinkGraph::try_from`] expects from every backend when the
-    /// store cannot yet be trusted.
+    /// Opens (without creating) the JSON document at `directory/graph.json`, creating `directory` itself if absent so
+    /// a later `persist` call has somewhere to write. The document is read once, here: a missing document is an empty
+    /// store, one in another format is incompatible, and one that cannot be read or decoded is recorded as that
+    /// failure, which every read then reports, rather than failing the open.
     ///
     /// # Errors
     ///
-    /// Returns a storage error when `directory` does not exist and cannot
-    /// be created.
+    /// Returns a storage error when `directory` does not exist and cannot be created.
     pub(super) fn open(directory: &Path) -> Result<Self, SearchError> {
         std::fs::create_dir_all(directory).map_err(|source| SearchError::GraphStorage {
             path: directory.display().to_string(),
             source,
         })?;
         let file_path = directory.join(FILE_NAME);
-
-        let state = std::fs::read(&file_path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<SerdeDocument>(&bytes).ok())
-            .filter(|document| document.format == STORE_FORMAT)
-            .map_or_else(
-                || SerdeState {
-                    nodes: HashMap::new(),
-                    edges: HashMap::new(),
-                    next_edge_id: 0,
-                    valid: false,
-                },
-                |document| SerdeState {
-                    nodes: document
-                        .nodes
-                        .into_iter()
-                        .map(|node| (node.path.clone(), node))
-                        .collect(),
-                    edges: document
-                        .edges
-                        .into_iter()
-                        .map(|record| (record.store_id, record.edge))
-                        .collect(),
-                    next_edge_id: document.next_edge_id,
-                    valid: true,
-                },
-            );
-
+        let state = read_document(&file_path, directory);
         Ok(Self {
             file_path,
+            directory: directory.to_path_buf(),
             state: Mutex::new(state),
         })
     }
 }
 
+/// Reads the document at `file_path` into a fresh mirror, recording what it found.
+fn read_document(file_path: &Path, directory: &Path) -> SerdeState {
+    let empty = |load| SerdeState {
+        nodes: HashMap::new(),
+        edges: HashMap::new(),
+        next_edge_id: 0,
+        incomplete: false,
+        load,
+    };
+    let path = directory.display().to_string();
+    let bytes = match std::fs::read(file_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return empty(SerdeLoad::Empty),
+        Err(error) => {
+            return empty(SerdeLoad::Unreadable(StoreFailure::io(
+                DerivedStore::Graph,
+                path,
+                format!("reading {FILE_NAME}: {error}"),
+            )));
+        }
+    };
+    match serde_json::from_slice::<SerdeFormat>(&bytes) {
+        Ok(found) if found.format != STORE_FORMAT => return empty(SerdeLoad::Incompatible),
+        Ok(_) => {}
+        Err(error) => {
+            return empty(SerdeLoad::Unreadable(StoreFailure::undecodable(
+                DerivedStore::Graph,
+                path,
+                format!("{FILE_NAME} {}", JsonDecodeFailure(&error)),
+            )));
+        }
+    }
+    match serde_json::from_slice::<SerdeDocument>(&bytes) {
+        Ok(document) => SerdeState {
+            nodes: document
+                .nodes
+                .into_iter()
+                .map(|node| (node.path.clone(), node))
+                .collect(),
+            edges: document
+                .edges
+                .into_iter()
+                .map(|record| (record.store_id, record.edge))
+                .collect(),
+            next_edge_id: document.next_edge_id,
+            incomplete: document.incomplete,
+            load: SerdeLoad::Ready,
+        },
+        Err(error) => empty(SerdeLoad::Unreadable(StoreFailure::undecodable(
+            DerivedStore::Graph,
+            path,
+            format!("{FILE_NAME} {}", JsonDecodeFailure(&error)),
+        ))),
+    }
+}
+
 impl StoresGraph for SerdeGraphStore {
-    fn read_metadata(&self) -> Option<StoredGraphMetadata> {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.valid.then_some(StoredGraphMetadata {
-            next_edge_id: state.next_edge_id,
-            generation: 0,
-        })
+    /// A document that could not be read is read again here, so a failure that has since cleared (a file another
+    /// instance rewrote, or a passing I/O fault) is picked up by the graph's retry rather than held until a restart.
+    fn read_metadata(&self) -> Result<StoredGraphState, StoreFailure> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if matches!(state.load, SerdeLoad::Unreadable(_)) {
+            *state = read_document(&self.file_path, &self.directory);
+        }
+        match &state.load {
+            SerdeLoad::Empty => Ok(StoredGraphState::Empty),
+            SerdeLoad::Incompatible => Ok(StoredGraphState::Incompatible),
+            SerdeLoad::Ready => Ok(StoredGraphState::Ready(StoredGraphMetadata {
+                complete: !state.incomplete,
+                next_edge_id: state.next_edge_id,
+                generation: 0,
+            })),
+            SerdeLoad::Unreadable(failure) => Err(failure.clone()),
+        }
     }
 
-    fn load_all(&self) -> Option<GraphRecords> {
+    fn load_all(&self) -> Result<GraphRecords, StoreFailure> {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if let SerdeLoad::Unreadable(failure) = &state.load {
+            return Err(failure.clone());
+        }
         let nodes = state.nodes.values().cloned().collect();
         let edges = state
             .edges
             .iter()
             .map(|(&store_id, edge)| (store_id, edge.clone()))
             .collect();
-        Some((nodes, edges))
+        Ok((nodes, edges))
     }
 
-    /// Clears the in-memory mirror only; the on-disk document is left
-    /// untouched until the next `persist` call rewrites it whole. A crash
-    /// between this call and the following `persist` (as
-    /// `LinkGraph::rebuild` always issues) therefore leaves the *previous*
-    /// document fully intact on reopen, rather than an emptied-but-not-yet-
-    /// repopulated one: strictly safer for a whole-file-rewrite backend
-    /// than clearing on disk ahead of the rewrite would be.
-    fn clear(&self) -> Result<(), SearchError> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.nodes.clear();
-        state.edges.clear();
-        Ok(())
+    /// Applies `changes` to a copy of the in-memory mirror, writes the whole
+    /// document, and only then adopts the copy: a failed write leaves both
+    /// the on-disk document and the mirror exactly as they were, so a later
+    /// call never builds on a half-applied change set.
+    /// A single-instance store needs no cross-process lock: this instance's own calls are already serialised by the
+    /// `&mut` access every [`super::LinkGraph`] mutation takes.
+    fn write_guard(&self) -> Result<GraphWriteGuard, SearchError> {
+        Ok(GraphWriteGuard::unlocked())
     }
 
-    fn persist(&self, changes: &[GraphChange], next_edge_id: u64) -> Result<(), SearchError> {
+    fn persist(
+        &self,
+        _guard: &GraphWriteGuard,
+        changes: &[GraphChange],
+        next_edge_id: u64,
+        completeness: StoreCompleteness,
+    ) -> Result<(), SearchError> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut nodes = state.nodes.clone();
+        let mut edges = state.edges.clone();
         for change in changes {
             match change {
                 // `serde` already loses data outright under concurrent
-                // instances (see `current_generation` above); there is no
-                // sibling for a `Reset` marker to matter to.
-                GraphChange::Reset => {}
+                // instances (see `current_generation` above), so there is
+                // no sibling for the marker to signal; it discards the
+                // previous graph in the same write as everything after it.
+                GraphChange::Reset => {
+                    nodes.clear();
+                    edges.clear();
+                }
                 GraphChange::RemoveNode(path) => {
-                    state.nodes.remove(path);
+                    nodes.remove(path);
                 }
                 GraphChange::UpsertNode(node) => {
-                    state.nodes.insert(node.path.clone(), node.clone());
+                    nodes.insert(node.path.clone(), node.clone());
                 }
                 GraphChange::RemoveEdge { store_id } => {
-                    state.edges.remove(store_id);
+                    edges.remove(store_id);
                 }
+                // The store holds no listing of files, and no other instance can share it.
+                GraphChange::FileAdded(_) | GraphChange::FileRemoved { .. } => {}
                 GraphChange::UpsertEdge { store_id, edge } => {
-                    state.edges.insert(*store_id, edge.clone());
+                    edges.insert(*store_id, edge.clone());
                 }
             }
         }
-        state.next_edge_id = next_edge_id;
-        state.valid = true;
 
+        let incomplete = match completeness {
+            StoreCompleteness::Complete => false,
+            StoreCompleteness::Incomplete => true,
+            StoreCompleteness::Unchanged => state.incomplete,
+        };
         let document = SerdeDocument {
             format: STORE_FORMAT,
             next_edge_id,
-            nodes: state.nodes.values().cloned().collect(),
-            edges: state
-                .edges
+            incomplete,
+            nodes: nodes.values().cloned().collect(),
+            edges: edges
                 .iter()
                 .map(|(&store_id, edge)| SerdeEdgeRecord {
                     store_id,
@@ -185,22 +259,27 @@ impl StoresGraph for SerdeGraphStore {
                 })
                 .collect(),
         };
-        drop(state);
+        write_atomically(&self.file_path, &document)?;
 
-        write_atomically(&self.file_path, &document)
+        state.nodes = nodes;
+        state.edges = edges;
+        state.next_edge_id = next_edge_id;
+        state.incomplete = incomplete;
+        state.load = SerdeLoad::Ready;
+        Ok(())
     }
 
     /// Always `None`: `serde` already loses data outright under concurrent
     /// instances (its own module documentation above), so cross-instance
     /// propagation would be solving the wrong layer for this backend, not
     /// merely unimplemented.
-    fn current_generation(&self) -> Option<u64> {
-        None
+    fn current_generation(&self) -> Result<Option<u64>, StoreFailure> {
+        Ok(None)
     }
 
     /// Always `None`, for the same reason as [`SerdeGraphStore::current_generation`].
-    fn changes_since(&self, _since: u64) -> Option<GraphDelta> {
-        None
+    fn changes_since(&self, _since: u64) -> Result<Option<GraphDelta>, StoreFailure> {
+        Ok(None)
     }
 }
 

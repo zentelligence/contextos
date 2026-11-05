@@ -7,35 +7,15 @@ use base64::Engine;
 use contextos_core::{DeleteOutcome, MoveOutcome, PipelineResult, VaultSet, WriteOutcome};
 use contextos_fs::{
     AllowedDirectory, Attachment, DirectoryEntry, DirectoryListing, EditFileResult, EntryKind, FileInfo, FsErrorInfo,
-    LineRange, ReadLimit, ReadManyResult, ReadTextResult, SortBy, TextEdit, TreeNode,
+    ReadManyResult, SortBy, TextEdit, TreeNode,
 };
 use rmcp::model::ResourceContents;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
-use crate::resource_support::{optional_u64_schema, resource_uri_for};
+use crate::resource_support::{optional_string_schema, optional_u64_schema, resource_uri_for};
 use crate::server::WarningMessages;
 use crate::tool_error::ToolError;
-
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct ReadTextToolResult {
-    pub(crate) content: String,
-    pub(crate) line_count: usize,
-    pub(crate) content_hash: String,
-    pub(crate) truncated: bool,
-}
-
-impl From<ReadTextResult> for ReadTextToolResult {
-    fn from(value: ReadTextResult) -> Self {
-        let content_hash: &str = (&value.content_hash).into();
-        Self {
-            content: value.content,
-            line_count: value.line_count,
-            content_hash: content_hash.to_owned(),
-            truncated: value.truncated,
-        }
-    }
-}
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BatchErrorToolResult {
@@ -85,6 +65,14 @@ pub(crate) struct ReadManyItemToolResult {
     pub(crate) content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) content_hash: Option<String>,
+    /// The file's size in bytes, present exactly when `content` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "optional_u64_schema")]
+    pub(crate) size: Option<u64>,
+    /// The version of the file read, present exactly when `content` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "optional_string_schema")]
+    pub(crate) version: Option<String>,
     /// `true` when `content` is a bounded preview rather than the whole
     /// file, because it reached the `resource_link` threshold;
     /// `fs_read_multiple_files` has no per-file head/tail/range parameter,
@@ -105,6 +93,8 @@ impl From<ReadManyResult> for ReadManyItemToolResult {
             path: value.path,
             content: value.content,
             content_hash,
+            size: value.size,
+            version: value.version.as_ref().map(|version| <&str>::from(version).to_owned()),
             truncated: false,
             error: value.error.map(BatchErrorToolResult::from),
         }
@@ -184,6 +174,59 @@ impl From<AttachmentResource> for ResourceContents {
     }
 }
 
+/// The input of `fs_attach_file`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AttachFileInput {
+    /// Vault-relative or absolute path, or `{name}://{relative-path}` to
+    /// address a specific configured vault by name; use
+    /// `{name}://.` to address that vault's root.
+    pub(crate) path: String,
+    /// Markdown notes only (`.md`; any other file is rejected). Return the note with every link, in the body and in
+    /// the frontmatter, rewritten in place to the vault-rooted path it names: `/` followed by a vault path. A link
+    /// that names no file becomes `/:!` followed by its original text, and one that names several becomes `/:?`
+    /// followed by its original text. External URLs, `mailto:`, and anchor-only links are left as written. The
+    /// result reports `links_expanded` and no `content_hash`, and the text is not the file's content: never write it
+    /// back.
+    #[serde(default)]
+    pub(crate) expand_links: bool,
+}
+
+/// The text block that follows the embedded resource of an `fs_attach_file` result in `expand_links` mode. It names
+/// the form of the content and, unlike [`AttachmentHashToolResult`], carries no hash: the content is not the file's
+/// bytes, so no hash of it could be a valid `expected_hash`.
+#[derive(Debug, Serialize)]
+pub(crate) struct LinksExpandedToolResult {
+    links_expanded: bool,
+}
+
+impl Default for LinksExpandedToolResult {
+    fn default() -> Self {
+        Self { links_expanded: true }
+    }
+}
+
+/// The text block that follows the embedded resource in an `fs_attach_file` result. The resource stays the first
+/// content block so a host that only reads that block behaves exactly as it did before the hash was added.
+#[derive(Debug, Serialize)]
+pub(crate) struct AttachmentHashToolResult {
+    content_hash: String,
+    size: u64,
+    version: String,
+}
+
+impl From<&Attachment> for AttachmentHashToolResult {
+    fn from(value: &Attachment) -> Self {
+        let content_hash: &str = (&value.content_hash).into();
+        let version: &str = (&value.version).into();
+        Self {
+            content_hash: content_hash.to_owned(),
+            size: value.size,
+            version: version.to_owned(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct WriteToolResult {
     path: String,
@@ -198,7 +241,7 @@ impl From<PipelineResult<WriteOutcome>> for WriteToolResult {
         let content_hash: &str = (&result.value.content_hash).into();
         let WarningMessages(warnings) = WarningMessages::from(result.warnings);
         Self {
-            path: result.value.path.relative().to_string_lossy().into_owned(),
+            path: result.value.path.portable_relative(),
             bytes_written: result.value.bytes_written,
             content_hash: content_hash.to_owned(),
             created: result.value.created,
@@ -241,7 +284,7 @@ impl From<PipelineResult<contextos_core::CreateDirectoryOutcome>> for CreateDire
     fn from(result: PipelineResult<contextos_core::CreateDirectoryOutcome>) -> Self {
         let WarningMessages(warnings) = WarningMessages::from(result.warnings);
         Self {
-            path: result.value.path.relative().to_string_lossy().into_owned(),
+            path: result.value.path.portable_relative(),
             created: result.value.created,
             warnings,
         }
@@ -333,8 +376,8 @@ impl From<PipelineResult<MoveOutcome>> for MoveToolResult {
     fn from(result: PipelineResult<MoveOutcome>) -> Self {
         let WarningMessages(warnings) = WarningMessages::from(result.warnings);
         Self {
-            source: result.value.source.relative().to_string_lossy().into_owned(),
-            destination: result.value.destination.relative().to_string_lossy().into_owned(),
+            source: result.value.source.portable_relative(),
+            destination: result.value.destination.portable_relative(),
             warnings,
         }
     }
@@ -391,7 +434,7 @@ impl From<Vec<DeleteAttempt>> for DeleteToolResult {
                     let WarningMessages(item_warnings) = WarningMessages::from(result.warnings);
                     warnings.extend(item_warnings);
                     results.push(DeleteItemToolResult {
-                        path: result.value.path.relative().to_string_lossy().into_owned(),
+                        path: result.value.path.portable_relative(),
                         deleted: result.value.deleted,
                         trashed: result.value.trashed,
                         error: None,
@@ -514,69 +557,18 @@ pub(crate) struct PathsInput {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ReadTextInput {
-    /// Vault-relative or absolute path, or `{name}://{relative-path}` to
-    /// address a specific configured vault by name; use
-    /// `{name}://.` to address that vault's root.
-    pub(crate) path: String,
-    // See the matching comment on `QueryIndexRebuildInput.budget_seconds`
-    // (`tools::query`): `#[serde(default)]` is required alongside
-    // `schema_with` so the field is still correctly marked optional in the
-    // generated schema.
-    #[serde(default)]
-    #[schemars(schema_with = "optional_u64_schema")]
-    head: Option<u64>,
-    #[serde(default)]
-    #[schemars(schema_with = "optional_u64_schema")]
-    tail: Option<u64>,
-    range: Option<RangeInput>,
-}
-
-pub(crate) struct ToolReadLimit(pub(crate) Option<ReadLimit>);
-
-impl TryFrom<&ReadTextInput> for ToolReadLimit {
-    type Error = ToolError;
-
-    fn try_from(value: &ReadTextInput) -> Result<Self, Self::Error> {
-        let count =
-            usize::from(value.head.is_some()) + usize::from(value.tail.is_some()) + usize::from(value.range.is_some());
-        if count > 1 {
-            return Err(ToolError::Invalid("head, tail, and range are mutually exclusive"));
-        }
-        if let Some(head) = value.head {
-            return Ok(Self(Some(ReadLimit::Head(usize::try_from(head)?))));
-        }
-        if let Some(tail) = value.tail {
-            return Ok(Self(Some(ReadLimit::Tail(usize::try_from(tail)?))));
-        }
-        value
-            .range
-            .as_ref()
-            .map(|range| {
-                LineRange::try_from((usize::try_from(range.from_line)?, usize::try_from(range.to_line)?))
-                    .map(ReadLimit::Range)
-                    .map_err(ToolError::from)
-            })
-            .transpose()
-            .map(Self)
-    }
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct RangeInput {
-    from_line: u64,
-    to_line: u64,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct WriteInput {
     /// Vault-relative or absolute path, or `{name}://{relative-path}` to
     /// address a specific configured vault by name; use
     /// `{name}://.` to address that vault's root.
     pub(crate) path: String,
-    pub(crate) content: String,
+    /// Text content. Exactly one of `content`/`content_base64` is required.
+    #[serde(default)]
+    pub(crate) content: Option<String>,
+    /// Base64-encoded binary content, capped at 10 MiB decoded. Exactly one
+    /// of `content`/`content_base64` is required.
+    #[serde(default)]
+    pub(crate) content_base64: Option<String>,
     pub(crate) expected_hash: Option<String>,
     #[serde(default)]
     pub(crate) force: bool,

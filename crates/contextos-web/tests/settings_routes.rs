@@ -1,4 +1,4 @@
-//! `/settings/` contract tests (Phase 17, `delivery-plan.md`'s gate): real
+//! `/settings/` contract tests: real
 //! `contextos-mcp` sessions against real temporary vault fixtures,
 //! exercising the one gate item that genuinely needs a live MCP session
 //! rather than a unit test double: the registered-app-dependency check
@@ -38,8 +38,8 @@ fn write_two_server_web_toml(
     std::fs::write(
         &path,
         format!(
-            "[[mcp_server]]\nname = \"contextos\"\ntransport = \"stdio\"\ncommand = {contextos_command:?}\nargs = [\"--config\", {config_path_value}, \"--stdio\"]\n\n\
-             [[mcp_server]]\nname = \"extra\"\ntransport = \"stdio\"\ncommand = {contextos_command:?}\nargs = [\"--config\", {config_path_value}, \"--stdio\"]\n"
+            "[[mcp_server]]\nname = \"contextos\"\ntransport = \"stdio\"\ncommand = {contextos_command:?}\nargs = [\"--config\", {config_path_value}]\n\n\
+             [[mcp_server]]\nname = \"extra\"\ntransport = \"stdio\"\ncommand = {contextos_command:?}\nargs = [\"--config\", {config_path_value}]\n"
         ),
     )?;
     Ok(path)
@@ -56,7 +56,7 @@ async fn router_with_two_servers(vault_dir: &Path, dir: &Path) -> Result<(Router
         args: vec!["--config".to_owned(), config_path.to_string_lossy().into_owned()],
     };
     let clients = Arc::new(McpClientSet::connect(&[contextos_entry, extra_entry]).await?);
-    let router = contextos_web::build_router(clients, Some(dir), &web_config_path, "contextos".to_owned());
+    let router = contextos_web::build_router(clients, Some(dir), &web_config_path);
     Ok((router, web_config_path))
 }
 
@@ -76,22 +76,25 @@ fn write_app_depending_on_extra(vault_dir: &Path) -> std::io::Result<()> {
             name = "Needs Extra"
             kind = "spa"
             entry = "index.html"
-            target = "_blank"
             mcp_servers = ["extra"]
         "#,
     )?;
     write(vault_dir, "registry/apps/needs-extra/index.html", "<html></html>")
 }
 
-async fn delete(router: &Router, body: &str) -> Result<(StatusCode, String), BoxError> {
+/// `DELETE /settings/mcp-servers/{name}`: `name` travels as the URL path
+/// segment itself, matching what a real `hx-delete` button sends
+/// (`docs/http-routing-response-contract.md`'s sub-entity form) rather than
+/// a JSON body field htmx's own `methodsThatUseUrlParams` default never
+/// actually populates for a `DELETE` request.
+async fn delete(router: &Router, name: &str) -> Result<(StatusCode, String), BoxError> {
     let response = router
         .clone()
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri("/settings/")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_owned()))?,
+                .uri(format!("/settings/mcp-servers/{name}"))
+                .body(Body::empty())?,
         )
         .await?;
     let status = response.status();
@@ -154,12 +157,12 @@ async fn router_with_one_server(vault_dir: &Path, dir: &Path) -> Result<(Router,
     std::fs::write(
         &web_config_path,
         format!(
-            "[[mcp_server]]\nname = \"contextos\"\ntransport = \"stdio\"\ncommand = {command_value:?}\nargs = [\"--config\", {config_path_value}, \"--stdio\"]\n"
+            "[[mcp_server]]\nname = \"contextos\"\ntransport = \"stdio\"\ncommand = {command_value:?}\nargs = [\"--config\", {config_path_value}]\n"
         ),
     )?;
     let entry = support::real_contextos_entry("contextos", &config_path)?;
     let clients = Arc::new(McpClientSet::connect(&[entry]).await?);
-    let router = contextos_web::build_router(clients, Some(dir), &web_config_path, "contextos".to_owned());
+    let router = contextos_web::build_router(clients, Some(dir), &web_config_path);
     Ok((router, web_config_path))
 }
 
@@ -172,7 +175,7 @@ async fn removing_an_mcp_server_a_registered_apps_manifest_still_names_is_reject
     let (router, web_config_path) = router_with_two_servers(vault_dir.path(), dir.path()).await?;
     let before = std::fs::read_to_string(&web_config_path)?;
 
-    let (status, body) = delete(&router, r#"{"name":"extra"}"#).await?;
+    let (status, body) = delete(&router, "extra").await?;
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert!(body.contains("settings/mcp-server-in-use"), "{body}");
@@ -194,7 +197,7 @@ async fn removing_an_mcp_server_no_app_depends_on_succeeds() -> Result<(), BoxEr
     // No app registered at all: nothing depends on "extra".
     let (router, web_config_path) = router_with_two_servers(vault_dir.path(), dir.path()).await?;
 
-    let (status, body) = delete(&router, r#"{"name":"extra"}"#).await?;
+    let (status, body) = delete(&router, "extra").await?;
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(!body.contains("extra"), "{body}");
@@ -216,8 +219,10 @@ async fn removing_an_mcp_server_an_app_depends_on_through_a_different_vault_is_s
     let config_path = dir.path().join("config.toml");
     #[allow(clippy::unnecessary_debug_formatting)]
     let content = format!(
-        "[[vault]]\npath = {:?}\nname = \"vault-a\"\n[vault.search]\ntext = false\ngraph = false\n\n\
-         [[vault]]\npath = {:?}\nname = \"vault-b\"\n[vault.search]\ntext = false\ngraph = false\n",
+        "[[vault]]\npath = {:?}\nname = \"vault-a\"\nstate_directory = \".contextos\"\n\
+         [vault.search]\ntext = false\ngraph = false\n\n\
+         [[vault]]\npath = {:?}\nname = \"vault-b\"\nstate_directory = \".contextos\"\n\
+         [vault.search]\ntext = false\ngraph = false\n",
         vault_a.path(),
         vault_b.path()
     );
@@ -231,9 +236,9 @@ async fn removing_an_mcp_server_an_app_depends_on_through_a_different_vault_is_s
         args: vec!["--config".to_owned(), config_path.to_string_lossy().into_owned()],
     };
     let clients = Arc::new(McpClientSet::connect(&[contextos_entry, extra_entry]).await?);
-    let router = contextos_web::build_router(clients, Some(dir.path()), &web_config_path, "contextos".to_owned());
+    let router = contextos_web::build_router(clients, Some(dir.path()), &web_config_path);
 
-    let (status, body) = delete(&router, r#"{"name":"extra"}"#).await?;
+    let (status, body) = delete(&router, "extra").await?;
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert!(body.contains("vault-b"), "{body}");
@@ -336,7 +341,7 @@ async fn settings_renders_the_same_with_or_without_a_trailing_slash() -> Result<
 }
 
 #[tokio::test]
-async fn settings_keeps_the_vault_browser_and_apps_nav_links_clickable() -> Result<(), BoxError> {
+async fn settings_keeps_a_way_back_to_the_fallback_vault_clickable() -> Result<(), BoxError> {
     let vault_dir = tempfile::tempdir()?;
     let dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Root\n")?;
@@ -344,9 +349,7 @@ async fn settings_keeps_the_vault_browser_and_apps_nav_links_clickable() -> Resu
 
     let (status, body) = get(&router, "/settings/").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains(&format!("<a href=\"/{VAULT_NAME}/\"")));
-    assert!(body.contains(&format!("<a href=\"/{VAULT_NAME}/apps/\"")));
-    assert!(!body.contains("<span class=\"nav-dir\">"));
+    assert!(body.contains(&format!("<a class=\"wordmark\" href=\"/{VAULT_NAME}/\"")));
     Ok(())
 }
 
@@ -386,17 +389,12 @@ async fn the_mcp_server_status_icon_reflects_a_killed_session() -> Result<(), Bo
         .pid()
         .ok_or("a stdio client reports its child PID")?;
     let clients = Arc::new(clients);
-    let router = contextos_web::build_router(
-        Arc::clone(&clients),
-        Some(dir.path()),
-        &web_config_path,
-        "contextos".to_owned(),
-    );
+    let router = contextos_web::build_router(Arc::clone(&clients), Some(dir.path()), &web_config_path);
 
     let (status, body) = get(&router, "/settings/").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(mcp_server_row(&body, "extra")?.contains("title=\"Connected\">🟢"));
-    assert!(mcp_server_row(&body, "contextos")?.contains("title=\"Connected\">🟢"));
+    assert!(mcp_server_row(&body, "extra")?.contains("conn-dot conn-ok"));
+    assert!(mcp_server_row(&body, "contextos")?.contains("conn-dot conn-ok"));
 
     std::process::Command::new("kill")
         .args(["-KILL", &extra_pid.to_string()])
@@ -411,7 +409,7 @@ async fn the_mcp_server_status_icon_reflects_a_killed_session() -> Result<(), Bo
         loop {
             let (status, body) = get(&router, "/settings/").await?;
             assert_eq!(status, StatusCode::OK, "{body}");
-            if mcp_server_row(&body, "extra")?.contains("title=\"Unreachable\">🔴") {
+            if mcp_server_row(&body, "extra")?.contains("conn-dot conn-down") {
                 return Ok::<String, BoxError>(body);
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -423,7 +421,7 @@ async fn the_mcp_server_status_icon_reflects_a_killed_session() -> Result<(), Bo
     };
     let body = body?;
     assert!(
-        mcp_server_row(&body, "contextos")?.contains("title=\"Connected\">🟢"),
+        mcp_server_row(&body, "contextos")?.contains("conn-dot conn-ok"),
         "an unrelated session's status must stay unaffected: {body}"
     );
     Ok(())
@@ -447,12 +445,12 @@ async fn settings_displays_the_configured_log_rotation_and_retention() -> Result
         &web_config_path,
         format!(
             "[server]\nlog_file = {log_path_value}\nlog_max_size_mb = 10\nlog_rotate_daily = true\nlog_retention_days = 30\nlog_retention_files = 5\n\n\
-             [[mcp_server]]\nname = \"contextos\"\ntransport = \"stdio\"\ncommand = {command_value:?}\nargs = [\"--config\", {config_path_value}, \"--stdio\"]\n"
+             [[mcp_server]]\nname = \"contextos\"\ntransport = \"stdio\"\ncommand = {command_value:?}\nargs = [\"--config\", {config_path_value}]\n"
         ),
     )?;
     let entry = support::real_contextos_entry("contextos", &config_path)?;
     let clients = Arc::new(McpClientSet::connect(&[entry]).await?);
-    let router = contextos_web::build_router(clients, Some(dir.path()), &web_config_path, "contextos".to_owned());
+    let router = contextos_web::build_router(clients, Some(dir.path()), &web_config_path);
 
     let (status, body) = get(&router, "/settings/").await?;
 

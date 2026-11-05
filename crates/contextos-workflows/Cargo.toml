@@ -1,0 +1,53 @@
+[package]
+name = "contextos-workflows"
+description = "Workflow execution and saved-job scheduling for ContextOS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The operator's IANA time zone (`OperatorTimeZone`): a schedule is wall-clock time where the operator is, resolved
+# across daylight saving transitions by the same zone `contextos-web` dates its vault writes in.
+contextos-core = { path = "../contextos-core" }
+croner.workspace = true
+rhai.workspace = true
+# Package version requirements (`package.rs`): parsing/comparing a
+# `PackageIdentity`'s own semver `version` and a `PackageDependency`'s
+# `VersionReq` against it.
+semver = { workspace = true, features = ["serde"] }
+# `RandomIdentityIssuer`: the identity a state file gives a job is random, so a key used again never repeats one.
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+# `JobFingerprint`: the digest that says which version of a job facts were recorded for.
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# `formatting`/`parsing`: on top of the workspace default (`macros`,
+# `serde`), needed for `time::serde::rfc3339` (`JobsState`'s
+# `started`/`last_scheduled_fire` timestamps, `state.rs`).
+time = { workspace = true, features = ["formatting", "parsing"] }
+# `run_workflow` moves Rhai's own synchronous evaluation onto a blocking thread
+# (`script.rs`'s module doc) and bridges its registered `call_mcp`
+# function back into async through a captured `Handle`; this is
+# production behaviour, not test-only.
+tokio.workspace = true
+# `CancellationToken`: how an operator stops a run (`RunSettings::cancel`).
+tokio-util.workspace = true
+# `package.rs` parses a package manifest as TOML, matching `job.toml`/
+# `workflow.toml`'s established format (`contextos-web`'s own manifests);
+# a production dependency here, not the round-trip-proving dev-only role
+# it plays for `JobsState` below.
+toml.workspace = true
+
+[dev-dependencies]
+# Real files outside any package, for the tests that prove a script cannot import them.
+tempfile.workspace = true
+# Generated inventories for the property tests of library resolution.
+proptest.workspace = true
+
+[lints]
+workspace = true

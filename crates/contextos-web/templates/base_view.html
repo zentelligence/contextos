@@ -10,7 +10,7 @@
     <button
       type="button"
       class="{% if v.active %}active{% endif %}"
-      hx-get="/{{ vault_name }}/{{ path }}?view={{ v.name }}"
+      hx-get="{{ urls.base_view(path, v.name) }}"
       hx-target="closest .base-view"
       hx-swap="outerHTML"
     >{{ v.name }}</button>
@@ -23,7 +23,7 @@
 <div class="filter-editor" id="base-filter-editor" hidden>
   <div class="hint">
     Raw <code>filters</code> JSON for <code>{{ path }}</code>. Saving dispatches <code>base_apply</code>'s
-    <code>set_filters</code> against the <code>.base</code> file itself &mdash; it changes which notes match,
+    <code>set_filters</code> against the <code>.base</code> file itself. It changes which notes match,
     never a matched note's own content.
   </div>
   <textarea id="base-filters-textarea" rows="6">{{ filters_json }}</textarea>
@@ -31,7 +31,7 @@
     <button
       type="button"
       class="btn primary small"
-      hx-patch="/{{ vault_name }}/{{ path }}"
+      hx-patch="{{ urls.file(path) }}"
       hx-target="closest .base-view"
       hx-swap="outerHTML"
       hx-vals="js:(function(){try{var filters=JSON.parse(document.getElementById('base-filters-textarea').value);return {target:'definition',operations:[{op:'set_filters',filters:filters}]};}catch(e){alert('Invalid JSON: '+e.message);return {target:'definition',operations:[]};}})()"
@@ -43,7 +43,7 @@
 {% for row in rows %}
   <div class="row-card">
     <h4>
-    {% if row.has_link %}<a href="{{ row.href }}">{{ row.title }}</a>{% else %}{{ row.title }}{% endif %}
+    {% if let Some(href) = row.href %}<a href="{{ href }}">{{ row.title }}</a>{% else if row.unrouted %}<span class="unrouted" title="{{ crate::vault_links::UNROUTED_HINT }}">{{ row.title }}<span class="visually-hidden"> ({{ crate::vault_links::UNROUTED_HINT }})</span></span>{% else %}{{ row.title }}{% endif %}
     </h4>
     <dl>
     {% for column in row.columns %}
@@ -57,10 +57,10 @@
       id="base-row-edit-{{ loop.index0 }}"
       data-note-path="{{ note_path }}"
       hidden
-      hx-patch="/{{ vault_name }}/{{ path }}"
+      hx-patch="{{ urls.file(path) }}"
       hx-target="closest .base-view"
       hx-swap="outerHTML"
-      hx-vals="js:{target:'row', note_path:this.dataset.notePath, patch:(function(el){var p={};el.querySelectorAll('[data-field]').forEach(function(i){p[i.dataset.field]=i.value;});return p;})(this)}"
+      hx-vals="js:{target:'row', note_path:document.getElementById('base-row-edit-{{ loop.index0 }}').dataset.notePath, patch:(function(el){var p={};el.querySelectorAll('[data-field]').forEach(function(i){p[i.dataset.field]=i.value;});return p;})(document.getElementById('base-row-edit-{{ loop.index0 }}'))}"
     >
     {% for column in row.columns %}
     {% if !column.is_formula %}

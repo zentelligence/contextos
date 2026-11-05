@@ -1,0 +1,31 @@
+{% macro form(page_href, edit_body, edit_expected_hash) %}
+<form
+  class="wiki-edit-form"
+  hx-patch="{{ page_href }}"
+  hx-target="closest .insights-screen"
+  hx-swap="outerHTML"
+>
+  <input type="hidden" name="expected_hash" value="{{ edit_expected_hash }}">
+  <div class="save-bar save-bar-top">
+    <button type="submit" class="btn primary small">Save</button>
+    <button
+      type="button"
+      class="btn small"
+      hx-get="{{ page_href }}"
+      hx-target="closest .insights-screen"
+      hx-swap="outerHTML"
+    >Cancel</button>
+  </div>
+  <textarea name="content" class="notes-body-textarea" autofocus>{{ edit_body }}</textarea>
+  <div class="save-bar">
+    <button type="submit" class="btn primary small">Save</button>
+    <button
+      type="button"
+      class="btn small"
+      hx-get="{{ page_href }}"
+      hx-target="closest .insights-screen"
+      hx-swap="outerHTML"
+    >Cancel</button>
+  </div>
+</form>
+{% endmacro %}

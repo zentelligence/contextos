@@ -1,6 +1,8 @@
 /target/
 /.contextos/
 /.fastembed_cache/
+/ui/
+/.claude/logs/
 *.profraw
 *.profdata
 *.local.*

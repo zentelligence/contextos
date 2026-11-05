@@ -15,7 +15,10 @@ fn validate_rejects_a_dangling_flowchart_edge() {
 
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0].code, "mermaid/diagram-parse");
-    assert!(!diagnostics[0].message.is_empty());
+    assert!(
+        !diagnostics[0].message.is_empty(),
+        "`diagnostics[0].message` should not be empty"
+    );
 }
 
 #[test]

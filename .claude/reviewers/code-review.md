@@ -25,6 +25,12 @@ Review the diff, not the author's intent. Report concrete findings ordered by se
 - Is production code free of unsafe, panic shortcuts, debug output, and broad
   lint suppressions?
 
+## Agent-facing guidance
+
+- If the diff adds, renames, or removes a tool, or changes a parameter's meaning, a default, a limit, a returned field, an error code, or work the server does automatically, was the plugin's `mcp-tools` skill updated in the same delivery?
+- Is any advice the skill gives now wrong, or is a better practice now possible that it does not describe?
+- Did `.claude/scripts/check-plugin-skill.sh` run, and if it was skipped, is that stated rather than counted as a pass?
+
 ## Tests
 
 - Is there evidence of the right test at the right layer, including the failure path and prohibited side effects?

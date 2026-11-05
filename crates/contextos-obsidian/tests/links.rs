@@ -1,4 +1,4 @@
-use contextos_obsidian::{LinkCollection, MarkdownError, ObsidianLink, ValidatedMarkdown};
+use contextos_obsidian::{LinkCollection, LinkForm, MarkdownError, ValidatedMarkdown};
 
 #[test]
 fn reads_wikilinks_and_embeds_in_source_order() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,53 +12,27 @@ fn reads_wikilinks_and_embeds_in_source_order() -> Result<(), Box<dyn std::error
 
     let links = LinkCollection::try_from(source)?;
 
+    let read: Vec<(LinkForm, usize, &str, &str)> = links
+        .outgoing()
+        .iter()
+        .map(|link| (link.form, link.line, link.raw.as_str(), link.target.as_str()))
+        .collect();
     assert_eq!(
-        links.outgoing(),
+        read,
         [
-            ObsidianLink {
-                target: "Frontmatter Note".to_owned(),
-                display: None,
-                heading: None,
-                block: None,
-                embed: false,
-            },
-            ObsidianLink {
-                target: "Plain".to_owned(),
-                display: None,
-                heading: None,
-                block: None,
-                embed: false,
-            },
-            ObsidianLink {
-                target: "Target".to_owned(),
-                display: Some("Display".to_owned()),
-                heading: None,
-                block: None,
-                embed: false,
-            },
-            ObsidianLink {
-                target: "Target".to_owned(),
-                display: None,
-                heading: Some("Heading".to_owned()),
-                block: None,
-                embed: false,
-            },
-            ObsidianLink {
-                target: "Target".to_owned(),
-                display: None,
-                heading: None,
-                block: Some("block-id".to_owned()),
-                embed: false,
-            },
-            ObsidianLink {
-                target: "image.png".to_owned(),
-                display: Some("300".to_owned()),
-                heading: None,
-                block: None,
-                embed: true,
-            },
+            (LinkForm::Wikilink, 2, "[[Frontmatter Note]]", "Frontmatter Note"),
+            (LinkForm::Wikilink, 4, "[[Plain]]", "Plain"),
+            (LinkForm::Wikilink, 4, "[[Target|Display]]", "Target"),
+            (LinkForm::Wikilink, 4, "[[Target#Heading]]", "Target"),
+            (LinkForm::Wikilink, 4, "[[Target#^block-id]]", "Target"),
+            (LinkForm::WikilinkEmbed, 5, "![[image.png|300]]", "image.png"),
         ]
     );
+    let outgoing = links.outgoing();
+    assert_eq!(outgoing[2].display.as_deref(), Some("Display"));
+    assert_eq!(outgoing[3].heading.as_deref(), Some("Heading"));
+    assert_eq!(outgoing[4].block.as_deref(), Some("block-id"));
+    assert_eq!(outgoing[5].display.as_deref(), Some("300"));
     Ok(())
 }
 

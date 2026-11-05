@@ -10,7 +10,10 @@ tags:
 
 ## Watchdog Timer
 
-A hardware watchdog timer resets the microcontroller if the main loop stalls for more than four seconds, which is the only safeguard against a dark beacon during a firmware fault. The watchdog timer cannot be disabled from application code.
+A hardware watchdog timer resets the microcontroller if the main loop
+stalls for more than four seconds, which is the only safeguard against a
+dark beacon during a firmware fault. The watchdog timer cannot be disabled
+from application code.
 
 ## Power Path
 

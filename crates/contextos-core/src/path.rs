@@ -7,6 +7,8 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::ResolvedPath;
+
 /// Identifies an allowed vault root without exposing its filesystem path.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct VaultRootId(u32);
@@ -65,10 +67,16 @@ impl TryFrom<VaultRootInput> for VaultRoot {
     type Error = PathError;
 
     fn try_from(value: VaultRootInput) -> Result<Self, Self::Error> {
-        let resolved = dunce::canonicalize(&value.path).map_err(|source| PathError::RootResolution {
+        // A root must exist; the shared resolution policy would otherwise accept a not-yet-existing tail.
+        std::fs::metadata(&value.path).map_err(|source| PathError::RootResolution {
             path: value.path.clone(),
             source,
         })?;
+        let resolved = ResolvedPath::try_from(value.path.as_path()).map_err(|source| PathError::RootResolution {
+            path: value.path.clone(),
+            source,
+        })?;
+        let resolved = <&Path>::from(&resolved).to_path_buf();
         if !resolved.is_dir() {
             return Err(PathError::RootNotDirectory { path: resolved });
         }
@@ -139,9 +147,6 @@ impl TryFrom<Vec<VaultRoot>> for VaultSet {
     type Error = PathError;
 
     fn try_from(value: Vec<VaultRoot>) -> Result<Self, Self::Error> {
-        if value.is_empty() {
-            return Err(PathError::NoRoots);
-        }
         if u32::try_from(value.len()).is_err() {
             return Err(PathError::TooManyRoots { count: value.len() });
         }
@@ -236,6 +241,19 @@ pub struct VaultPathInput<'a> {
     pub raw: &'a str,
 }
 
+/// One entry directly inside a directory already validated as part of a vault: the entry's name as the directory
+/// lists it, and the directory's own [`VaultPath`].
+///
+/// Building a path this way inspects only the entry, never the directory's ancestors, which a scan over a directory
+/// it has already validated would otherwise resolve again for every entry it finds. The result is exactly the path,
+/// or the refusal, that resolving the entry from the vault root gives.
+#[derive(Clone, Copy, Debug)]
+pub struct VaultChildInput<'a> {
+    pub roots: &'a VaultSet,
+    pub parent: &'a VaultPath,
+    pub name: &'a str,
+}
+
 /// A path proven to resolve within one configured vault root.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct VaultPath {
@@ -255,6 +273,21 @@ impl VaultPath {
     #[must_use]
     pub fn relative(&self) -> &Path {
         self.relative.as_std_path()
+    }
+
+    /// The vault-relative path exactly as every MCP tool's JSON response
+    /// represents it: forward-slash separated regardless of host platform.
+    /// [`Self::relative`] returns a native [`Path`], whose own string form
+    /// (`to_string_lossy`, `display`) renders with `\` on Windows; correct
+    /// for a local filesystem call, but wrong for a wire field a client on
+    /// any host OS must be able to interpret identically. Every `Path`
+    /// component this holds is a plain name (never a root, prefix, or `..`
+    /// segment: construction always strips a resolved absolute path down to
+    /// a confined suffix), so a real filename can never itself contain the
+    /// separator being replaced.
+    #[must_use]
+    pub fn portable_relative(&self) -> String {
+        PortableRelativePath(self.relative.as_std_path()).into()
     }
 
     /// Resolves a vault-selector parameter: a parameter whose
@@ -299,10 +332,27 @@ impl From<VaultPath> for PathBuf {
     }
 }
 
+/// A native vault-relative path that is about to leave the process, for a caller that holds a [`Path`] rather than a
+/// [`VaultPath`]. Its text is the form [`VaultPath::portable_relative`] gives: forward slashes on every platform.
+#[derive(Clone, Copy, Debug)]
+pub struct PortableRelativePath<'a>(pub &'a Path);
+
+impl From<PortableRelativePath<'_>> for String {
+    fn from(value: PortableRelativePath<'_>) -> Self {
+        value.0.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+    }
+}
+
 impl TryFrom<VaultPathInput<'_>> for VaultPath {
     type Error = PathError;
 
     fn try_from(value: VaultPathInput<'_>) -> Result<Self, Self::Error> {
+        // Checked before any other parsing of `raw`, including the named-prefix form: with zero configured roots,
+        // "no vaults are configured" is a strictly more actionable signal than either "that vault name is unknown"
+        // or "ambiguous with multiple roots", and it applies identically regardless of the input's own shape.
+        if value.roots.is_empty() {
+            return Err(PathError::NoRoots);
+        }
         if let Some((root_index, remainder)) = named_prefix(value.raw, value.roots)? {
             return Self::resolve_within_named_root(value.roots, root_index, remainder);
         }
@@ -310,7 +360,9 @@ impl TryFrom<VaultPathInput<'_>> for VaultPath {
         validate_lexical_input(value.raw)?;
 
         let supplied = Path::new(value.raw);
-        let (candidate, lexical_root) = if supplied.is_absolute() {
+        // `has_root`, not `is_absolute`: on Windows `/abs` has no drive, so it is not absolute, but it names a place
+        // from the root of the drive and joining it to a vault root would replace that root rather than extend it.
+        let (candidate, lexical_root) = if supplied.has_root() {
             let lexical_root = value
                 .roots
                 .roots
@@ -329,6 +381,62 @@ impl TryFrom<VaultPathInput<'_>> for VaultPath {
     }
 }
 
+impl TryFrom<VaultChildInput<'_>> for VaultPath {
+    type Error = PathError;
+
+    /// Refuses a `name` that is not one plain path component, with the same refusal full resolution gives for the
+    /// same text where it has one. Otherwise inspects the entry alone: a real file or directory, or one not yet
+    /// created, lies directly inside the already-resolved parent, so its path is the parent's joined with `name`.
+    /// An entry that is a symbolic link, and on Windows a name a device answers to, is resolved in full, so it is
+    /// confined to the parent's root exactly as resolving it from the root would confine it.
+    ///
+    /// The parent is trusted as validated when it was built. If a directory on the way to it is replaced by a link
+    /// out of the vault after that (by another process, mid-scan), a read through the child follows the link: reads
+    /// check a path's confinement as recorded, not again on disk. A write cannot, because the write pipeline
+    /// resolves every path afresh at the point of mutation. Resolving each child from the vault root narrows that
+    /// window for reads without closing it, at a cost proportional to the directory's depth per entry.
+    fn try_from(value: VaultChildInput<'_>) -> Result<Self, Self::Error> {
+        let VaultChildInput { roots, parent, name } = value;
+        validate_entry_name(name)?;
+        // The parent must be a path of this set: its root at its position, and its absolute and relative forms in
+        // agreement, so the child's relative path is right as well as its absolute one.
+        if !roots.authorises(parent) {
+            return Err(PathError::OutsideRoot {
+                path: parent.absolute.clone().into_std_path_buf(),
+            });
+        }
+        let root_index = usize::try_from(parent.root)?;
+        let candidate = parent.absolute.join(name);
+        let resolve_in_full = match std::fs::symlink_metadata(candidate.as_std_path()) {
+            Ok(metadata) => metadata.file_type().is_symlink(),
+            // Unix refuses an entry under a file with `ENOTDIR`, the arm below; Windows calls it not found.
+            Err(source) if source.kind() == io::ErrorKind::NotFound && parent.absolute.is_file() => {
+                return Err(PathError::PathInspection {
+                    path: candidate.into_std_path_buf(),
+                    source: io::ErrorKind::NotADirectory.into(),
+                });
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => false,
+            Err(source) => {
+                return Err(PathError::PathInspection {
+                    path: candidate.into_std_path_buf(),
+                    source,
+                });
+            }
+        } || windows_rewrites(name);
+        if resolve_in_full {
+            // Resolved against every configured root, as resolving it from the vault root is: a link into another
+            // configured vault names a path there, and a link out of every vault is an escape.
+            return Self::finish(roots, candidate.into_std_path_buf(), Some(root_index), None);
+        }
+        Ok(Self {
+            root: parent.root,
+            relative: parent.relative.join(name),
+            absolute: candidate,
+        })
+    }
+}
+
 impl VaultPath {
     /// Resolves `remainder` (the part of a `{name}://{relative-path}` input
     /// after the prefix) against exactly the named root: an
@@ -344,7 +452,7 @@ impl VaultPath {
 
         let root = &roots.roots[root_index];
         let supplied = Path::new(remainder);
-        let (candidate, lexical_root) = if supplied.is_absolute() {
+        let (candidate, lexical_root) = if supplied.has_root() {
             let lexical_root = supplied.starts_with(root.resolved.as_std_path()).then_some(root_index);
             (supplied.to_path_buf(), lexical_root)
         } else {
@@ -461,12 +569,70 @@ fn validate_windows_input(raw: &str) -> Result<(), PathError> {
     Ok(())
 }
 
+/// Checks that `name` is one plain entry name, refusing it exactly as resolving `<directory>/<name>` from the vault
+/// root would for the same text: empty or holding a null byte, a `..` among its `/`- or `\\`-separated parts, or a
+/// `:` (an alternate data stream). The rules for a whole path's start (a drive letter, a UNC or verbatim prefix)
+/// never apply to a name inside a directory. A name holding a separator (`/`, and `\\` on Windows, where it is one)
+/// or naming the directory itself (`.`) is refused as not one entry.
+fn validate_entry_name(name: &str) -> Result<(), PathError> {
+    if name.is_empty() || name.contains('\0') {
+        return Err(PathError::Invalid { path: name.into() });
+    }
+    if name.split(['/', '\\']).any(|part| part == "..") {
+        return Err(PathError::Traversal { path: name.into() });
+    }
+    if name.contains(':') {
+        return Err(PathError::AlternateDataStream { path: name.into() });
+    }
+    if name.contains('/') || (cfg!(windows) && name.contains('\\')) || name == "." {
+        return Err(PathError::NotOneComponent { name: name.to_owned() });
+    }
+    Ok(())
+}
+
+/// Whether Windows would open something other than the entry `name` spells: a name it rewrites (trailing dots and
+/// spaces are stripped), a short-name alias (`LONGFI~1.MD`), or a device (`CON`, `NUL`, `COM1`, `LPT¹`, and the
+/// rest, with or without an extension, in any case). Such a name is resolved in full rather than trusted. Always
+/// `false` elsewhere, where these are ordinary names.
+fn windows_rewrites(name: &str) -> bool {
+    if !cfg!(windows) {
+        return false;
+    }
+    if name.ends_with(['.', ' ']) || name.contains('~') {
+        return true;
+    }
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|rest| {
+            let mut digits = rest.chars();
+            matches!(
+                (digits.next(), digits.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
+        })
+    };
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT")
+}
+
 fn resolve_with_missing_suffix(candidate: &Path) -> Result<PathBuf, PathError> {
     let mut ancestor = candidate;
     let mut suffix = Vec::<OsString>::new();
 
     loop {
         match std::fs::symlink_metadata(ancestor) {
+            // Unix refuses a path through a file with `ENOTDIR`, the arm below. Windows calls it not found, so the
+            // walk reaches the file, and the refusal is made here to be the same on every platform.
+            Ok(metadata) if metadata.is_file() && !suffix.is_empty() => {
+                return Err(PathError::PathInspection {
+                    path: ancestor.to_path_buf(),
+                    source: io::ErrorKind::NotADirectory.into(),
+                });
+            }
             Ok(_) => break,
             Err(source) if source.kind() == io::ErrorKind::NotFound => {
                 let Some(name) = ancestor.file_name() else {
@@ -526,6 +692,8 @@ pub enum PathError {
     NonUtf8 { path: PathBuf },
     #[error("path is empty or contains a null byte: {path:?}")]
     Invalid { path: PathBuf },
+    #[error("{name:?} is not one plain entry name: it holds a path separator or is the current directory")]
+    NotOneComponent { name: String },
     #[error("empty path after vault-name prefix: \"{name}://\"")]
     EmptyNamedPrefixRemainder { name: String },
     #[error("parent traversal is not permitted: {path}")]
@@ -573,7 +741,8 @@ impl PathError {
             | Self::TooManyRoots { .. }
             | Self::DuplicateName { .. }
             | Self::UnknownVaultName { .. }
-            | Self::EmptyNamedPrefixRemainder { .. } => None,
+            | Self::EmptyNamedPrefixRemainder { .. }
+            | Self::NotOneComponent { .. } => None,
             Self::DuplicateRoot { path }
             | Self::InvalidName { path, .. }
             | Self::RootResolution { path, .. }
@@ -614,6 +783,7 @@ impl PathError {
             | Self::DuplicateRoot { .. } => "path/invalid-root",
             Self::NonUtf8 { .. }
             | Self::Invalid { .. }
+            | Self::NotOneComponent { .. }
             | Self::PathInspection { .. }
             | Self::PathResolution { .. }
             | Self::PrefixMismatch { .. } => "path/invalid",
@@ -656,6 +826,10 @@ impl PathError {
             | Self::WindowsVerbatim { .. }
             | Self::AlternateDataStream { .. }
             | Self::UnsupportedWindowsPath { .. } => "Use a normal path contained within an allowed vault root.",
+            Self::NotOneComponent { .. } => {
+                "Pass one entry name as its directory lists it, without a path separator, or resolve the whole \
+                 path from the vault root instead."
+            }
             Self::TooManyRoots { .. }
             | Self::DuplicateRoot { .. }
             | Self::NonUtf8 { .. }

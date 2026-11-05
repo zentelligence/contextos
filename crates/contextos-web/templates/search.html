@@ -1,0 +1,205 @@
+<div class="search-screen">
+{% if let Some(message) = error %}
+  <p role="alert" class="search-error">{{ message }}</p>
+{% endif %}
+{% if !warnings.is_empty() %}
+  <ul class="search-warnings" role="status">
+  {% for warning in warnings %}
+    <li>{{ warning }}</li>
+  {% endfor %}
+  </ul>
+{% endif %}
+
+{% if !has_query %}
+  <p class="hint">Enter a search term above to find notes in this vault.</p>
+{% else if error.is_none() %}
+  <div class="search-columns">
+    <nav class="search-column search-column-narrow" aria-label="Top results and folders">
+      <section aria-label="Top results">
+        <h2 class="section-label">Top results</h2>
+      {% if top_results.is_empty() %}
+        <p class="hint">No results yet.</p>
+      {% endif %}
+        <ul class="search-top-results">
+        {% for hit in top_results %}
+          <li>{% if let Some(href) = hit.href %}<a href="{{ href }}">{{ hit.title }}</a>{% else %}<span class="unrouted" title="{{ crate::vault_links::UNROUTED_HINT }}">{{ hit.title }}<span class="visually-hidden"> ({{ crate::vault_links::UNROUTED_HINT }})</span></span>{% endif %}</li>
+        {% endfor %}
+        </ul>
+      </section>
+      <section aria-label="Folders">
+        <h2 class="section-label">Folders</h2>
+      {% if folders.is_empty() %}
+        <p class="hint">No folders in this result set.</p>
+      {% endif %}
+        <ul class="search-folder-aggregation">
+        {% for folder in folders %}
+          <li style="--search-folder-depth: {{ folder.depth }}">
+            <a href="{{ folder.href }}">{{ folder.label }} <span class="hint">({{ folder.count }})</span></a>
+          </li>
+        {% endfor %}
+        </ul>
+      </section>
+    </nav>
+
+    <section class="search-column search-column-wide" aria-label="Search results">
+      <div class="search-results-header">
+        <p role="status">{{ total }} result{% if total != 1 %}s{% endif %}{% if total_capped %}+{% endif %}</p>
+      {% if page_end > 0 %}
+        <div class="search-pagination">
+        {% if let Some(href) = prev_href %}
+          <a class="btn small" href="{{ href }}">Previous</a>
+        {% endif %}
+          <span class="hint">{{ page_start }}&ndash;{{ page_end }}</span>
+        {% if let Some(href) = next_href %}
+          <a class="btn small" href="{{ href }}">Next</a>
+        {% endif %}
+        </div>
+      {% endif %}
+      </div>
+
+      <ol class="search-results-list" aria-live="polite">
+      {% for hit in hits %}
+        <li class="search-result {% if hit.is_selected %}selected{% endif %}">
+          {% if let Some(href) = hit.href %}<a class="search-result-title" href="{{ href }}">{{ hit.title }}</a>{% else %}<span class="search-result-title unrouted" title="{{ crate::vault_links::UNROUTED_HINT }}">{{ hit.title }}<span class="visually-hidden"> ({{ crate::vault_links::UNROUTED_HINT }})</span></span>{% endif %}
+        {% if !hit.description.is_empty() %}
+          <p class="search-result-description">
+          {% if hit.description_is_html %}{{ hit.description|safe }}{% else %}{{ hit.description }}{% endif %}
+          </p>
+        {% endif %}
+          <p class="search-result-meta">
+            <span class="search-result-path">{{ hit.path }}</span>
+          {% if let Some(date) = hit.updated_date %}
+            <span class="hint">&middot; {{ date }}</span>
+          {% endif %}
+          {% if let Some(status) = hit.status %}
+            <span class="hint">&middot; {{ status }}</span>
+          {% endif %}
+          </p>
+          <a
+            class="btn small search-result-select"
+            href="{{ hit.select_href }}"
+            hx-get="{{ hit.select_href }}"
+            hx-select="#search-link-panels"
+            hx-target="#search-link-panels"
+            hx-swap="outerHTML"
+            hx-push-url="{{ hit.select_href }}"
+          >{% if hit.is_selected %}Selected{% else %}Select{% endif %}</a>
+        </li>
+      {% endfor %}
+      {% if hits.is_empty() %}
+        <li class="hint">No results match this search.</li>
+      {% endif %}
+      </ol>
+
+    {% if page_end > 0 %}
+      <div class="search-pagination">
+      {% if let Some(href) = prev_href %}
+        <a class="btn small" href="{{ href }}">Previous</a>
+      {% endif %}
+        <span class="hint">{{ page_start }}&ndash;{{ page_end }}</span>
+      {% if let Some(href) = next_href %}
+        <a class="btn small" href="{{ href }}">Next</a>
+      {% endif %}
+      </div>
+    {% endif %}
+    </section>
+
+    <aside class="search-column search-column-narrow" aria-label="Search parameters and links">
+      <section aria-label="Search parameters">
+        <h2 class="section-label">Parameters</h2>
+        <form method="get" class="search-parameters-form" action="{{ urls.search() }}">
+          <input type="hidden" name="q" value="{{ q }}">
+        {% if let Some(selected_path) = selected %}
+          <input type="hidden" name="selected" value="{{ selected_path }}">
+        {% endif %}
+          <label class="search-field">
+            <span class="search-field-label">Folders to include</span>
+            <input type="text" name="include" value="{{ include_value }}" placeholder="folder/one, folder/two">
+          </label>
+          <label class="search-field">
+            <span class="search-field-label">Folders to exclude</span>
+            <input type="text" name="exclude" value="{{ exclude_value }}" placeholder="folder/one, folder/two">
+          </label>
+          <label class="search-field">
+            <span class="search-field-label">File type</span>
+            <input type="text" name="note_type" value="{{ note_type_value }}" placeholder="e.g. task">
+          </label>
+          <fieldset class="search-mode">
+            <legend>Search mode</legend>
+            <label><input type="radio" name="mode" value="" {% if mode == SearchMode::Blended %}checked{% endif %} onchange="this.form.submit()"> Blended</label>
+            <label><input type="radio" name="mode" value="text" {% if mode == SearchMode::Text %}checked{% endif %} onchange="this.form.submit()"> Text only</label>
+            <label><input type="radio" name="mode" value="semantic" {% if mode == SearchMode::Semantic %}checked{% endif %} onchange="this.form.submit()"> Semantic only</label>
+          </fieldset>
+          <label class="search-field">
+            <span class="search-field-label">Page size</span>
+            <input type="number" name="limit" value="{{ limit_value }}" min="1" max="100">
+          </label>
+          <label class="search-field">
+            <span class="search-field-label">Sort by</span>
+            <select name="sort" onchange="this.form.submit()">
+              <option value="" {% if sort == SortKey::Relevance %}selected{% endif %}>Relevance</option>
+              <option value="title" {% if sort == SortKey::Title %}selected{% endif %}>Title</option>
+              <option value="modified" {% if sort == SortKey::Modified %}selected{% endif %}>Modified</option>
+            </select>
+          </label>
+          <label class="search-field">
+            <span class="search-field-label">Order</span>
+            <select name="order" onchange="this.form.submit()">
+              <option value="" {% if order == SortOrder::Desc %}selected{% endif %}>Descending</option>
+              <option value="asc" {% if order == SortOrder::Asc %}selected{% endif %}>Ascending</option>
+            </select>
+          </label>
+          <label class="search-field">
+            <span class="search-field-label">Minimum relevance</span>
+            <input type="number" name="min_relevance" value="{{ min_relevance_value }}" min="0" max="1" step="0.05">
+          </label>
+          <button type="submit" class="btn small primary">Apply</button>
+        </form>
+      </section>
+
+      <div id="search-link-panels">
+      {% if let Some(selected_path) = selected %}
+        <section aria-label="Inbound links">
+          <h2 class="section-label">Inbound links</h2>
+          <p class="hint search-selected-path">{{ selected_path }}</p>
+        {% if let Some(message) = link_panels_error %}
+          <p role="alert">{{ message }}</p>
+        {% else if inbound.is_empty() %}
+          <p class="hint">No notes link to this file.</p>
+        {% else %}
+          <ul class="search-link-list">
+          {% for link in inbound %}
+            <li>{% if let Some(href) = link.href %}<a href="{{ href }}">{{ link.title }}</a>{% else %}<span class="unrouted" title="{{ crate::vault_links::UNROUTED_HINT }}">{{ link.title }}<span class="visually-hidden"> ({{ crate::vault_links::UNROUTED_HINT }})</span></span>{% endif %}{% if link.is_embed %} <span class="hint">(embed)</span>{% endif %}</li>
+          {% endfor %}
+          </ul>
+        {% endif %}
+        </section>
+        <section aria-label="Outbound links">
+          <h2 class="section-label">Outbound links</h2>
+        {% if let Some(message) = link_panels_error %}
+          <p role="alert">{{ message }}</p>
+        {% else if outbound.is_empty() %}
+          <p class="hint">This file has no outbound links.</p>
+        {% else %}
+          <ul class="search-link-list">
+          {% for link in outbound %}
+            <li>{% if let Some(problem) = link.problem %}<span class="unresolved-link">{{ link.title }}</span> <span class="hint">({{ problem }})</span>{% else if let Some(href) = link.href %}<a href="{{ href }}">{{ link.title }}</a>{% else if link.is_file %}<span>{{ link.title }}</span> <span class="hint">(file)</span>{% else %}<span class="unrouted" title="{{ crate::vault_links::UNROUTED_HINT }}">{{ link.title }}<span class="visually-hidden"> ({{ crate::vault_links::UNROUTED_HINT }})</span></span>{% endif %}{% if link.is_embed %} <span class="hint">(embed)</span>{% endif %}</li>
+          {% endfor %}
+          </ul>
+        {% endif %}
+        </section>
+      {% else %}
+        <section aria-label="Inbound links">
+          <h2 class="section-label">Inbound links</h2>
+          <p class="hint">Select a result to see its links.</p>
+        </section>
+        <section aria-label="Outbound links">
+          <h2 class="section-label">Outbound links</h2>
+          <p class="hint">Select a result to see its links.</p>
+        </section>
+      {% endif %}
+      </div>
+    </aside>
+  </div>
+{% endif %}
+</div>

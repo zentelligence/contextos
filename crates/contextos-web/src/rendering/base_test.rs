@@ -12,13 +12,16 @@ fn no_display_names() -> HashMap<String, String> {
     HashMap::new()
 }
 
+/// A route table where every note has a screen at its plain vault path.
+const EVERY_NOTE_ROUTED: fn(&str) -> Option<String> = |path| Some(format!("/example-vault/{path}"));
+
 #[test]
 fn a_row_with_a_file_path_column_links_to_its_own_vault_route() {
     let row = map(&json!({"file.path": "tasks/one.md", "status": "active"}));
     let columns = vec!["file.path".to_owned(), "status".to_owned()];
-    let view = row_view(&row, &columns, "example-vault", &no_display_names());
-    assert!(view.has_link);
-    assert_eq!(view.href, "/example-vault/tasks/one.md");
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &no_display_names());
+    assert_eq!(view.href.as_deref(), Some("/example-vault/tasks/one.md"));
+    assert!(!view.unrouted);
     assert_eq!(view.note_path.as_deref(), Some("tasks/one.md"));
     assert_eq!(view.title, "one");
     assert_eq!(view.columns.len(), 1);
@@ -30,9 +33,9 @@ fn a_row_with_a_file_path_column_links_to_its_own_vault_route() {
 fn a_row_with_no_file_path_column_and_no_link_column_renders_untitled_without_a_link() {
     let row = map(&json!({"status": "active"}));
     let columns = vec!["status".to_owned()];
-    let view = row_view(&row, &columns, "example-vault", &no_display_names());
-    assert!(!view.has_link);
-    assert_eq!(view.href, "");
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &no_display_names());
+    assert_eq!(view.href, None);
+    assert!(!view.unrouted);
     assert_eq!(view.note_path, None);
     // The title is never guessed from an arbitrary column's own value
     // (that was the source of a real bug: a Link-shaped column's raw JSON
@@ -48,13 +51,12 @@ fn a_row_with_no_file_path_column_still_links_via_any_link_columns_own_target() 
     // still produce a working card link and title, regardless of where
     // that link column sits in `order`.
     let row = map(&json!({
-        "entity": "altorum",
+        "entity": "family",
         "formula.id_link": { "type": "link", "target": "tasks/a-002.md", "display": "A-002" },
     }));
     let columns = vec!["formula.id_link".to_owned(), "entity".to_owned()];
-    let view = row_view(&row, &columns, "example-vault", &no_display_names());
-    assert!(view.has_link);
-    assert_eq!(view.href, "/example-vault/tasks/a-002.md");
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &no_display_names());
+    assert_eq!(view.href.as_deref(), Some("/example-vault/tasks/a-002.md"));
     assert_eq!(view.note_path.as_deref(), Some("tasks/a-002.md"));
     assert_eq!(view.title, "a-002");
 }
@@ -65,7 +67,7 @@ fn a_columns_own_display_name_is_used_as_its_label_but_never_its_data_field() {
     let columns = vec!["status".to_owned()];
     let mut display_names = no_display_names();
     display_names.insert("status".to_owned(), "Status".to_owned());
-    let view = row_view(&row, &columns, "example-vault", &display_names);
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &display_names);
     assert_eq!(view.columns[0].label, "Status");
     assert_eq!(view.columns[0].name, "status");
 }
@@ -74,7 +76,7 @@ fn a_columns_own_display_name_is_used_as_its_label_but_never_its_data_field() {
 fn a_column_with_no_display_name_falls_back_to_its_raw_name_as_its_label() {
     let row = map(&json!({"status": "active"}));
     let columns = vec!["status".to_owned()];
-    let view = row_view(&row, &columns, "example-vault", &no_display_names());
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &no_display_names());
     assert_eq!(view.columns[0].label, "status");
 }
 
@@ -94,7 +96,7 @@ fn a_formula_link_column_renders_as_an_anchor_to_the_vault_route_and_is_excluded
         "formula.id_link": { "type": "link", "target": "tasks/one.md", "display": "a-001" },
     }));
     let columns = vec!["file.path".to_owned(), "formula.id_link".to_owned()];
-    let view = row_view(&row, &columns, "example-vault", &no_display_names());
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &no_display_names());
     assert_eq!(view.columns.len(), 1);
     let link_column = &view.columns[0];
     assert_eq!(link_column.name, "formula.id_link");
@@ -107,7 +109,7 @@ fn a_formula_link_column_renders_as_an_anchor_to_the_vault_route_and_is_excluded
 fn an_ordinary_column_has_no_href_and_is_not_marked_a_formula() {
     let row = map(&json!({"status": "active"}));
     let columns = vec!["status".to_owned()];
-    let view = row_view(&row, &columns, "example-vault", &no_display_names());
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &no_display_names());
     assert_eq!(view.columns[0].href, None);
     assert!(!view.columns[0].is_formula);
 }
@@ -116,8 +118,23 @@ fn an_ordinary_column_has_no_href_and_is_not_marked_a_formula() {
 fn an_unevaluated_formula_marker_renders_as_plain_text_not_a_link() {
     let row = map(&json!({"formula.days_old": "formula.days_old (not evaluated)"}));
     let columns = vec!["formula.days_old".to_owned()];
-    let view = row_view(&row, &columns, "example-vault", &no_display_names());
+    let view = row_view(&row, &columns, &EVERY_NOTE_ROUTED, &no_display_names());
     assert_eq!(view.columns[0].value, "formula.days_old (not evaluated)");
     assert_eq!(view.columns[0].href, None);
     assert!(view.columns[0].is_formula);
+}
+
+#[test]
+fn a_row_whose_note_no_screen_shows_is_marked_unrouted_and_links_nowhere() {
+    let row = map(&json!({
+        "file.path": "loose/x.md",
+        "formula.id_link": { "type": "link", "target": "loose/x.md", "display": "x" },
+    }));
+    let columns = vec!["file.path".to_owned(), "formula.id_link".to_owned()];
+    let view = row_view(&row, &columns, &|_: &str| None, &no_display_names());
+    assert_eq!(view.href, None);
+    assert!(view.unrouted);
+    assert_eq!(view.note_path.as_deref(), Some("loose/x.md"));
+    assert_eq!(view.columns[0].href, None);
+    assert_eq!(view.columns[0].value, "x");
 }

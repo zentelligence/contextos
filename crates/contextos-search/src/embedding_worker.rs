@@ -11,8 +11,8 @@
 //! upserts them (via the injected [`StoresVectors`]).
 //!
 //! This module deliberately stops short of wiring a real scheduling loop or
-//! the write pipeline's actual `OperationEvent` stream: those are a later
-//! composition-root concern (Stage 4 and beyond). Every method here is
+//! the write pipeline's actual `OperationEvent` stream: those belong to the
+//! composition root. Every method here is
 //! synchronous and driven explicitly by the caller: a test calling
 //! `process_one`/`drain` directly today, and eventually a real background
 //! task that calls the same methods on a timer or in response to real
@@ -29,14 +29,20 @@
 //! `From<SearchError> for OperationWarning` conversion the rest of this
 //! crate's services use), never a panic and never a dropped queue entry.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use contextos_core::{Clock, OperationWarning, VaultPath, VaultPathInput, VaultRoot, VaultSet};
+use contextos_core::{Clock, ContentHash, OperationWarning, VaultPath, VaultPathInput, VaultRoot, VaultSet};
 use time::OffsetDateTime;
 
-use crate::{Chunk, ChunkSource, EmbedsText, SearchError, StoresVectors, VectorRecord, chunk_document};
+use crate::{
+    Chunk, ChunkSource, EmbedsText, PathCommit, PathCommitOutcome, SearchError, StoresVectors, VectorRecord,
+    chunk_document,
+};
+
+/// How many times one pass may find a note changed under it before setting it aside for the next pass.
+const SUPERSEDED_PER_PASS: usize = 3;
 
 /// Port for reading a queued path's current markdown content, injected so
 /// worker tests need not touch real files (though a real filesystem
@@ -74,9 +80,14 @@ impl FilesystemChunkSource {
 impl ReadsChunkSource for FilesystemChunkSource {
     fn read(&self, path: &str) -> Result<Option<String>, SearchError> {
         let absolute = self.root.join(path);
-        match std::fs::read_to_string(&absolute) {
+        match contextos_fs::read_regular_text(&absolute) {
             Ok(content) => Ok(Some(content)),
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            // A pipe or device named like a note has no content to embed, as the text index treats it.
+            Err(source)
+                if source.kind() == std::io::ErrorKind::NotFound || contextos_fs::is_not_regular_file(&source) =>
+            {
+                Ok(None)
+            }
             Err(source) => Err(SearchError::DocumentRead {
                 path: path.to_owned(),
                 source,
@@ -106,10 +117,13 @@ pub enum PathEmbeddingOutcome {
     /// queued paths are unaffected: this outcome ends processing of `path`
     /// only.
     Failed { path: String, warning: OperationWarning },
+    /// The path's content changed between being read and its vectors being committed, here or in another instance,
+    /// so nothing was committed and the path was queued again to be embedded from its new content.
+    Superseded { path: String },
 }
 
-/// Staleness-visibility counters for a Stage 4 `query_index_status` to
-/// report from, without this crate building that tool itself.
+/// Staleness-visibility counters for `query_index_status` to report from,
+/// without this crate building that tool itself.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct EmbeddingWorkerStatus {
     /// Distinct paths currently queued, not yet processed.
@@ -244,6 +258,16 @@ impl<S, E, R, C> EmbeddingWorker<S, E, R, C> {
         self.stats.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Takes `path` out of the queue, reporting whether it was queued.
+    fn withdraw(&self, path: &str) -> bool {
+        let mut queue = self.locked_queue();
+        if !queue.members.remove(path) {
+            return false;
+        }
+        queue.order.retain(|queued| queued != path);
+        true
+    }
+
     fn dequeue(&self) -> Option<String> {
         let mut queue = self.locked_queue();
         let path = queue.order.pop_front()?;
@@ -267,11 +291,43 @@ where
     /// panic: the caller decides what to do with a failed path (log it,
     /// retry by enqueuing it again, surface it as an
     /// [`contextos_core::OperationWarning`]).
+    ///
+    /// A path whose content changed while it was being embedded is reported as
+    /// [`PathEmbeddingOutcome::Superseded`] and queued again.
     pub fn process_one(&self) -> Option<PathEmbeddingOutcome> {
         let path = self.dequeue()?;
         let outcome = self.process_path(&path);
         self.record_outcome(&outcome);
+        if let PathEmbeddingOutcome::Superseded { path } = &outcome {
+            self.enqueue(path.clone());
+        }
         Some(outcome)
+    }
+
+    /// Processes queued paths while `carry_on` allows, setting aside for a later pass any path superseded
+    /// [`SUPERSEDED_PER_PASS`] times in this one, so a note rewritten faster than it can be embedded cannot hold a
+    /// pass forever.
+    fn drain_while(&self, mut carry_on: impl FnMut() -> bool) -> Vec<PathEmbeddingOutcome> {
+        let mut outcomes = Vec::new();
+        let mut superseded: BTreeMap<String, usize> = BTreeMap::new();
+        let mut set_aside = Vec::new();
+        while let Some(outcome) = self.process_one() {
+            if let PathEmbeddingOutcome::Superseded { path } = &outcome {
+                let times = superseded.entry(path.clone()).or_default();
+                *times += 1;
+                if *times >= SUPERSEDED_PER_PASS && self.withdraw(path) {
+                    set_aside.push(path.clone());
+                }
+            }
+            outcomes.push(outcome);
+            if !carry_on() {
+                break;
+            }
+        }
+        for path in set_aside {
+            self.enqueue(path);
+        }
+        outcomes
     }
 
     /// Repeatedly calls [`EmbeddingWorker::process_one`] until the queue is
@@ -279,11 +335,7 @@ where
     /// failure does not stop this loop: every other queued path is still
     /// attempted.
     pub fn drain(&self) -> Vec<PathEmbeddingOutcome> {
-        let mut outcomes = Vec::new();
-        while let Some(outcome) = self.process_one() {
-            outcomes.push(outcome);
-        }
-        outcomes
+        self.drain_while(|| true)
     }
 
     /// As [`Self::drain`], but stops once `budget` has elapsed since the
@@ -297,14 +349,7 @@ where
     /// forward progress instead of returning empty-handed forever.
     pub fn drain_until(&self, budget: time::Duration) -> Vec<PathEmbeddingOutcome> {
         let deadline = self.clock.now() + budget;
-        let mut outcomes = Vec::new();
-        while let Some(outcome) = self.process_one() {
-            outcomes.push(outcome);
-            if self.clock.now() >= deadline {
-                break;
-            }
-        }
-        outcomes
+        self.drain_while(|| self.clock.now() < deadline)
     }
 
     /// Models graceful shutdown: closes the queue to new
@@ -321,6 +366,7 @@ where
         stats.last_processed_at = Some(self.clock.now());
         match outcome {
             PathEmbeddingOutcome::Failed { .. } => stats.failed = stats.failed.saturating_add(1),
+            PathEmbeddingOutcome::Superseded { .. } => {}
             PathEmbeddingOutcome::Embedded { .. } | PathEmbeddingOutcome::Removed { .. } => {
                 stats.processed = stats.processed.saturating_add(1);
             }
@@ -329,10 +375,21 @@ where
 
     fn process_path(&self, path: &str) -> PathEmbeddingOutcome {
         match self.content.read(path) {
-            Ok(None) => match self.store.delete(path) {
-                Ok(()) => PathEmbeddingOutcome::Removed { path: path.to_owned() },
-                Err(error) => Self::failed(path, error),
-            },
+            Ok(None) => {
+                let source_unchanged = || Ok(self.content.read(path)?.is_none());
+                let commit = PathCommit {
+                    path,
+                    records: &[],
+                    kept: &[],
+                    chunk_count: 0,
+                    source_unchanged: &source_unchanged,
+                };
+                match self.store.commit_path(&commit) {
+                    Ok(PathCommitOutcome::Committed) => PathEmbeddingOutcome::Removed { path: path.to_owned() },
+                    Ok(PathCommitOutcome::SourceChanged) => PathEmbeddingOutcome::Superseded { path: path.to_owned() },
+                    Err(error) => Self::failed(path, error),
+                }
+            }
             Ok(Some(content)) => self.embed_path(path, &content),
             Err(error) => Self::failed(path, error),
         }
@@ -360,11 +417,11 @@ where
         });
 
         let mut to_embed: Vec<Chunk> = Vec::new();
-        let mut skipped = 0_usize;
+        let mut kept: Vec<(usize, &ContentHash)> = Vec::new();
         for chunk in &chunks {
             match self.store.existing_hash(chunk.path(), chunk.ordinal()) {
                 Ok(Some(existing)) if &existing == chunk.content_hash() => {
-                    skipped = skipped.saturating_add(1);
+                    kept.push((chunk.ordinal(), chunk.content_hash()));
                 }
                 Ok(_) => to_embed.push(chunk.clone()),
                 Err(error) => return Self::failed(path, error),
@@ -372,8 +429,10 @@ where
         }
 
         let embedded = to_embed.len();
+        let skipped = kept.len();
+        let mut vectors = Vec::new();
         if !to_embed.is_empty() {
-            let vectors = match self.embedder.embed(&to_embed) {
+            vectors = match self.embedder.embed(&to_embed) {
                 Ok(vectors) => vectors,
                 Err(error) => return Self::failed(path, error),
             };
@@ -389,35 +448,39 @@ where
                     },
                 );
             }
-            let records: Vec<VectorRecord<'_>> = to_embed
-                .iter()
-                .zip(vectors.iter())
-                .map(|(chunk, vector)| VectorRecord {
-                    path: chunk.path(),
-                    ordinal: chunk.ordinal(),
-                    heading_context: chunk.heading_context(),
-                    content_hash: chunk.content_hash(),
-                    vector,
-                })
-                .collect();
-            if let Err(error) = self.store.upsert(&records) {
-                return Self::failed(path, error);
-            }
         }
+        let records: Vec<VectorRecord<'_>> = to_embed
+            .iter()
+            .zip(vectors.iter())
+            .map(|(chunk, vector)| VectorRecord {
+                path: chunk.path(),
+                ordinal: chunk.ordinal(),
+                heading_context: chunk.heading_context(),
+                content_hash: chunk.content_hash(),
+                vector,
+            })
+            .collect();
 
-        // A shrunk document (fewer chunks than its previous embedding)
-        // must not leave trailing ordinals from the longer version behind
-        // as stale, orphaned rows: prune anything at or beyond the current
-        // chunk count. Harmless, and typically a no-op, when the chunk
-        // count grew or stayed the same.
-        if let Err(error) = self.store.prune_ordinals_at_or_beyond(path, chunks.len()) {
-            return Self::failed(path, error);
-        }
-
-        PathEmbeddingOutcome::Embedded {
-            path: path.to_owned(),
-            embedded,
-            skipped,
+        // A shrunk document (fewer chunks than its previous embedding) must not leave trailing ordinals from the
+        // longer version behind as stale, orphaned rows, so the commit removes anything at or beyond the current
+        // chunk count. It is written only if the note still holds `content`: embedding can take seconds, and a write
+        // in that time, here or in another instance, must not be overtaken by vectors for what it replaced.
+        let source_unchanged = || Ok(self.content.read(path)?.as_deref() == Some(content));
+        let commit = PathCommit {
+            path,
+            records: &records,
+            kept: &kept,
+            chunk_count: chunks.len(),
+            source_unchanged: &source_unchanged,
+        };
+        match self.store.commit_path(&commit) {
+            Ok(PathCommitOutcome::Committed) => PathEmbeddingOutcome::Embedded {
+                path: path.to_owned(),
+                embedded,
+                skipped,
+            },
+            Ok(PathCommitOutcome::SourceChanged) => PathEmbeddingOutcome::Superseded { path: path.to_owned() },
+            Err(error) => Self::failed(path, error),
         }
     }
 

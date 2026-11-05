@@ -1,0 +1,159 @@
+<div class="tasks-dashboard" hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-swap="outerHTML">
+  <div class="tasks-dashboard-header page-actions">
+    <div class="tasks-view-toggle">
+      <a class="btn small {% if is_focus %}primary{% endif %}" href="{{ focus_href }}">Focus</a>
+      <a class="btn small {% if is_table %}primary{% endif %}" href="{{ table_href }}">All tasks</a>
+      <a class="btn small {% if is_hierarchy %}primary{% endif %}" href="{{ hierarchy_href }}">Hierarchy</a>
+    {% if !is_focus %}
+      <span class="tasks-display-toggle">
+        <a class="btn small {% if display_mode == DisplayMode::Table %}primary{% endif %}" href="{{ display_table_href }}" title="Table view" aria-label="Table view">
+          <span class="ic ic-list-checks" aria-hidden="true"></span>
+        </a>
+        <a class="btn small {% if display_mode == DisplayMode::Cards %}primary{% endif %}" href="{{ display_cards_href }}" title="Card view" aria-label="Card view">
+          <span class="ic ic-layout-grid" aria-hidden="true"></span>
+        </a>
+      </span>
+      <a class="btn small {% if hide_done == DoneVisibility::Hidden %}primary{% endif %}" href="{{ done_toggle_href }}">
+      {% if hide_done == DoneVisibility::Hidden %}Show done{% else %}Hide done{% endif %}
+      </a>
+    {% endif %}
+    </div>
+  </div>
+
+  <div class="task-stage-strip">
+  {% for group in stage_groups %}
+    <div class="task-stage-group" role="group" aria-label="{{ group.label }} stages">
+      <span class="task-stage-group-label" aria-hidden="true">{{ group.label }}</span>
+      <div class="task-stage-group-tiles">
+      {% for stage in group.tiles %}
+        <a class="task-stage-tile{% if stage.active %} active{% endif %}" href="{{ stage.href }}">
+        {% if let Some(icon) = stage.icon %}
+          <span class="ic ic-{{ icon }}" aria-hidden="true"></span>
+        {% endif %}
+          <span class="task-stage-count">{{ stage.count }}</span>
+          <span class="task-stage-label">{{ stage.label }}</span>
+        </a>
+      {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+    <a class="task-stage-tile task-stage-tile-attention" href="{{ attention.href }}" title="Tasks whose most recent event is a warning or an error">
+      <span class="ic ic-octagon-alert" aria-hidden="true"></span>
+      <span class="task-stage-count">{{ attention.count }}</span>
+      <span class="task-stage-label">Attention</span>
+    </a>
+  </div>
+
+{% if !is_hierarchy %}
+  <form method="get" class="task-filter-row" id="task-filter-form">
+  {% if let Some(entity) = entity_hidden %}
+    <input type="hidden" name="entity" value="{{ entity }}">
+  {% endif %}
+  {% if let Some(stage) = stage_hidden %}
+    <input type="hidden" name="stage" value="{{ stage }}">
+  {% endif %}
+  {% if let Some(completed) = completed_hidden %}
+    <input type="hidden" name="completed" value="{{ completed }}">
+  {% endif %}
+    <input type="hidden" name="view" value="{{ view_hidden }}">
+    <label class="task-field">
+      <span class="task-field-label">Search</span>
+      <span class="task-search-wrap">
+        <span class="ic ic-search" aria-hidden="true"></span>
+        <input type="text" name="q" value="{{ search_value }}" placeholder="Filter tasks">
+      </span>
+    </label>
+    <label class="task-field">
+      <span class="task-field-label">Assignee</span>
+      <select name="assignee" onchange="this.form.submit()">
+        <option value="" {% if assignee_value.is_empty() %}selected{% endif %}>All agents</option>
+      {% for candidate in assignee_options %}
+        <option value="{{ candidate }}" {% if assignee_value == candidate.as_str() %}selected{% endif %}>{{ candidate }}</option>
+      {% endfor %}
+      </select>
+    </label>
+    <label class="task-field">
+      <span class="task-field-label">Type</span>
+      <select name="task_type" onchange="this.form.submit()">
+      {% for option in task_type_options %}
+        <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+      </select>
+    </label>
+    <label class="task-field">
+      <span class="task-field-label">Priority</span>
+      <select name="priority" onchange="this.form.submit()">
+      {% for option in priority_options %}
+        <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+      </select>
+    </label>
+  {% if is_table %}
+    <label class="task-field">
+      <span class="task-field-label">Sort</span>
+      <select name="sort" onchange="this.form.submit()">
+      {% for option in sort_options %}
+        <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+      </select>
+    </label>
+  {% endif %}
+    <button type="submit" class="btn small">Filter</button>
+  </form>
+{% endif %}
+
+{% if is_focus %}
+  {% include "tasks_focus.html" %}
+{% else %}
+{% if rows.is_empty() %}
+  <p class="hint">No tasks match this view.</p>
+{% else if display_mode == DisplayMode::Cards %}
+  <div class="task-card-grid {% if is_hierarchy %}task-card-grid-hierarchy{% endif %}">
+  {% for card in rows %}
+    <div class="task-card-wrap" style="margin-left: {{ card.depth * 20 }}px">
+    {% if let Some(depth_label) = card.depth_label %}
+      <span class="task-depth-label">{{ depth_label }}</span>
+    {% endif %}
+      {% include "task_card.html" %}
+    </div>
+  {% endfor %}
+  </div>
+  <p class="hint">{{ total }} task(s) in scope.</p>
+{% else %}
+  <table class="task-table {% if is_hierarchy %}task-table-hierarchy{% endif %}">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Task</th>
+        <th>State</th>
+        <th>Type</th>
+        <th>Entity</th>
+        <th>Priority</th>
+        <th>Assignee</th>
+        <th>Due</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+      <tr data-state="{{ row.state }}" data-depth="{{ row.depth }}">
+        <td class="mono">{{ row.id }}{% if let Some(severity) = row.attention %}<span class="status-dot {{ severity }} task-attention" role="img" aria-label="Needs attention: {{ severity }}" title="Needs attention: {{ severity }}"></span>{% endif %}</td>
+        <td style="padding-left: {{ row.depth * 20 }}px">
+        {% if let Some(depth_label) = row.depth_label %}
+          <span class="task-depth-label">{{ depth_label }}</span>
+        {% endif %}
+          <a href="{{ row.href }}">{{ row.title }}</a>
+        </td>
+        <td><span class="status-chip colour-{{ row.state_colour }}">{{ row.state }}</span></td>
+        <td>{{ row.task_type }}</td>
+        <td>{{ row.entity }}</td>
+        <td>{{ row.priority }}</td>
+        <td>{{ row.assignee }}</td>
+        <td class="mono">{{ row.due }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">{{ total }} task(s) in scope.</p>
+{% endif %}
+{% endif %}
+</div>

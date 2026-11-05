@@ -6,7 +6,7 @@
 use contextos_core::{ContentHash, PipelineResult, VaultPath, VaultPathInput, VaultSet, WriteOutcome};
 use contextos_obsidian::{
     BaseDiagnostic, BaseDocument, BaseError, BaseOperation, CanvasDiagnostic, CanvasDocument, CanvasError,
-    CanvasOperation, FrontmatterDocument, LinkCollection, ObsidianLink,
+    CanvasOperation, FrontmatterDocument,
 };
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ impl From<PipelineResult<WriteOutcome>> for NoteCreateToolResult {
         let hash: &str = (&value.value.content_hash).into();
         let WarningMessages(warnings) = WarningMessages::from(value.warnings);
         Self {
-            path: value.value.path.relative().to_string_lossy().into_owned(),
+            path: value.value.path.portable_relative(),
             content_hash: hash.to_owned(),
             validation: NoteValidationToolResult { warnings: Vec::new() },
             warnings,
@@ -41,11 +41,35 @@ impl From<PipelineResult<WriteOutcome>> for NoteCreateToolResult {
     }
 }
 
+/// The input of `frontmatter_read`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrontmatterReadToolInput {
+    /// Vault-relative or absolute path, or `{name}://{relative-path}` to
+    /// address a specific configured vault by name; use
+    /// `{name}://.` to address that vault's root.
+    pub(crate) path: String,
+    /// Markdown notes only (`.md`; any other file is rejected). Return every link value in the frontmatter rewritten
+    /// in place to the vault-rooted path it names, by the same rule as `fs_attach_file`'s `expand_links`: a bare
+    /// name resolves from the note's own folder and its nearest ancestor first, so a bare `[[<name>.base]]` names the
+    /// nearest base file of that name, whatever the name is. A link that names no file becomes `/:!` followed by its original text, and one that
+    /// names several becomes `/:?` followed by its original text. The result reports `links_expanded` and no
+    /// `content_hash`: the values are a reading of the note, never to be written back.
+    #[serde(default)]
+    pub(crate) expand_links: bool,
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct FrontmatterReadToolResult {
     frontmatter: serde_json::Map<String, serde_json::Value>,
     body_start_line: usize,
-    content_hash: String,
+    /// The hash of the file as read, for a later write's `expected_hash`; omitted when `expand_links` was set,
+    /// because expanded values are not the file's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_hash: Option<String>,
+    /// Present, and true, only when every link value was expanded to a vault-rooted path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    links_expanded: Option<bool>,
 }
 
 impl From<(FrontmatterDocument, ContentHash)> for FrontmatterReadToolResult {
@@ -54,7 +78,41 @@ impl From<(FrontmatterDocument, ContentHash)> for FrontmatterReadToolResult {
         Self {
             frontmatter: value.0.frontmatter().clone(),
             body_start_line: value.0.body_start_line(),
+            content_hash: Some(hash.to_owned()),
+            links_expanded: None,
+        }
+    }
+}
+
+/// The frontmatter of a note read with every link expanded, which carries no hash.
+pub(crate) struct ExpandedFrontmatter(pub(crate) FrontmatterDocument);
+
+impl From<ExpandedFrontmatter> for FrontmatterReadToolResult {
+    fn from(value: ExpandedFrontmatter) -> Self {
+        Self {
+            frontmatter: value.0.frontmatter().clone(),
+            body_start_line: value.0.body_start_line(),
+            content_hash: None,
+            links_expanded: Some(true),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct NoteUpdateToolResult {
+    path: String,
+    content_hash: String,
+    warnings: Vec<String>,
+}
+
+impl From<PipelineResult<WriteOutcome>> for NoteUpdateToolResult {
+    fn from(value: PipelineResult<WriteOutcome>) -> Self {
+        let hash: &str = (&value.value.content_hash).into();
+        let WarningMessages(warnings) = WarningMessages::from(value.warnings);
+        Self {
+            path: value.value.path.portable_relative(),
             content_hash: hash.to_owned(),
+            warnings,
         }
     }
 }
@@ -98,8 +156,73 @@ impl From<PipelineResult<WriteOutcome>> for StructuredWriteToolResult {
         let hash: &str = (&value.value.content_hash).into();
         let WarningMessages(warnings) = WarningMessages::from(value.warnings);
         Self {
-            path: value.value.path.relative().to_string_lossy().into_owned(),
+            path: value.value.path.portable_relative(),
             content_hash: hash.to_owned(),
+            warnings,
+        }
+    }
+}
+
+impl StructuredWriteToolResult {
+    /// Appends further warnings raised by a secondary effect the caller
+    /// carries out itself after the primary write (a `.base`'s paired
+    /// sidecar, say), rather than one the write pipeline already routed.
+    pub(crate) fn warnings_mut(&mut self) -> &mut Vec<String> {
+        &mut self.warnings
+    }
+}
+
+/// `base_create`'s result: the `.base` file's own outcome, plus the
+/// vault-relative path of its paired sidecar and any warning raised while
+/// creating or checking it (see [`crate::tools::base_sidecar`]).
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct BaseCreateToolResult {
+    path: String,
+    content_hash: String,
+    sidecar_path: String,
+    warnings: Vec<String>,
+}
+
+impl BaseCreateToolResult {
+    pub(crate) fn new(
+        base_result: PipelineResult<WriteOutcome>,
+        sidecar_path: String,
+        sidecar_warnings: Vec<String>,
+    ) -> Self {
+        let hash: &str = (&base_result.value.content_hash).into();
+        let WarningMessages(mut warnings) = WarningMessages::from(base_result.warnings);
+        warnings.extend(sidecar_warnings);
+        Self {
+            path: base_result.value.path.portable_relative(),
+            content_hash: hash.to_owned(),
+            sidecar_path,
+            warnings,
+        }
+    }
+}
+
+/// `base_record_create`'s result: the new record note's own outcome, the
+/// key assigned to it (absent for a `FILEPATH`-keyed base), and the
+/// sidecar's own path plus any warnings raised advancing it.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct BaseRecordCreateToolResult {
+    path: String,
+    content_hash: String,
+    key: Option<String>,
+    sidecar_path: String,
+    warnings: Vec<String>,
+}
+
+impl From<crate::tools::base_record::RecordCreateOutcome> for BaseRecordCreateToolResult {
+    fn from(value: crate::tools::base_record::RecordCreateOutcome) -> Self {
+        let hash: &str = (&value.note_result.value.content_hash).into();
+        let WarningMessages(mut warnings) = WarningMessages::from(value.note_result.warnings);
+        warnings.extend(value.sidecar_warnings);
+        Self {
+            path: value.note_result.value.path.portable_relative(),
+            content_hash: hash.to_owned(),
+            key: value.key,
+            sidecar_path: value.sidecar_path,
             warnings,
         }
     }
@@ -120,6 +243,16 @@ pub(crate) struct BaseReadSource {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BaseReadToolResult {
     definition: serde_json::Map<String, serde_json::Value>,
+    /// The folder the base's own top-level filters confine its records to, read from `file.inFolder("...")` or
+    /// `file.folder == "..."`: where `base_record_create` places a record when no folder is given, and the folder a
+    /// link written relative to the base is read from. Omitted when the filters name no single folder below the
+    /// vault root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    records_folder: Option<String>,
+    /// Present with `records_folder`: true when records may sit in folders beneath it (`file.inFolder`), false when
+    /// they sit directly in it (`file.folder ==`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    records_include_subfolders: Option<bool>,
     content_hash: String,
     diagnostics: Vec<StructuredDiagnosticToolResult>,
 }
@@ -127,9 +260,11 @@ pub(crate) struct BaseReadToolResult {
 impl From<BaseReadSource> for BaseReadToolResult {
     fn from(value: BaseReadSource) -> Self {
         let hash: &str = (&value.content_hash).into();
-        let (definition, diagnostics) = match value.document {
+        let (definition, folder, diagnostics) = match value.document {
             Ok(document) => (
                 document.definition().clone(),
+                contextos_obsidian::records_folder(document.definition().get("filters"))
+                    .map(|folder| (folder.path.to_owned(), folder.includes_subfolders)),
                 document
                     .diagnostics()
                     .into_iter()
@@ -138,6 +273,7 @@ impl From<BaseReadSource> for BaseReadToolResult {
             ),
             Err(error) => (
                 serde_json::Map::new(),
+                None,
                 vec![StructuredDiagnosticToolResult {
                     code: error.code().to_owned(),
                     path: "$".to_owned(),
@@ -145,8 +281,11 @@ impl From<BaseReadSource> for BaseReadToolResult {
                 }],
             ),
         };
+        let (records_folder, records_include_subfolders) = folder.unzip();
         Self {
             definition,
+            records_folder,
+            records_include_subfolders,
             content_hash: hash.to_owned(),
             diagnostics,
         }
@@ -211,57 +350,9 @@ impl From<PipelineResult<WriteOutcome>> for FrontmatterUpdateToolResult {
         let hash: &str = (&value.value.content_hash).into();
         let WarningMessages(warnings) = WarningMessages::from(value.warnings);
         Self {
-            path: value.value.path.relative().to_string_lossy().into_owned(),
+            path: value.value.path.portable_relative(),
             content_hash: hash.to_owned(),
             warnings,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct ObsidianLinkToolResult {
-    target: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "crate::resource_support::optional_string_schema")]
-    display: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "crate::resource_support::optional_string_schema")]
-    heading: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "crate::resource_support::optional_string_schema")]
-    block: Option<String>,
-    embed: bool,
-}
-
-impl From<ObsidianLink> for ObsidianLinkToolResult {
-    fn from(value: ObsidianLink) -> Self {
-        Self {
-            target: value.target,
-            display: value.display,
-            heading: value.heading,
-            block: value.block,
-            embed: value.embed,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct LinksReadToolResult {
-    outgoing: Vec<ObsidianLinkToolResult>,
-    unresolved: Vec<String>,
-}
-
-impl From<(LinkCollection, Vec<String>)> for LinksReadToolResult {
-    fn from(value: (LinkCollection, Vec<String>)) -> Self {
-        Self {
-            outgoing: value
-                .0
-                .outgoing()
-                .iter()
-                .cloned()
-                .map(ObsidianLinkToolResult::from)
-                .collect(),
-            unresolved: value.1,
         }
     }
 }
@@ -320,9 +411,27 @@ pub(crate) struct NoteCreateToolInput {
     pub(crate) path: String,
     #[serde(default)]
     pub(crate) frontmatter: serde_json::Map<String, serde_json::Value>,
-    pub(crate) content: String,
+    /// The note's body. Give this or `content_from`, not both.
+    #[serde(default)]
+    pub(crate) content: Option<String>,
+    /// A vault file whose body the server copies into the note verbatim, so the content never passes through the
+    /// caller. Give this or `content`, not both.
+    #[serde(default)]
+    pub(crate) content_from: Option<NoteContentSourceInput>,
     #[serde(default)]
     pub(crate) references: Vec<NoteReferenceInput>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NoteContentSourceInput {
+    /// The file to copy: vault-relative or absolute, or `{name}://{relative-path}` to address a specific configured
+    /// vault by name. A Markdown (`.md`) source has its frontmatter left behind and its body copied; any other text
+    /// file is copied whole.
+    pub(crate) path: String,
+    /// The source's `content_hash` as last read; a source that has changed since is refused.
+    #[serde(default)]
+    pub(crate) expected_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -337,11 +446,43 @@ pub(crate) struct FrontmatterUpdateInput {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct NoteUpdateToolInput {
+    /// Vault-relative or absolute path of an existing `.md` note, or `{name}://{relative-path}` to address a specific
+    /// configured vault by name.
+    pub(crate) path: String,
+    /// The `content_hash` of the version this update was made from; a note that has changed since is refused.
+    pub(crate) expected_hash: String,
+    /// RFC 7386 merge patch for the frontmatter: a value sets a field, `null` removes it. May not name `created` or
+    /// `updated`, which the server keeps and stamps.
+    #[serde(default)]
+    pub(crate) patch: serde_json::Map<String, serde_json::Value>,
+    /// Replacement body: everything after the frontmatter's closing `---` line, in the note's own line endings.
+    /// Omit to keep the current body.
+    #[serde(default)]
+    pub(crate) body: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BaseCreateToolInput {
     /// Vault-relative or absolute path, or `{name}://{relative-path}` to
     /// address a specific configured vault by name.
     pub(crate) path: String,
     pub(crate) definition: serde_json::Map<String, serde_json::Value>,
+    /// Selects a real key sequence for this base's paired `<name>.md`
+    /// sidecar (`key_format: "{key_prefix}-{key_id}"`) and makes it the
+    /// default series, used when `base_record_create` is not told which to
+    /// use; when this and `key_prefixes` are both omitted, the sidecar's
+    /// `key_format` is the literal `FILEPATH`. A prefix is ASCII letters and
+    /// digits, starting with a letter.
+    pub(crate) key_prefix: Option<String>,
+    /// Further key series the sidecar declares, each with its own
+    /// independent counter starting at zero (for example `["D", "Q"]` beside
+    /// a default `key_prefix` of `A`). May be used without `key_prefix`, in
+    /// which case `base_record_create` must always be told which series to
+    /// use. A prefix equal to `key_prefix` is declared once. Prefixes that
+    /// differ only by case are rejected.
+    pub(crate) key_prefixes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -353,6 +494,55 @@ pub(crate) struct BaseApplyToolInput {
     #[schemars(schema_with = "base_operations_schema")]
     pub(crate) operations: Vec<BaseOperationToolInput>,
     pub(crate) expected_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BaseRecordCreateToolInput {
+    /// Vault-relative or absolute path to the `.base` file whose scope this
+    /// record belongs to, or `{name}://{relative-path}` to address a
+    /// specific configured vault by name.
+    pub(crate) path: String,
+    /// Same shape as `note_create`'s `frontmatter`. Setting `id` here is
+    /// rejected when the base's own sidecar will assign one itself
+    /// (any `key_format` other than `FILEPATH`) - omit it and read the
+    /// assigned id back from this call's own `key` result field instead.
+    /// For a `FILEPATH`-keyed base (no id of its own to assign), a
+    /// caller-supplied `id` is accepted here as an ordinary optional
+    /// field, not required. A caller-supplied id is checked against every
+    /// other note already in this base's own scope, and the call is
+    /// refused if it already exists elsewhere. A server-assigned key that a
+    /// note written outside this tool already holds is never refused:
+    /// the series counter is caught up to the highest key of that series
+    /// in scope and the next free key is assigned, with a warning.
+    #[serde(default)]
+    pub(crate) frontmatter: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub(crate) content: String,
+    /// Sub-folder relative to the folder the `.base`'s own top-level filters
+    /// confine its records to (`file.inFolder("...")` or `file.folder == "..."`);
+    /// a leading `/` makes it vault-root-relative instead, ignoring that folder
+    /// entirely. Required (as an absolute `/`-prefixed path) when the filters
+    /// name no folder.
+    pub(crate) folder: Option<String>,
+    /// Explicit filename (must end in `.md`); defaults to the assigned
+    /// key lower-cased, and is required when the base has no key scheme
+    /// (`key_format: FILEPATH`).
+    pub(crate) filename: Option<String>,
+    /// Which of the sidecar's declared key series to assign the id from,
+    /// for example `D` for a decision beside a default `A` for an action.
+    /// Each series keeps its own counter. Omit it to use the sidecar's
+    /// default `key_prefix`; a base whose sidecar declares no default series
+    /// requires it. Rejected (`io/invalid-key-prefix`) when the
+    /// sidecar has not declared the prefix, and when the base is
+    /// `FILEPATH`-keyed and so assigns no ids. Matching is case-sensitive.
+    pub(crate) prefix: Option<String>,
+    /// Frontmatter fields (1 to 8 names) whose values together identify this record, for example `["origin"]`. When
+    /// a record in the base's scope already holds the same value for every named field, the call is refused with
+    /// `io/duplicate-record` naming that record's id and path, and nothing is written. Each named field must be
+    /// present in `frontmatter` with a string, number, or boolean value. Checked inside the vault's write lock, so of
+    /// two processes raising the same record at once exactly one succeeds.
+    pub(crate) unique_fields: Option<Vec<String>>,
 }
 
 /// Renders as an empty object schema (`{}`) rather than schemars' default bare
@@ -664,9 +854,17 @@ pub(crate) struct BaseQueryToolInput {
     /// accepted for this parameter); omit to use the sole configured
     /// vault.
     pub(crate) vault: Option<String>,
-    #[serde(default)]
-    pub(crate) format: BaseQueryFormatInput,
+    /// Output format for a view or definition query: `table` (default), `json`, or `csv`. Not accepted with `ids`.
+    pub(crate) format: Option<BaseQueryFormatInput>,
     pub(crate) limit: Option<u64>,
+    /// Record ids to look up within the base's own scope (its top-level `filters`, never a view's), for example
+    /// `["A-001", "D-002"]`. Each record found is returned in `records`, in the order asked, with its path,
+    /// frontmatter, and content hash (usable as a later write's `expected_hash`); an id with no record in scope is
+    /// listed in `not_found`. Requires `path`; not accepted with `view`, `definition`, `limit`, or `format`. 1 to 100
+    /// distinct, non-empty ids.
+    pub(crate) ids: Option<Vec<String>>,
+    /// With `ids`, also return each record's body below its frontmatter as `content`. Default `false`.
+    pub(crate) include_content: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -695,4 +893,37 @@ pub(crate) struct BaseQueryToolResult {
     pub(crate) matched: usize,
     pub(crate) truncated: bool,
     pub(crate) diagnostics: Vec<StructuredDiagnosticToolResult>,
+    /// Present only for an `ids` lookup: every record found, in the order its id was asked for. An id held by more
+    /// than one record in scope returns each of them, with a `query/base-query-duplicate-id` diagnostic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) records: Option<Vec<BaseQueryRecordToolResult>>,
+    /// Present only for an `ids` lookup: the ids asked for that no record in the base's scope holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) not_found: Option<Vec<String>>,
+}
+
+/// One record an `ids` lookup found.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct BaseQueryRecordToolResult {
+    pub(crate) id: String,
+    /// Vault-relative path of the record's note.
+    pub(crate) path: String,
+    /// SHA-256 of the note as read, for a later write's `expected_hash`.
+    pub(crate) content_hash: String,
+    pub(crate) frontmatter: serde_json::Map<String, serde_json::Value>,
+    /// The body below the frontmatter, only when `include_content` was set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) content: Option<String>,
+}
+
+impl From<crate::tools::base_query::FoundRecord> for BaseQueryRecordToolResult {
+    fn from(value: crate::tools::base_query::FoundRecord) -> Self {
+        Self {
+            id: value.id,
+            path: value.path,
+            content_hash: value.content_hash,
+            frontmatter: value.frontmatter,
+            content: value.content,
+        }
+    }
 }

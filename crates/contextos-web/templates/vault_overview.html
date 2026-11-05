@@ -1,0 +1,44 @@
+<div class="vault-overview">
+  <div class="overview-grid">
+    <div class="overview-main">
+      <section class="settings-section overview-panel overview-loading" hx-get="{{ urls.overview_panel("bridge") }}" hx-trigger="load" hx-swap="outerHTML">
+        <div class="tasks-dashboard-header"><h2><span class="ic ic-users" aria-hidden="true"></span> Bridge</h2></div>
+        <p class="hint">Loading&hellip;</p>
+      </section>
+
+      <section class="settings-section overview-panel overview-loading" hx-get="{{ urls.overview_panel("status") }}" hx-trigger="load" hx-swap="outerHTML">
+        <div class="tasks-dashboard-header"><h2><span class="ic ic-activity" aria-hidden="true"></span> System status</h2></div>
+        <p class="hint">Loading&hellip;</p>
+      </section>
+
+      {{ task_lifecycle_html|safe }}
+
+      <section class="settings-section overview-panel">
+        <div class="tasks-dashboard-header">
+          <h2><span class="ic ic-circle-alert" aria-hidden="true"></span> Needs a call from you</h2>
+          <a class="btn small" href="{{ urls.signals() }}">All signals</a>
+        </div>
+        <div hx-get="{{ urls.signals_region("attention", "") }}" hx-trigger="load" hx-swap="innerHTML">
+          <p class="hint">Loading&hellip;</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="overview-rail">
+      <section class="settings-section overview-panel">
+        <div class="tasks-dashboard-header">
+          <h2><span class="ic ic-bell" aria-hidden="true"></span> Alert rail</h2>
+          <span class="hint">live</span>
+        </div>
+        <div hx-get="{{ urls.alerts() }}" hx-trigger="load" hx-swap="innerHTML">
+          <p class="hint">Loading&hellip;</p>
+        </div>
+      </section>
+
+      <section class="settings-section overview-panel overview-loading" hx-get="{{ urls.overview_panel("inputs") }}" hx-trigger="load" hx-swap="outerHTML">
+        <div class="tasks-dashboard-header"><h2><span class="ic ic-inbox" aria-hidden="true"></span> Inputs</h2></div>
+        <p class="hint">Loading&hellip;</p>
+      </section>
+    </div>
+  </div>
+</div>

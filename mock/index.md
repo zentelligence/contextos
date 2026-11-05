@@ -7,7 +7,8 @@ tags:
 
 # Vault Index
 
-A small demonstration vault for two active initiatives and the people who run them.
+A small demonstration vault for two active initiatives and the people who
+run them.
 
 ## Projects
 

@@ -1,4 +1,4 @@
-//! App registration and manifest parsing (`web-apps.md`):
+//! App registration and manifest parsing:
 //! `registry/apps/{{slug}}/manifest.toml` discovery and validation.
 //!
 //! Every step here is an MCP tool call against an already-connected
@@ -11,23 +11,20 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::mcp_client::{McpCallError, McpClient};
+use crate::vault_content::{AttachedRead, read_attached};
 
-/// `manifest.toml`'s `kind` field (`web-apps.md` §2). `Htmx` is accepted by
-/// the schema now but not served until a later stage.
+/// `manifest.toml`'s `kind` field. `Js` is a lightweight
+/// client-side app with no assumed internal router (embed-composed). `Spa`
+/// owns its own client-side router (raw bundle, new tab). `Htmx` is
+/// accepted by the schema now but not served until a later stage. Serving
+/// mode is derived from `kind` alone: there is no longer a separate
+/// `target` field.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AppKind {
+    Js,
     Spa,
     Htmx,
-}
-
-/// `manifest.toml`'s `target` field (`web-apps.md` §2).
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-pub enum AppTarget {
-    #[serde(rename = "_blank")]
-    Blank,
-    #[serde(rename = "embed")]
-    Embed,
 }
 
 /// Whether `contextos-web` v1 actually serves a registered app or merely
@@ -46,12 +43,11 @@ pub struct RegisteredApp {
     pub name: String,
     pub kind: AppKind,
     pub entry: String,
-    pub target: AppTarget,
     pub mcp_servers: Vec<String>,
     pub status: AppStatus,
 }
 
-/// `manifest.toml`'s schema (`web-apps.md` §2). `deny_unknown_fields`: an
+/// `manifest.toml`'s schema. `deny_unknown_fields`: an
 /// unrecognised key is a schema violation, not a silently ignored typo
 /// (`rust-quality.md`: "reject malformed or unknown input").
 #[derive(Debug, Deserialize)]
@@ -62,7 +58,6 @@ struct ManifestRaw {
     slug: Option<String>,
     kind: AppKind,
     entry: String,
-    target: AppTarget,
     #[serde(default)]
     mcp_servers: Vec<String>,
 }
@@ -78,15 +73,10 @@ struct ListDirectoryResult {
     entries: Vec<DirEntryResult>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ReadTextResult {
-    content: String,
-}
-
 /// Checks whether `vault_name` is a configured vault at all, distinct from
 /// "configured but has no `registry/apps/` yet": callers 404 on `false`
-/// rather than reporting an empty app list for a vault that does not exist
-/// (`web-routes.md` §2 item 1's precedent for vault content routes).
+/// rather than reporting an empty app list for a vault that does not exist,
+/// as the vault content routes do.
 ///
 /// # Errors
 ///
@@ -180,21 +170,17 @@ async fn load_app(
     dir_name: &str,
     known_mcp_servers: &[String],
 ) -> Result<LoadOutcome, McpCallError> {
-    let mut args = Map::new();
-    args.insert(
-        "path".to_owned(),
-        Value::String(format!("{vault_name}://registry/apps/{dir_name}/manifest.toml")),
-    );
-    let result = client.call_tool("fs_read_text_file".to_owned(), args).await?;
-    if result.is_error == Some(true) {
-        return Ok(LoadOutcome::NoManifest);
-    }
-    let Ok(read) = result.into_typed::<ReadTextResult>() else {
-        return Ok(LoadOutcome::Invalid(
-            "manifest.toml could not be read as text".to_owned(),
-        ));
+    let manifest = format!("{vault_name}://registry/apps/{dir_name}/manifest.toml");
+    let read = match read_attached(client, &manifest).await? {
+        AttachedRead::Refused { .. } => return Ok(LoadOutcome::NoManifest),
+        AttachedRead::NotText => {
+            return Ok(LoadOutcome::Invalid(
+                "manifest.toml could not be read as text".to_owned(),
+            ));
+        }
+        AttachedRead::Text(read) => read.text,
     };
-    let raw: ManifestRaw = match toml::from_str(&read.content) {
+    let raw: ManifestRaw = match toml::from_str(&read) {
         Ok(raw) => raw,
         Err(source) => {
             return Ok(LoadOutcome::Invalid(format!(
@@ -228,7 +214,7 @@ async fn load_app(
         )));
     }
     let status = match raw.kind {
-        AppKind::Spa => AppStatus::Supported,
+        AppKind::Js | AppKind::Spa => AppStatus::Supported,
         AppKind::Htmx => AppStatus::NotYetSupported,
     };
     Ok(LoadOutcome::Valid(RegisteredApp {
@@ -236,7 +222,6 @@ async fn load_app(
         name: raw.name,
         kind: raw.kind,
         entry: raw.entry,
-        target: raw.target,
         mcp_servers: raw.mcp_servers,
         status,
     }))

@@ -1,0 +1,9 @@
+<a class="task-mini-row" href="{{ row.href }}" style="border-left-color:var(--entity-{{ row.entity_accent }})">
+{% if row.done %}
+  <span class="ic ic-check" aria-hidden="true"></span>
+{% else if !row.priority.is_empty() %}
+  <span class="status-chip">{{ row.priority }}</span>
+{% endif %}
+  <span class="task-mini-row-title">{{ row.title }}</span>
+  {% if let Some(severity) = row.attention %}<span class="status-dot {{ severity }} task-attention" role="img" aria-label="Needs attention: {{ severity }}" title="Needs attention: {{ severity }}"></span>{% endif %}
+</a>

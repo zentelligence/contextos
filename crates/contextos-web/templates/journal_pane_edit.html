@@ -1,0 +1,25 @@
+<div class="journal-section" id="pane-{{ index }}">
+  <div class="section-label">{{ label }}</div>
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}{% if current_html.is_none() %} <a href="{{ day_url }}">Reload the day</a>.{% endif %}</p>
+{% endif %}
+{% if !guidance_html.is_empty() %}
+  <div class="hint journal-guidance">{{ guidance_html|safe }}</div>
+{% endif %}
+  <form hx-patch="{{ section_url }}" hx-target="#pane-{{ index }}" hx-swap="outerHTML">
+    <input type="hidden" name="heading" value="{{ heading }}">
+    <input type="hidden" name="base" value="{{ base }}">
+    <div class="save-bar save-bar-top">
+      <button type="submit" class="btn primary small">Save</button>
+      <button type="button" class="btn small" hx-get="{{ section_url }}" hx-target="#pane-{{ index }}" hx-swap="outerHTML">Cancel</button>
+    </div>
+    <textarea name="content" rows="16" aria-label="{{ label }}">{{ content }}</textarea>
+    <div class="save-bar">
+      <button type="submit" class="btn primary small">Save</button>
+    </div>
+  </form>
+{% if let Some(current_html) = current_html %}
+  <div class="section-label">Current content</div>
+  <div class="journal-text-body">{{ current_html|safe }}</div>
+{% endif %}
+</div>

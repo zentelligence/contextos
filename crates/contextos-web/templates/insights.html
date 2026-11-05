@@ -1,0 +1,172 @@
+{% import "insights_edit_form.html" as edit %}
+{% import "metadata_panel.html" as metadata %}
+{% macro shard_pane(shard_rows, note_rows, current_shard) %}
+<aside class="notes-sidebar">
+  <div class="insights-shard-grid">
+  {% for row in shard_rows %}
+    <a class="insights-shard-key{% if row.active %} active{% endif %}" href="{{ row.href }}">{{ row.key }}</a>
+  {% endfor %}
+  </div>
+  <div class="tree-nest">
+  {% for row in note_rows %}
+    <a class="notes-list-item{% if row.active %} active{% endif %}" href="{{ row.href }}">
+      <span class="notes-list-item-title">{{ row.label }}</span>
+    {% if !row.status.is_empty() %}
+      <span class="status-chip {{ row.status }}">{{ row.status }}</span>
+    {% endif %}
+    </a>
+  {% endfor %}
+  {% if !current_shard.is_empty() && note_rows.is_empty() %}
+    <p class="hint italic">Nothing in this shard.</p>
+  {% endif %}
+  </div>
+</aside>
+{% endmacro %}
+
+<div class="insights-screen" hx-ext="json-enc">
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+  <div class="notes-header-row">
+    <div class="section-label">Insight notes &middot; sharded by slug</div>
+    <button
+      type="button"
+      class="btn small"
+      title="New insight"
+      aria-label="New insight"
+      hx-get="{{ urls.insights_action("", "new") }}"
+      hx-target="closest .insights-screen"
+      hx-swap="outerHTML"
+    >
+      <span class="ic ic-square-pen" aria-hidden="true"></span> New
+    </button>
+  </div>
+  <div class="notes-layout{% if !layout_class.is_empty() %} {{ layout_class }}{% endif %}">
+  {% if shard_side_is_left || (selected.is_some() && metadata_panel_side_is_left) %}
+    <div class="notes-side-column">
+    {% if let Some(selected) = selected %}
+      {% if metadata_panel_side_is_left && selected.is_note %}
+        {% call metadata::metadata_panel(urls.insights(selected.path), selected.expected_hash, "", "", selected.metadata_fields.clone(), "note") %}{% endcall %}
+      {% endif %}
+    {% endif %}
+    {% if shard_side_is_left %}
+      {% call shard_pane(shard_rows, note_rows, current_shard) %}{% endcall %}
+    {% endif %}
+    </div>
+  {% endif %}
+    <div class="notes-main">
+    {% if let Some(selected) = selected %}
+      <div class="notes-main-header">
+        <span class="ic ic-sparkles" aria-hidden="true"></span>
+        <span class="notes-title">{{ selected.title }}</span>
+      {% if !selected.status.is_empty() %}
+        <span class="status-chip {{ selected.status }}">{{ selected.status }}</span>
+      {% endif %}
+      {% if editing.is_none() && selected.is_note %}
+        <span class="header-actions">
+        <details class="header-disclosure">
+          <summary class="btn small" title="Rename or restatus" aria-label="Rename or restatus">Rename</summary>
+          <form
+            class="header-disclosure-body"
+            hx-patch="{{ urls.insights_action(selected.path, "rename") }}"
+            hx-target="closest .insights-screen"
+            hx-swap="outerHTML"
+          >
+            <input id="insights-rename-field" type="text" name="title" value="{{ selected.title }}" required>
+            <select name="status">
+            {% for option in selected.status_options %}
+              <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.value }}</option>
+            {% endfor %}
+            </select>
+            <button type="submit" class="btn primary small">Save title</button>
+          </form>
+        </details>
+        <button
+          type="button"
+          class="btn small"
+          title="Edit body"
+          aria-label="Edit body"
+          hx-get="{{ urls.insights_action(selected.path, "edit") }}"
+          hx-target="closest .insights-screen"
+          hx-swap="outerHTML"
+        >Edit</button>
+        <button
+          type="button"
+          class="btn small"
+          title="Delete note"
+          aria-label="Delete note"
+          hx-get="{{ urls.insights_action(selected.path, "confirm-delete") }}"
+          hx-target="#insights-main-body"
+          hx-swap="outerHTML"
+        >Delete</button>
+        </span>
+      {% endif %}
+      </div>
+
+      <div class="notes-main-body" id="insights-main-body">
+      {% if let Some(editing) = editing %}
+        {% call edit::form(urls.insights(selected.path), editing.edit_body, editing.edit_expected_hash) %}{% endcall %}
+      {% else %}
+        <div class="wiki-rendered">{{ selected.rendered_html|safe }}</div>
+      {% if !selected.backlinks.is_empty() %}
+        <div class="insights-backlinks">
+          <div class="section-label">Linked from</div>
+        {% for backlink in selected.backlinks %}
+          {% if let Some(href) = backlink.href %}
+          <a class="insights-backlink" href="{{ href }}"><span class="ic ic-arrow-right" aria-hidden="true"></span>{{ backlink.label }}</a>
+          {% else %}
+          <span class="insights-backlink insights-backlink-external"><span class="ic ic-arrow-right" aria-hidden="true"></span>{{ backlink.label }}</span>
+          {% endif %}
+        {% endfor %}
+        </div>
+      {% endif %}
+      {% endif %}
+      </div>
+    {% else if let Some(creating) = creating %}
+      <div class="notes-main-header">
+        <span class="ic ic-square-pen" aria-hidden="true"></span>
+        <span class="notes-title">New insight</span>
+      </div>
+      <div class="notes-main-body" id="insights-main-body">
+      <form
+        id="insights-create-form"
+        class="wiki-edit-form"
+        hx-post="{{ urls.insights("") }}"
+        hx-target="closest .insights-screen"
+        hx-swap="outerHTML"
+      >
+        <div class="field-row">
+          <label for="insights-create-title-field">Title</label>
+          <input id="insights-create-title-field" type="text" name="title" value="{{ creating.default_title }}" required autofocus>
+        </div>
+        <div class="field-row">
+          <label for="insights-create-status-field">Status</label>
+          <select id="insights-create-status-field" name="status">
+          {% for option in creating.status_options %}
+            <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.value }}</option>
+          {% endfor %}
+          </select>
+        </div>
+        <div class="save-bar save-bar-top">
+          <button type="submit" class="btn primary small" title="Create note" aria-label="Create note">Create</button>
+        </div>
+      </form>
+      </div>
+    {% else %}
+      <p class="hint italic">Select a shard, then a note to read it.</p>
+    {% endif %}
+    </div>
+  {% if !shard_side_is_left || (selected.is_some() && !metadata_panel_side_is_left) %}
+    <div class="notes-side-column">
+    {% if let Some(selected) = selected %}
+      {% if !metadata_panel_side_is_left && selected.is_note %}
+        {% call metadata::metadata_panel(urls.insights(selected.path), selected.expected_hash, "", "", selected.metadata_fields.clone(), "note") %}{% endcall %}
+      {% endif %}
+    {% endif %}
+    {% if !shard_side_is_left %}
+      {% call shard_pane(shard_rows, note_rows, current_shard) %}{% endcall %}
+    {% endif %}
+    </div>
+  {% endif %}
+  </div>
+</div>

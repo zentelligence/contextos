@@ -1,0 +1,20 @@
+<div id="vault-health-repair" class="vault-health-repair confirm" role="group" aria-label="Review automatic repair">
+{% if changed %}
+  <p class="hint error" role="alert">What a repair would do has changed since you last looked. Review it again before confirming.</p>
+{% endif %}
+{% if steps.is_empty() %}
+  <p>Nothing can be repaired automatically right now.</p>
+  <button type="button" class="btn small" hx-get="/{{ vault }}/health" hx-target="#vault-health" hx-swap="outerHTML">Back to the report</button>
+{% else %}
+  <p><strong>This will write to your vault.</strong> Nothing has been changed yet. Confirming makes exactly these changes:</p>
+  <ul class="vault-health-steps">
+{% for step in steps %}
+    <li><strong>{{ step.label }}</strong>: {{ step.effect }}</li>
+{% endfor %}
+  </ul>
+  <div class="vault-health-actions">
+    <button type="button" class="btn small primary" hx-post="/{{ vault }}/health/execute/repair?plan={{ digest }}" hx-target="#vault-health" hx-swap="outerHTML">Apply these changes</button>
+    <button type="button" class="btn small" hx-get="/{{ vault }}/health" hx-target="#vault-health" hx-swap="outerHTML">Cancel</button>
+  </div>
+{% endif %}
+</div>

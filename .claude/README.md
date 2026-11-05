@@ -26,12 +26,13 @@ anything to them.
 │   └── tdd.md
 ├── hooks/
 │   ├── markdown-check.sh
+│   ├── no-commit-attribution.sh
+│   ├── no-tracking-ids.sh
 │   └── rustfmt-check.sh
 ├── rules/
 │   ├── 00-index.md
 │   ├── architecture.md
 │   ├── mcp-contracts.md
-│   ├── memory.md
 │   ├── rust-quality.md
 │   ├── security.md
 │   └── testing.md
@@ -46,7 +47,10 @@ anything to them.
 │   ├── change-brief.md
 │   └── requirement-test-matrix.md
 └── scripts/
-    └── check.sh
+    ├── check.sh
+    ├── check-markdown-links.sh
+    ├── check-markdown-links-test.sh
+    └── check-plugin-skill.sh
 ```
 
 ## How Claude Code uses this

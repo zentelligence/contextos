@@ -8,7 +8,7 @@
 //! `hf-hub`-backed auto-download constructor, and that feature is not even
 //! compiled into this build (see `src/fastembed_embedder.rs`).
 //!
-//! `fr_54_local_model_directory_produces_consistent_embeddings` is the one
+//! `local_model_directory_produces_consistent_embeddings` is the one
 //! exception: it requires a real, valid model directory (ONNX file plus the
 //! four tokenizer files) and is `#[ignore]`d so `cargo test` never attempts
 //! it, or any download, by default. Point
@@ -20,8 +20,7 @@
 //!     -p contextos-search --test embedding_fastembed -- --ignored
 //! ```
 //!
-//! Populating that directory is later pre-fetch tooling's job (phase-5-plan
-//! Stage 0/A2); this test only proves `FastembedLocal` can consume it once
+//! Populating that directory is `contextos model download`'s job; this test only proves `FastembedLocal` can consume it once
 //! it exists.
 #![cfg(feature = "semantic-local")]
 

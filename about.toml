@@ -1,13 +1,53 @@
+# cargo-about configuration: generates THIRD_PARTY_LICENSES.md from about.hbs.
+# Regenerate with `just licences`; `just ci` fails if the committed file has drifted.
+
+# Licences acceptable for distribution with this Apache-2.0 product, in order of preference. Where a
+# dependency offers a choice, cargo-about selects the first acceptable licence from this list.
 accepted = [
-    "0BSD",
     "Apache-2.0",
-    "BSD-3-Clause",
-    "BSL-1.0",
-    "CDLA-Permissive-2.0",
-    "ISC",
+    "Apache-2.0 WITH LLVM-exception",
     "MIT",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "0BSD",
+    "BSL-1.0",
     "MIT-0",
     "MPL-2.0",
-    "Unicode-3.0",
-    "Zlib",
+    "CC0-1.0",
 ]
+
+# Every platform the shipped binaries are built for, so platform-specific dependencies are attributed.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+
+# Only code that ships in a release artefact needs attribution.
+ignore-dev-dependencies = true
+ignore-build-dependencies = true
+
+# The workspace's own crates are covered by LICENSE and NOTICE.
+private = { ignore = true }
+
+# ring declares no SPDX expression and its source files carry per-file headers, so cargo-about would
+# otherwise attribute whole source files as licence texts. Pin attribution to its two licence files;
+# the checksums force a review whenever an upgrade changes either of them.
+[ring.clarify]
+license = "Apache-2.0 AND ISC"
+
+[[ring.clarify.files]]
+path = "LICENSE-BoringSSL"
+license = "Apache-2.0"
+checksum = "005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"
+
+[[ring.clarify.files]]
+path = "LICENSE-other-bits"
+license = "ISC"
+checksum = "f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f"

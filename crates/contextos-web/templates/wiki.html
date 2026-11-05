@@ -1,0 +1,199 @@
+{% import "wiki_edit_form.html" as edit %}
+{% import "metadata_panel.html" as metadata %}
+{% macro render_tree(events) %}
+{% for event in events %}
+  {% match event %}
+  {% when TreeEvent::OpenFolder with (label, is_open) %}
+  <details class="nav-group" {% if *is_open %}open{% endif %}>
+    <summary class="nav-group-summary">
+      <span class="nav-group-heading-link"><span class="nav-group-label-text">{{ label }}</span></span>
+      <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+    </summary>
+    <div class="tree-nest">
+  {% when TreeEvent::CloseFolder %}
+    </div>
+  </details>
+  {% when TreeEvent::Leaf with (page) %}
+  <a class="notes-list-item{% if page.active %} active{% endif %}" href="{{ page.href }}">
+    <span class="ic ic-file-text" aria-hidden="true"></span>
+    <span class="notes-list-item-title">{{ page.label }}</span>
+  </a>
+  {% endmatch %}
+{% endfor %}
+{% endmacro %}
+
+{# The breadcrumb strip this sidebar used to carry is gone: the accordion
+   tree below already keeps every folder on the current page's own path
+   open and visible, the same way Notes' own sidebar (no breadcrumb of its
+   own) already relies on its tree alone. #}
+{% macro tree_pane(tree_events) %}
+<aside class="notes-sidebar">
+  <div class="tree-nest">
+  {% if tree_events.is_empty() %}
+    <p class="hint italic">Nothing here.</p>
+  {% else %}
+    {% call render_tree(tree_events) %}{% endcall %}
+  {% endif %}
+  </div>
+</aside>
+{% endmacro %}
+
+<div class="wiki-screen" hx-ext="json-enc">
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+  <div class="notes-header-row">
+    <div class="section-label">Wiki</div>
+    <span class="header-actions">
+  {% if can_create %}
+    <button
+      type="button"
+      class="btn small"
+      title="New page"
+      aria-label="New page"
+      hx-get="{{ new_page_href }}"
+      hx-target="closest .wiki-screen"
+      hx-swap="outerHTML"
+    >
+      <span class="ic ic-square-pen" aria-hidden="true"></span> New
+    </button>
+  {% else %}
+    <p class="hint italic">Open at least a domain and a topic folder to add a page here.</p>
+  {% endif %}
+    <details class="header-disclosure">
+      <summary class="btn small" title="New folder" aria-label="New folder">
+        <span class="ic ic-folder" aria-hidden="true"></span> New folder
+      </summary>
+      <form
+        class="header-disclosure-body"
+        hx-post="{{ new_folder_href }}"
+        hx-target="closest .wiki-screen"
+        hx-swap="outerHTML"
+        hx-vals="js:{name: document.getElementById('wiki-new-folder-field').value}"
+      >
+        <input id="wiki-new-folder-field" type="text" placeholder="Folder name" required autofocus>
+        <button type="submit" class="btn primary small">Create</button>
+      </form>
+    </details>
+    </span>
+  </div>
+  <div class="notes-layout{% if !layout_class.is_empty() %} {{ layout_class }}{% endif %}">
+  {% if tree_side_is_left || (selected.is_some() && metadata_panel_side_is_left) %}
+    <div class="notes-side-column">
+    {% if let Some(selected) = selected %}
+      {% if metadata_panel_side_is_left && selected.is_note %}
+        {% call metadata::metadata_panel(urls.wiki(selected.path), selected.expected_hash, "", "", selected.metadata_fields.clone(), "page") %}{% endcall %}
+      {% endif %}
+    {% endif %}
+    {% if tree_side_is_left %}
+      {% call tree_pane(tree_events) %}{% endcall %}
+    {% endif %}
+    </div>
+  {% endif %}
+    <div class="notes-main">
+    {% if let Some(selected) = selected %}
+      <div class="notes-main-header">
+        <span class="ic ic-file-text" aria-hidden="true"></span>
+        <span class="notes-title">{{ selected.title }}</span>
+      {% if editing.is_none() && selected.is_note %}
+        <span class="header-actions">
+        <details class="header-disclosure">
+          <summary class="btn small" title="Rename page" aria-label="Rename page">Rename</summary>
+          <form
+            class="header-disclosure-body"
+            hx-patch="{{ urls.wiki_action(selected.path, "rename") }}"
+            hx-target="closest .wiki-screen"
+            hx-swap="outerHTML"
+          >
+            <input id="wiki-rename-field" type="text" name="title" value="{{ selected.title }}" required>
+            <button type="submit" class="btn primary small">Save title</button>
+          </form>
+        </details>
+        <button
+          type="button"
+          class="btn small"
+          title="Edit page"
+          aria-label="Edit page"
+          hx-get="{{ urls.wiki_action(selected.path, "edit") }}"
+          hx-target="closest .wiki-screen"
+          hx-swap="outerHTML"
+        >Edit</button>
+        <button
+          type="button"
+          class="btn small"
+          title="Delete page"
+          aria-label="Delete page"
+          hx-get="{{ urls.wiki_action(selected.path, "confirm-delete") }}"
+          hx-target="#wiki-main-body"
+          hx-swap="outerHTML"
+        >Delete</button>
+        </span>
+      {% endif %}
+      </div>
+
+      <div class="notes-main-body" id="wiki-main-body">
+      {% if let Some(editing) = editing %}
+        {% call edit::form(urls.wiki(selected.path), editing.edit_body, editing.edit_expected_hash) %}{% endcall %}
+      {% else %}
+        <div class="wiki-rendered">{{ selected.rendered_html|safe }}</div>
+      {% endif %}
+      </div>
+    {% else if let Some(folder) = browsing_folder %}
+      <div class="notes-main-header">
+        <span class="ic ic-folder" aria-hidden="true"></span>
+        <span class="notes-title">{{ folder.label }}</span>
+        <span class="header-actions">
+        <button
+          type="button"
+          class="btn small"
+          title="Delete folder"
+          aria-label="Delete folder"
+          hx-get="{{ urls.wiki_action(folder.relative_path, "confirm-delete") }}"
+          hx-target="#wiki-main-body"
+          hx-swap="outerHTML"
+        >Delete</button>
+        </span>
+      </div>
+      <div class="notes-main-body" id="wiki-main-body">
+        <p class="hint italic">Choose a topic to drill in, or a page to read it.</p>
+      </div>
+    {% else if let Some(creating) = creating %}
+      <div class="notes-main-header">
+        <span class="ic ic-square-pen" aria-hidden="true"></span>
+        <span class="notes-title">New page in {{ creating.parent_label }}</span>
+      </div>
+      <div class="notes-main-body" id="wiki-main-body">
+      <form
+        id="wiki-create-form"
+        class="wiki-edit-form"
+        hx-post="{{ current_dir_href }}"
+        hx-target="closest .wiki-screen"
+        hx-swap="outerHTML"
+      >
+        <div class="field-row">
+          <label for="wiki-create-title-field">Title</label>
+          <input id="wiki-create-title-field" type="text" name="title" value="{{ creating.default_title }}" required autofocus>
+        </div>
+        <div class="save-bar save-bar-top">
+          <button type="submit" class="btn primary small" title="Create page" aria-label="Create page">Create</button>
+        </div>
+      </form>
+      </div>
+    {% else %}
+      <p class="hint italic">Choose a topic to drill in, or a page to read it.</p>
+    {% endif %}
+    </div>
+  {% if !tree_side_is_left || (selected.is_some() && !metadata_panel_side_is_left) %}
+    <div class="notes-side-column">
+    {% if let Some(selected) = selected %}
+      {% if !metadata_panel_side_is_left && selected.is_note %}
+        {% call metadata::metadata_panel(urls.wiki(selected.path), selected.expected_hash, "", "", selected.metadata_fields.clone(), "page") %}{% endcall %}
+      {% endif %}
+    {% endif %}
+    {% if !tree_side_is_left %}
+      {% call tree_pane(tree_events) %}{% endcall %}
+    {% endif %}
+    </div>
+  {% endif %}
+  </div>
+</div>

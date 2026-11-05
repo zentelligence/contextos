@@ -1,0 +1,1 @@
+<span id="system-status-badge" class="live-badge {{ status.state().badge_class() }}"{% if oob %} hx-swap-oob="outerHTML"{% endif %} role="status" aria-label="System status: {{ status.summary() }}" title="System status: {{ status.summary() }}"><span class="ic ic-activity" aria-hidden="true"></span><span class="live-badge-label">{{ status.state().badge_label() }}</span></span>

@@ -3,3 +3,8 @@ newline_style = "Unix"
 use_field_init_shorthand = true
 use_try_shorthand = true
 max_width = 120
+
+# Comment wrapping has known issues (#3347/#3349)
+# wrap_comments = true
+# comment_width = 120
+

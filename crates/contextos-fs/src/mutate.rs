@@ -1,12 +1,13 @@
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use contextos_core::{
     AppendMutation, AppendOutcome, AppendsVault, AppliesMutations, Clock, ContentHash, CreateDirectoryMutation,
-    CreateDirectoryOutcome, DeleteMode, DeleteMutation, DeleteOutcome, MoveMutation, MoveOutcome, MovesVault,
-    NoSubstrateServices, OperationEvent, OperationWarning, PipelineResult, RestoreMutation, RoutedPipelineConfig,
-    RoutedWritePipeline, RoutesOperations, VaultPath, VaultPathInput, WriteMutation, WriteOutcome, WritesVault,
+    CreateDirectoryOutcome, DeleteMode, DeleteMutation, DeleteOutcome, LineEndingsConverted, MoveMutation, MoveOutcome,
+    MovesVault, NoSubstrateServices, OperationEvent, OperationWarning, PipelineResult, RestoreMutation,
+    RoutedPipelineConfig, RoutedWritePipeline, RoutesOperations, UnixText, VaultPath, VaultPathInput, WriteContent,
+    WriteMutation, WriteOutcome, WritesVault,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -14,6 +15,8 @@ use similar::TextDiff;
 use tempfile::NamedTempFile;
 
 use crate::discover::hash_file;
+use crate::read::MAX_ATTACHMENT_BYTES;
+use crate::regular_file::{is_not_regular_file, open_regular_file};
 use crate::{Filesystem, FsError, ReadTextRequest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -169,11 +172,25 @@ where
             path: request.path.clone(),
             limit: None,
         })?;
-        let mut modified = current.content.clone();
+        // Edits are matched against the text as the vault stores it, with `\n` line endings, so text quoted with `\n`
+        // finds its place in a file that still has `\r\n` or `\r` ones; the write then converts the whole file.
+        let original = UnixText::from(current.content.as_str());
+        let converted = original.as_ref() != current.content;
+        let original = String::from(original);
+        let mut modified = original.clone();
         for edit in &request.edits {
-            apply_exact_edit(&mut modified, edit, &request.path)?;
+            let edit = TextEdit {
+                old_text: String::from(UnixText::from(edit.old_text.as_str())),
+                new_text: String::from(UnixText::from(edit.new_text.as_str())),
+            };
+            apply_exact_edit(&mut modified, &edit, &request.path)?;
         }
-        let diff = TextDiff::from_lines(&current.content, &modified)
+        let conversion_warnings = if converted {
+            vec![OperationWarning::from(LineEndingsConverted)]
+        } else {
+            Vec::new()
+        };
+        let diff = TextDiff::from_lines(&original, &modified)
             .unified_diff()
             .header("original", "modified")
             .to_string();
@@ -183,29 +200,31 @@ where
 
         if request.dry_run {
             return Ok(EditFileResult {
-                path: request.path.relative().to_string_lossy().into_owned(),
+                path: request.path.portable_relative(),
                 diff,
                 applied: false,
                 content_hash: modified_hash,
                 event: None,
-                warnings: Vec::new(),
+                warnings: conversion_warnings,
             });
         }
 
         let write = self.pipeline.write(&WriteMutation {
             path: request.path.clone(),
-            content: modified,
+            content: modified.into(),
             expected_hash: request.expected_hash.clone().or(Some(current.content_hash)),
             force: request.force,
             origin: request.origin.clone(),
         })?;
+        let mut warnings = conversion_warnings;
+        warnings.extend(write.warnings);
         Ok(EditFileResult {
-            path: request.path.relative().to_string_lossy().into_owned(),
+            path: request.path.portable_relative(),
             diff,
             applied: true,
             content_hash: write.value.content_hash,
             event: write.event,
-            warnings: write.warnings,
+            warnings,
         })
     }
 }
@@ -277,7 +296,18 @@ impl AppliesMutations for Filesystem {
     type Error = FsError;
 
     fn write(&self, request: &WriteMutation) -> Result<WriteOutcome, Self::Error> {
+        self.server_owned.check(&request.path, &request.origin)?;
         let target = self.revalidate(&request.path)?;
+        if let WriteContent::Binary(bytes) = &request.content {
+            let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+            if size > MAX_ATTACHMENT_BYTES {
+                return Err(FsError::TooLargeToWrite {
+                    path: target,
+                    size,
+                    maximum: MAX_ATTACHMENT_BYTES,
+                });
+            }
+        }
         let existed = target.exists();
         validate_expected_hash(&target, existed, request)?;
         let parent = target.parent().ok_or_else(|| FsError::CreateParent {
@@ -329,6 +359,7 @@ impl AppliesMutations for Filesystem {
     }
 
     fn create_directory(&self, request: &CreateDirectoryMutation) -> Result<CreateDirectoryOutcome, Self::Error> {
+        self.server_owned.check(&request.path, &request.origin)?;
         let target = self.revalidate(&request.path)?;
         if target.exists() {
             if target.is_dir() {
@@ -351,6 +382,8 @@ impl AppliesMutations for Filesystem {
     }
 
     fn move_path(&self, request: &MoveMutation) -> Result<MoveOutcome, Self::Error> {
+        self.server_owned.check_subtree(&request.source, &request.origin)?;
+        self.server_owned.check_subtree(&request.destination, &request.origin)?;
         let source = self.revalidate(&request.source)?;
         if !source.exists() {
             return Err(FsError::NotFound { path: source });
@@ -380,6 +413,7 @@ impl AppliesMutations for Filesystem {
     }
 
     fn delete(&self, request: &DeleteMutation) -> Result<DeleteOutcome, Self::Error> {
+        self.server_owned.check_subtree(&request.path, &request.origin)?;
         let target = self.revalidate(&request.path)?;
         let metadata = target.metadata().map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {
@@ -452,6 +486,7 @@ impl AppliesMutations for Filesystem {
     }
 
     fn append(&self, request: &AppendMutation) -> Result<AppendOutcome, Self::Error> {
+        self.server_owned.check(&request.path, &request.origin)?;
         let target = self.revalidate(&request.path)?;
         let existed = target.exists();
         let parent = target.parent().ok_or_else(|| FsError::CreateParent {
@@ -466,22 +501,19 @@ impl AppliesMutations for Filesystem {
             source,
         })?;
         self.revalidate(&request.path)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&target)
-            .map_err(|source| FsError::OpenAppend {
-                path: target.clone(),
-                source,
+        // A pipe or device is refused before anything is written, so nothing reaches a reader the pipe may have.
+        let (mut file, opened) =
+            open_regular_file(&target, fs::OpenOptions::new().create(true).append(true)).map_err(|source| {
+                if is_not_regular_file(&source) {
+                    FsError::NotFile { path: target.clone() }
+                } else {
+                    FsError::OpenAppend {
+                        path: target.clone(),
+                        source,
+                    }
+                }
             })?;
-        let empty = file
-            .metadata()
-            .map_err(|source| FsError::ReadMetadata {
-                path: target.clone(),
-                source,
-            })?
-            .len()
-            == 0;
+        let empty = opened.len() == 0;
         let mut appended = String::new();
         if empty {
             appended.push_str(&request.preamble);

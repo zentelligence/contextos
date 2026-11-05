@@ -1,58 +1,93 @@
-# contextos-web example configuration
+# ContextOS Web example configuration
 #
-# This file shows every currently supported web.toml field (Phase 14).
-# contextos-web loads config.toml (the vault list) read-only alongside this
-# file; it never writes config.toml. See docs/config.example.toml for that
-# file's own schema.
+# This file shows every currently supported configuration field. It is kept
+# honest by crates/contextos-web/tests/example_config.rs, which parses it
+# against contextos_web::WebConfig's real schema.
 
 [server]
-# Loopback only: contextos-web has no authentication mechanism in this
-# release, so a non-loopback bind is rejected at startup rather than
-# accepted and left unprotected.
-bind = "127.0.0.1:7332"
-# Optional. The crate's own bundled assets (CSS, JS) are embedded in the
-# binary and serve /static/ with no configuration at all, on every platform
-# and install layout. Set static_dir only to override or add to that
-# bundled set from an external directory; an operator-provided path here is
-# tried first, falling back to the embedded copy for any file it does not
-# itself contain.
-# static_dir = "/absolute/path/to/extra-static-assets"
+# Must be a loopback address: contextos-web ships with no authentication
+# mechanism, so a non-loopback bind would expose every proxied MCP tool.
+bind = "127.0.0.1:7373"
+# Optional: an operator-supplied directory of static assets layered on top
+# of the crate's own bundled set. Unset (the default) serves only the
+# bundled assets.
+# static_dir = "/absolute/path/to/extra/static"
 # Allowed values: "error", "warn", "info", "debug", "trace"
 log_level = "info"
-# Empty means log to stderr only. Rotation and retention below have no
-# effect (and are rejected at startup) unless this is set.
+# Empty (or absent) means log to stderr only. Where a background service
+# would lose stderr, `contextos-web config` offers a file instead, rotated at
+# 10 MB and kept for 7 days: %LOCALAPPDATA%\contextos\logs\contextos-web.log
+# on Windows, ~/Library/Logs/contextos/contextos-web.log on macOS. Several
+# processes may share one log file safely.
 log_file = ""
-# Optional. Rotates log_file once it reaches this size, in megabytes.
-# Combinable with log_rotate_daily below: whichever is reached first
-# triggers a rotation. Rotated files are named "{log_file}.{timestamp}".
-# log_max_size_mb = 10
-# Optional. Rotates log_file on every UTC calendar-day boundary.
+# Rotates log_file once it reaches this size, in megabytes. Meaningless
+# (and rejected) while log_file is empty.
+# log_max_size_mb = 50
+# Rotates log_file on every UTC calendar-day boundary. Combinable with
+# log_max_size_mb: whichever condition is reached first triggers a rotation.
 # log_rotate_daily = false
-# Optional. Deletes a rotated log file once it is older than this many
-# days. Independent of log_retention_files below; when both are set, a
-# rotated file is deleted once it violates either bound. Requires at least
-# one of log_max_size_mb/log_rotate_daily above to be set.
-# log_retention_days = 30
-# Optional. Keeps only the N most recently rotated log files, deleting
-# older ones. Same combination rules as log_retention_days.
-# log_retention_files = 10
+# Deletes a rotated log file once it is older than this many days.
+# log_retention_days = 14
+# Keeps only the N most recently rotated log files, deleting older ones.
+# log_retention_files = 5
 
 [server.ui]
-# UI appearance defaults. Schema deferred to a later phase (web-rendering.md);
-# unrecognised keys here are accepted, not validated, until that phase lands.
+# Opaque to contextos-web's own schema (deferred to the rendering layer);
+# only these keys currently have operator-visible effect.
+theme = "system"
+font = "system"
+size = "medium"
+system_name = "Command Centre"
 
-# MCP servers this instance may proxy tool calls to via
-# POST /mcp/{server_name}/{tool_name}. The first entry is conventionally,
-# but not structurally, the local contextos-mcp instance.
+# Optional: who owns the jobs of workflows installed in the host package store. Omit it to leave them ownerless.
+[owner]
+name = "Your Name"
+
+# Optional: how the live event stream reads the vault (see docs/web-signals.md).
+[events]
+# Seconds between the stream reader's polls of contextos for new events, while at least one browser has a stream
+# open. At least 1. Nothing is polled while no stream is open.
+poll_seconds = 5
+
+# Optional: how the Agents screen reads liveness (see docs/web-signals.md).
+[agents]
+# Minutes after which a session run that started and has no finish shows amber, when no task holds a claim that
+# names the run. At least 1.
+run_overdue_minutes = 120
+
 [[mcp_server]]
-name = "contextos"
 transport = "stdio"
+name = "contextos"
 command = "contextos"
 args = ["--config", "/absolute/path/to/config.toml"]
 
-# A second, HTTP-based example (not required).
+# Optional second server example: an HTTP-transport MCP server reached over
+# a bearer token from an environment variable or a pasted token.
 # [[mcp_server]]
-# name = "some-other-server"
 # transport = "http"
-# endpoint = "http://127.0.0.1:9000"
-# token_env = "SOME_OTHER_SERVER_TOKEN"
+# name = "contextos-remote"
+# endpoint = "http://127.0.0.1:3737"
+#
+# [mcp_server.auth]
+# mode = "bearer"
+# token_env = "CONTEXTOS_MCP_TOKEN"
+# Or, instead of token_env, a token pasted on /settings/ and kept in the
+# credentials/ folder beside this file, never here:
+# credential_ref = "contextos-remote-token"
+#
+# An OAuth2 server whose provider issues a client secret takes it from either
+# a pasted secret (client_secret_ref, kept in credentials/) or the name of an
+# environment variable holding it (client_secret_env), never both:
+# [[mcp_server]]
+# transport = "http"
+# name = "some-oauth-server"
+# endpoint = "https://mcp.example.invalid/mcp"
+#
+# [mcp_server.auth]
+# mode = "oauth2"
+# client_id = "abc123"
+# client_secret_env = "SOME_OAUTH_CLIENT_SECRET"
+# authorization_endpoint = "https://example.invalid/oauth2/authorize"
+# token_endpoint = "https://example.invalid/oauth2/token"
+# scopes = ["mcp.tools.call"]
+# credential_ref = "some-oauth-server-token"

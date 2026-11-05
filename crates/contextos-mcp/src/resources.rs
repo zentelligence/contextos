@@ -8,24 +8,51 @@ use std::sync::Arc;
 
 use base64::Engine;
 use contextos_core::{VaultPath, VaultPathInput, VaultSet};
-use contextos_fs::{Filesystem, FsError, ReadTextRequest, SearchFilesRequest, mime_type_for_extension};
+use contextos_fs::{
+    Filesystem, FsError, ListDirectoryRequest, ReadTextRequest, SearchFilesRequest, mime_type_for_extension,
+};
 use rmcp::model::{
     Implementation, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
-    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, ResourceTemplate, ServerCapabilities,
-    ServerInfo,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+    ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool_handler};
+use serde::Serialize;
 
 use crate::resource_support::{ResourceError, path_for_resource_uri, resource_uri, resource_uri_template};
 use crate::server::ContextOsServer;
+use crate::tools::fs_types::EntryKindToolResult;
+
+/// One immediate child in a directory resource's `resources/read` payload:
+/// its own name, kind, and a directly usable `{name}://{relative-path}` URI
+/// so a client can recurse by issuing another `resources/read`, one level
+/// at a time, without ever calling `resources/list`.
+#[derive(Serialize)]
+struct DirectoryResourceEntry {
+    name: String,
+    kind: EntryKindToolResult,
+    uri: String,
+}
+
+/// Body of a directory resource's `resources/read` result: that
+/// directory's own immediate children only, never a recursive walk (that
+/// is `fs_directory_tree`'s job).
+#[derive(Serialize)]
+struct DirectoryResourceListing {
+    entries: Vec<DirectoryResourceEntry>,
+}
 
 #[tool_handler(router = self.effective_catalogue())]
 impl ServerHandler for ContextOsServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().enable_resources().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().build())
             .with_server_info(Implementation::new("ContextOS MCP", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Safe filesystem operations over configured ContextOS vault roots".to_owned())
+            .with_instructions(
+                "Safe filesystem operations over configured ContextOS vault roots.\n\
+                 Call vault_info to see the configured vaults, and read the chosen vault's AGENTS.md before working in it."
+                    .to_owned(),
+            )
     }
 
     /// Lists the effective tool catalogue (core tools plus every registered
@@ -100,13 +127,14 @@ impl ServerHandler for ContextOsServer {
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, ErrorData> {
+    ) -> Result<ReadResourceResponse, ErrorData> {
         let roots = Arc::clone(&self.roots);
         let filesystem = Arc::clone(&self.filesystem);
         let uri = request.uri;
         tokio::task::spawn_blocking(move || read_vault_resource(&roots, &filesystem, &uri))
             .await
             .map_err(|_| ErrorData::internal_error("resource read task failed", None))?
+            .map(ReadResourceResponse::from)
             .map_err(ResourceError::into_error_data)
     }
 }
@@ -252,6 +280,54 @@ fn read_vault_resource(
                 ResourceContents::blob(blob, uri.to_owned()).with_mime_type(attachment.mime_type),
             ]))
         }
+        // `read_text` reports `NotFile` for anything that is not a regular
+        // file; a genuine directory is the one other case a resource URI
+        // legitimately names, so it is served as its own immediate-children
+        // listing instead of propagating the error. Anything neither a file
+        // nor a directory (a special file) still errors clearly, via
+        // `list_directory`'s own `NotDirectory` below.
+        Err(FsError::NotFile { .. }) => read_vault_resource_directory(roots, filesystem, &path, uri),
         Err(error) => Err(error.into()),
     }
+}
+
+/// Serves a directory resource URI as its own immediate children (never
+/// recursive: that is `fs_directory_tree`'s job), reusing
+/// [`Filesystem::list_directory`] unchanged so this shares the exact same
+/// `hidden` filtering and root confinement `fs_list_directory` already has,
+/// rather than a second, possibly-diverging listing implementation.
+/// `resources_list_include` is not consulted: a directory read is direct
+/// access to a URI the caller already holds, the same "never narrowed"
+/// contract `resources/read` already has for files.
+fn read_vault_resource_directory(
+    roots: &VaultSet,
+    filesystem: &Filesystem,
+    path: &VaultPath,
+    uri: &str,
+) -> Result<ReadResourceResult, ResourceError> {
+    let listing = filesystem.list_directory(&ListDirectoryRequest { path: path.clone() })?;
+    let root = roots.root(path.root_id()).ok_or_else(|| ResourceError::InvalidPath {
+        path: <&std::path::Path>::from(path).to_path_buf(),
+    })?;
+    let entries = listing
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let child_relative = path.relative().join(&entry.name);
+            DirectoryResourceEntry {
+                name: entry.name,
+                kind: entry.kind.into(),
+                uri: resource_uri(root.name(), &child_relative),
+            }
+        })
+        .collect();
+    let body = serde_json::to_string(&DirectoryResourceListing { entries }).map_err(|source| {
+        ResourceError::DirectoryListingSerialisation {
+            path: <&std::path::Path>::from(path).to_path_buf(),
+            source,
+        }
+    })?;
+    Ok(ReadResourceResult::new(vec![
+        ResourceContents::text(body, uri.to_owned()).with_mime_type("application/json".to_owned()),
+    ]))
 }

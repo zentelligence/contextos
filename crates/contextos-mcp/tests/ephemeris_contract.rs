@@ -10,7 +10,8 @@
 //! astro-enabled server via [`server_with_astro_enabled`]; a dedicated test
 //! below confirms the tools are absent with astro left at its default.
 
-use contextos_mcp::{Config, ContextOsServer};
+mod support;
+use contextos_mcp::ContextOsServer;
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use serde_json::{Map, Value, json};
@@ -29,7 +30,7 @@ fn call_tool_arguments(value: &Value) -> Result<Map<String, Value>, BoxError> {
 /// `ContextOsServer` still requires at least one configured root to
 /// construct.
 fn server_with_astro_enabled(vault: &std::path::Path) -> Result<ContextOsServer, BoxError> {
-    let mut config = Config::try_from(vec![vault.to_path_buf()])?;
+    let mut config = support::scoped_config(vec![vault.to_path_buf()])?;
     config.server.astro = true;
     Ok(ContextOsServer::try_from(config)?)
 }
@@ -60,7 +61,7 @@ async fn call_tool(
 #[tokio::test]
 async fn ephemeris_tools_are_not_advertised_with_astro_left_at_its_default() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let server = ContextOsServer::try_from(Config::try_from(vec![vault.path().to_path_buf()])?)?;
+    let server = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
     let (server_transport, client_transport) = tokio::io::duplex(65536);
     let server_handle = tokio::spawn(async move {
         server.serve(server_transport).await?.waiting().await?;
@@ -452,6 +453,7 @@ async fn ephemeris_moon_phase_is_reachable_over_the_streamable_http_transport_to
     let http = contextos_mcp::HttpConfig {
         bind: "127.0.0.1:0".to_owned(),
         token: token.to_owned(),
+        token_env: String::new(),
         max_body_kb: 2048,
     };
     let listener = TcpListener::bind("127.0.0.1:0").await?;

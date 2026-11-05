@@ -1,14 +1,16 @@
 use std::collections::VecDeque;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
 
-use contextos_core::{ContentHash, VaultPath, VaultSet};
+use contextos_core::{ContentHash, Origin, VaultPath, VaultSet};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 
-use crate::{FsError, FsErrorInfo};
+use crate::read_stage::{ReadHook, ReadStage};
+use crate::regular_file::{is_not_regular_file, open_without_waiting};
+use crate::{FileVersion, FsError, FsErrorInfo};
 
 /// Limits applied to filesystem operations for a vault set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +59,7 @@ pub struct Filesystem {
     pub(crate) limits: Vec<FsLimits>,
     pub(crate) hidden: Vec<Vec<String>>,
     pub(crate) atomic_write_guard: Arc<dyn GuardsAtomicWrites>,
+    pub(crate) server_owned: crate::server_owned::ServerOwnedFolders,
 }
 
 impl TryFrom<FilesystemConfig> for Filesystem {
@@ -92,7 +95,28 @@ impl TryFrom<FilesystemConfig> for Filesystem {
             limits: value.limits,
             hidden: value.hidden,
             atomic_write_guard,
+            server_owned: crate::server_owned::ServerOwnedFolders::default(),
         })
+    }
+}
+
+impl Filesystem {
+    /// This adapter with `folders` owned by the server: a mutation whose origin is a tool is refused there, and one
+    /// the server makes on its own account is not.
+    #[must_use]
+    pub fn with_server_owned_folders(mut self, folders: Vec<crate::ServerOwnedFolder>) -> Self {
+        self.server_owned = folders.into();
+        self
+    }
+
+    /// Refuses a change by `origin` to `path` when it falls in a server-owned folder, for a tool that reads and plans
+    /// before it writes and so must be refused before it reports anything else about the path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FsError::ServerOwned`] naming the vault-relative path and carrying the folder's own code.
+    pub fn ensure_not_server_owned(&self, path: &VaultPath, origin: &Origin) -> Result<(), FsError> {
+        self.server_owned.check(path, origin)
     }
 }
 
@@ -137,6 +161,15 @@ pub struct ReadTextResult {
     pub line_count: usize,
     pub content_hash: ContentHash,
     pub truncated: bool,
+    /// The file's size in bytes, from the inspection the read itself made: a caller that also wants the file's
+    /// metadata need not inspect it, or read it, a second time.
+    pub size: u64,
+    /// When the file was created, where the platform records it.
+    pub created: Option<OffsetDateTime>,
+    /// When the file was last modified, where the platform records it.
+    pub modified: Option<OffsetDateTime>,
+    /// The version of the file the read opened, which a continuing read passes back as `expected_version`.
+    pub version: FileVersion,
 }
 
 /// Request for one MCP-embeddable file capped independently at 10 MiB.
@@ -158,6 +191,13 @@ pub struct Attachment {
     pub mime_type: String,
     pub bytes: Vec<u8>,
     pub text: bool,
+    /// The hash of exactly `bytes`, in the same form every other read reports, so it can be supplied as
+    /// `expected_hash` to overwrite the file. Taken from the bytes returned, not from a later read of the file.
+    pub content_hash: ContentHash,
+    /// The file's size in bytes, from the handle the bytes were read through.
+    pub size: u64,
+    /// The version of the file the attachment was read from.
+    pub version: FileVersion,
 }
 
 /// Best-effort MIME type for a path by extension, via `mime_guess`'s
@@ -191,9 +231,23 @@ pub struct ReadManyResult {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<ContentHash>,
+    /// The file's size in bytes, present exactly when `content` is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// The version of the file read, present exactly when `content` is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<FileVersion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<FsErrorInfo>,
 }
+
+/// The fixed MCP attachment size cap: the shared 10 MiB file limit
+/// ([`contextos_core::MAX_FILE_BYTES`]), used by `fs_attach_file`'s binary
+/// read path, `fs_write_file`'s binary write path (`mutate.rs`), and
+/// `contextos-mcp`'s own pre-decode `content_base64` size check (ahead of the
+/// authoritative check here, not a replacement for it), so all three agree
+/// with each other and with every request body limit derived from it.
+pub const MAX_ATTACHMENT_BYTES: u64 = contextos_core::MAX_FILE_BYTES;
 
 impl Filesystem {
     /// Reads a text or binary attachment with the fixed MCP 10 MiB cap.
@@ -202,7 +256,17 @@ impl Filesystem {
     ///
     /// Returns a typed confinement, metadata, size, type, or read error.
     pub fn read_attachment(&self, request: &AttachmentRequest) -> Result<Attachment, FsError> {
-        const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+        self.read_attachment_staged(request, MAX_ATTACHMENT_BYTES, &mut |_| {})
+    }
+
+    /// [`Filesystem::read_attachment`] with the cap as a parameter and a hook called at each [`ReadStage`], for
+    /// tests that change the file mid-read.
+    pub(crate) fn read_attachment_staged(
+        &self,
+        request: &AttachmentRequest,
+        maximum: u64,
+        hook: ReadHook<'_>,
+    ) -> Result<Attachment, FsError> {
         let path: &Path = (&request.path).into();
         if !self.roots.authorises(&request.path) {
             return Err(FsError::OutsideRoot {
@@ -228,17 +292,50 @@ impl Filesystem {
                 path: path.to_path_buf(),
             });
         }
-        if metadata.len() > MAX_ATTACHMENT_BYTES {
+        if metadata.len() > maximum {
             return Err(FsError::TooLarge {
                 path: path.to_path_buf(),
                 size: metadata.len(),
-                maximum: MAX_ATTACHMENT_BYTES,
+                maximum,
             });
         }
-        let bytes = std::fs::read(path).map_err(|source| FsError::ReadContent {
+        hook(ReadStage::Inspected);
+        let mut file = open_for_reading(path)?;
+        // The size and version come from the open handle, so they describe the file whose bytes are returned.
+        let handle_metadata = file.metadata().map_err(|source| FsError::ReadMetadata {
             path: path.to_path_buf(),
             source,
         })?;
+        // The path may have been replaced between the inspection and the open, so the handle is checked again.
+        if !handle_metadata.is_file() {
+            return Err(FsError::NotFile {
+                path: path.to_path_buf(),
+            });
+        }
+        if handle_metadata.len() > maximum {
+            return Err(FsError::TooLarge {
+                path: path.to_path_buf(),
+                size: handle_metadata.len(),
+                maximum,
+            });
+        }
+        hook(ReadStage::Opened);
+        // One byte beyond the cap shows a file that grew past it after the size check.
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(maximum.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|source| FsError::ReadContent {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        if u64::try_from(bytes.len()).is_ok_and(|read| read > maximum) {
+            return Err(FsError::TooLarge {
+                path: path.to_path_buf(),
+                size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                maximum,
+            });
+        }
         let text = !bytes.contains(&0) && std::str::from_utf8(&bytes).is_ok();
         // Content-sniffing (`infer`, magic bytes) is authoritative when it
         // recognises the bytes; an extension can lie, content cannot.
@@ -251,12 +348,16 @@ impl Filesystem {
             .map(|kind| kind.mime_type().to_owned())
             .or_else(|| mime_type_for_extension(path))
             .unwrap_or_else(|| if text { "text/plain" } else { "application/octet-stream" }.to_owned());
+        let content_hash = ContentHash::from(<[u8; 32]>::from(Sha256::digest(&bytes)));
         Ok(Attachment {
-            path: request.path.relative().to_string_lossy().into_owned(),
+            path: request.path.portable_relative(),
             vault_path: request.path.clone(),
             mime_type,
             bytes,
             text,
+            content_hash,
+            size: handle_metadata.len(),
+            version: FileVersion::from(&handle_metadata),
         })
     }
 
@@ -275,13 +376,47 @@ impl Filesystem {
     /// Returns a typed error when the path is unauthorised, missing, not a
     /// regular file, too large without a limiter, unreadable, or binary.
     pub fn read_text(&self, request: &ReadTextRequest) -> Result<ReadTextResult, FsError> {
+        self.read_text_checked(request, None)
+    }
+
+    /// Reads UTF-8 text as [`Filesystem::read_text`] does, refusing a file whose version is no longer
+    /// `expected_version`. The version is checked before the size limit, so a file that changed is reported as
+    /// changed rather than as too large.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FsError::VersionConflict`] when the file's version differs, and otherwise the errors of
+    /// [`Filesystem::read_text`].
+    pub fn read_text_if_unchanged(
+        &self,
+        request: &ReadTextRequest,
+        expected_version: &FileVersion,
+    ) -> Result<ReadTextResult, FsError> {
+        self.read_text_checked(request, Some(expected_version))
+    }
+
+    fn read_text_checked(
+        &self,
+        request: &ReadTextRequest,
+        expected_version: Option<&FileVersion>,
+    ) -> Result<ReadTextResult, FsError> {
+        self.read_text_staged(request, expected_version, &mut |_| {})
+    }
+
+    /// The whole or line read with a hook called at each [`ReadStage`], for tests that change the file mid-read.
+    pub(crate) fn read_text_staged(
+        &self,
+        request: &ReadTextRequest,
+        expected_version: Option<&FileVersion>,
+        hook: ReadHook<'_>,
+    ) -> Result<ReadTextResult, FsError> {
         let path: &std::path::Path = (&request.path).into();
         if !self.roots.authorises(&request.path) {
             return Err(FsError::OutsideRoot {
                 path: path.to_path_buf(),
             });
         }
-        let metadata = match path.metadata() {
+        let inspected = match path.metadata() {
             Ok(metadata) => metadata,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
                 return Err(FsError::NotFound {
@@ -295,9 +430,30 @@ impl Filesystem {
                 });
             }
         };
+        if !inspected.is_file() {
+            return Err(FsError::NotFile {
+                path: path.to_path_buf(),
+            });
+        }
+        hook(ReadStage::Inspected);
+        let file = open_for_reading(path)?;
+        // The size and version come from the open handle, so they describe the file this read goes on to read.
+        let metadata = file.metadata().map_err(|source| FsError::ReadMetadata {
+            path: path.to_path_buf(),
+            source,
+        })?;
         if !metadata.is_file() {
             return Err(FsError::NotFile {
                 path: path.to_path_buf(),
+            });
+        }
+        let version = FileVersion::from(&metadata);
+        if let Some(expected) = expected_version
+            && *expected != version
+        {
+            return Err(FsError::VersionConflict {
+                path: path.to_path_buf(),
+                current_version: version,
             });
         }
         let limits = self.limits(&request.path)?;
@@ -309,10 +465,6 @@ impl Filesystem {
             });
         }
 
-        let file = File::open(path).map_err(|source| FsError::OpenRead {
-            path: path.to_path_buf(),
-            source,
-        })?;
         let mut reader = BufReader::new(file);
         let mut hasher = Sha256::new();
         let mut buffer = Vec::<u8>::new();
@@ -348,6 +500,10 @@ impl Filesystem {
             line_count,
             content_hash: ContentHash::from(<[u8; 32]>::from(hasher.finalize())),
             truncated,
+            size: metadata.len(),
+            created: metadata.created().ok().map(OffsetDateTime::from),
+            modified: metadata.modified().ok().map(OffsetDateTime::from),
+            version,
         })
     }
 
@@ -395,18 +551,22 @@ impl Filesystem {
             .paths
             .into_iter()
             .map(|path| {
-                let display_path = path.relative().to_string_lossy().into_owned();
+                let display_path = path.portable_relative();
                 match self.read_text(&ReadTextRequest { path, limit: None }) {
                     Ok(result) => ReadManyResult {
                         path: display_path,
                         content: Some(result.content),
                         content_hash: Some(result.content_hash),
+                        size: Some(result.size),
+                        version: Some(result.version),
                         error: None,
                     },
                     Err(error) => ReadManyResult {
                         path: display_path,
                         content: None,
                         content_hash: None,
+                        size: None,
+                        version: None,
                         error: Some(FsErrorInfo::from(&error)),
                     },
                 }
@@ -501,3 +661,24 @@ impl ReadAccumulator {
         (self.selected, self.line_count, truncated)
     }
 }
+
+/// Opens `path` for reading without waiting on it, refusing a pipe, socket, or device as not a file: the path can be
+/// replaced after a read inspected it, and opening a pipe the usual way would wait for a writer for ever.
+pub(crate) fn open_for_reading(path: &Path) -> Result<std::fs::File, FsError> {
+    open_without_waiting(path, std::fs::OpenOptions::new().read(true)).map_err(|source| {
+        if is_not_regular_file(&source) {
+            FsError::NotFile {
+                path: path.to_path_buf(),
+            }
+        } else {
+            FsError::OpenRead {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+#[path = "read_test.rs"]
+mod tests;

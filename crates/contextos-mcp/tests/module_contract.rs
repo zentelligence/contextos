@@ -3,24 +3,25 @@
 //! bypass, and a feature-off catalogue that is byte-identical to the core
 //! catalogue. Exercised end to end through a test-only fixture module.
 //!
-//! Per `phase-5-decision-addendum.md` A4, no `demo_*` reference module ships
+//! No `demo_*` reference module ships
 //! in any build. The fixture below lives only in this test binary (it is
 //! never linked into the shipped `contextos` binary) and stands in for the
 //! future Business/Personal/Developer OS module crates this trait exists to
 //! support.
 
+mod support;
 use std::sync::Arc;
 
 use contextos_core::{Origin, WriteMutation};
 use contextos_mcp::{
-    Config, ContextOsServer, ModuleCall, ModuleContext, ModuleManifest, ModuleNamespace, ModuleRegistry,
-    ModuleRegistryError, ServerBuildConfig, ServerBuildError, ServerModule, ServerModuleFuture,
+    ContextOsServer, ModuleCall, ModuleContext, ModuleManifest, ModuleNamespace, ModuleRegistry, ModuleRegistryError,
+    ServerBuildConfig, ServerBuildError, ServerModule, ServerModuleFuture,
 };
 use rmcp::ErrorData;
 use rmcp::ServiceExt;
 use rmcp::handler::server::tool::IntoCallToolResult;
 use rmcp::handler::server::wrapper::Json;
-use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
+use rmcp::model::{CallToolRequestParams, CallToolResponse, CallToolResult, Tool};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -112,21 +113,21 @@ fn invalid_arguments(message: &str) -> CallToolResult {
     }))
 }
 
-async fn echo_write(call: ModuleCall, ctx: &ModuleContext) -> Result<CallToolResult, ErrorData> {
+async fn echo_write(call: ModuleCall, ctx: &ModuleContext) -> Result<CallToolResponse, ErrorData> {
     let input: EchoWriteInput = match serde_json::from_value(Value::Object(call.arguments)) {
         Ok(input) => input,
         Err(error) => {
-            return Ok(invalid_arguments(&format!("failed to deserialize parameters: {error}")));
+            return Ok(invalid_arguments(&format!("failed to deserialize parameters: {error}")).into());
         }
     };
     let path = match ctx.resolve_path(&input.path).await {
         Ok(path) => path,
-        Err(error) => return Ok(error.into_tool_result()),
+        Err(error) => return Ok(error.into_tool_result().into()),
     };
     let result = ctx
         .write(WriteMutation {
             path,
-            content: input.content,
+            content: input.content.into(),
             expected_hash: None,
             force: false,
             origin: Origin::Tool("dos_echo_write".to_owned()),
@@ -134,7 +135,7 @@ async fn echo_write(call: ModuleCall, ctx: &ModuleContext) -> Result<CallToolRes
         .await;
     let result = match result {
         Ok(result) => result,
-        Err(error) => return Ok(error.into_tool_result()),
+        Err(error) => return Ok(error.into_tool_result().into()),
     };
     Json(EchoWriteOutput {
         path: result.value.path.relative().display().to_string(),
@@ -148,28 +149,28 @@ async fn echo_write(call: ModuleCall, ctx: &ModuleContext) -> Result<CallToolRes
 /// side of the injected capabilities, proven here to actually run off the
 /// async executor thread (both are `async fn`s backed by
 /// `tokio::task::spawn_blocking`), not merely to exist.
-async fn echo_read(call: ModuleCall, ctx: &ModuleContext) -> Result<CallToolResult, ErrorData> {
+async fn echo_read(call: ModuleCall, ctx: &ModuleContext) -> Result<CallToolResponse, ErrorData> {
     let input: EchoReadInput = match serde_json::from_value(Value::Object(call.arguments)) {
         Ok(input) => input,
         Err(error) => {
-            return Ok(invalid_arguments(&format!("failed to deserialize parameters: {error}")));
+            return Ok(invalid_arguments(&format!("failed to deserialize parameters: {error}")).into());
         }
     };
     let path = match ctx.resolve_path(&input.path).await {
         Ok(path) => path,
-        Err(error) => return Ok(error.into_tool_result()),
+        Err(error) => return Ok(error.into_tool_result().into()),
     };
     let content = match ctx.read_optional_text(&path).await {
         Ok(text) => text.map(|text| text.content),
-        Err(error) => return Ok(error.into_tool_result()),
+        Err(error) => return Ok(error.into_tool_result().into()),
     };
     let root = match ctx.resolve_path(".").await {
         Ok(root) => root,
-        Err(error) => return Ok(error.into_tool_result()),
+        Err(error) => return Ok(error.into_tool_result().into()),
     };
     let root_entries = match ctx.list(&root).await {
         Ok(entries) => entries.into_iter().map(|entry| entry.name).collect(),
-        Err(error) => return Ok(error.into_tool_result()),
+        Err(error) => return Ok(error.into_tool_result().into()),
     };
     Json(EchoReadOutput { content, root_entries }).into_call_tool_result()
 }
@@ -220,7 +221,7 @@ fn a_module_registered_under_the_wrong_namespace_fails_server_construction() -> 
     }
 
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let modules = ModuleRegistry::new().register(Arc::new(MisnamedFixture));
     let result = ContextOsServer::try_from(ServerBuildConfig { config, modules });
     assert!(matches!(
@@ -233,7 +234,7 @@ fn a_module_registered_under_the_wrong_namespace_fails_server_construction() -> 
 #[test]
 fn two_modules_contributing_the_same_tool_name_fail_server_construction() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let modules = ModuleRegistry::new()
         .register(Arc::new(DeveloperOsFixture))
         .register(Arc::new(DeveloperOsFixture));
@@ -257,7 +258,7 @@ fn two_modules_contributing_the_same_tool_name_fail_server_construction() -> Res
 #[test]
 fn with_no_modules_registered_the_effective_catalogue_is_byte_identical_to_core() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
 
     // Two servers built from the same config, differing only in `modules`
     // (`ModuleRegistry::new()` explicitly on both, `ContextOsServer::try_from(Config)`
@@ -295,7 +296,7 @@ fn with_no_modules_registered_the_effective_catalogue_is_byte_identical_to_core(
 #[test]
 fn a_registered_module_adds_its_namespaced_tool_without_touching_the_core_catalogue() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
 
     // This instance's own effective catalogue with no modules registered
     // (`[server] astro` held constant from the same `config`, unlike
@@ -354,7 +355,7 @@ fn a_registered_module_adds_its_namespaced_tool_without_touching_the_core_catalo
 async fn a_module_write_flows_through_the_shared_pipeline_and_reaches_the_operation_log() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     let vault_path = vault.path().to_path_buf();
-    let config = Config::try_from(vec![vault_path.clone()])?;
+    let config = support::scoped_config(vec![vault_path.clone()])?;
     let server = ContextOsServer::try_from(ServerBuildConfig {
         config,
         modules: registry_with_fixture(),
@@ -402,7 +403,7 @@ async fn a_module_write_flows_through_the_shared_pipeline_and_reaches_the_operat
 async fn a_module_read_and_list_use_the_injected_read_access() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     let vault_path = vault.path().to_path_buf();
-    let config = Config::try_from(vec![vault_path.clone()])?;
+    let config = support::scoped_config(vec![vault_path.clone()])?;
     let server = ContextOsServer::try_from(ServerBuildConfig {
         config,
         modules: registry_with_fixture(),
@@ -442,7 +443,7 @@ async fn a_module_read_and_list_use_the_injected_read_access() -> Result<(), Box
 async fn a_module_write_outside_every_configured_root_is_rejected_before_any_write() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     let vault_path = vault.path().to_path_buf();
-    let config = Config::try_from(vec![vault_path.clone()])?;
+    let config = support::scoped_config(vec![vault_path.clone()])?;
     let server = ContextOsServer::try_from(ServerBuildConfig {
         config,
         modules: registry_with_fixture(),
@@ -469,7 +470,7 @@ async fn a_module_write_outside_every_configured_root_is_rejected_before_any_wri
 #[tokio::test]
 async fn unknown_and_missing_fixture_tool_arguments_are_rejected() -> Result<(), BoxError> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
-    let config = Config::try_from(vec![vault.path().to_path_buf()])?;
+    let config = support::scoped_config(vec![vault.path().to_path_buf()])?;
     let server = ContextOsServer::try_from(ServerBuildConfig {
         config,
         modules: registry_with_fixture(),
@@ -522,7 +523,7 @@ async fn a_registered_module_tool_is_reachable_and_dispatches_over_http() -> Res
 
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
     let vault_path = vault.path().to_path_buf();
-    let config = Config::try_from(vec![vault_path.clone()])?;
+    let config = support::scoped_config(vec![vault_path.clone()])?;
     let server = ContextOsServer::try_from(ServerBuildConfig {
         config,
         modules: registry_with_fixture(),
@@ -532,6 +533,7 @@ async fn a_registered_module_tool_is_reachable_and_dispatches_over_http() -> Res
     let http = HttpConfig {
         bind: "127.0.0.1:0".to_owned(),
         token: token.to_owned(),
+        token_env: String::new(),
         max_body_kb: 2048,
     };
     let listener = TcpListener::bind("127.0.0.1:0").await?;

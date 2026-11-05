@@ -1,24 +1,49 @@
 #![forbid(unsafe_code)]
 
+mod creation;
 mod discover;
 mod error;
+mod file_lock;
+mod file_names;
+pub mod host_file;
+mod host_lock;
+pub mod links;
 mod mutate;
 mod read;
+#[cfg(test)]
+mod read_fixture;
+mod read_part;
+mod read_stage;
+mod regular_file;
+mod server_owned;
+mod version;
 
 pub use contextos_core::ContentHash;
 pub use discover::{
     AllowedDirectory, DirectoryEntry, DirectoryListing, DirectoryTreeRequest, EntryKind, FileInfo, FileInfoRequest,
-    ListDirectoryRequest, ListDirectoryWithSizesRequest, SearchFilesRequest, SortBy, TreeNode, default_hidden_patterns,
+    HiddenPaths, HiddenPathsInput, ListDirectoryRequest, ListDirectoryWithSizesRequest, ListFilesRequest,
+    SearchFilesRequest, SortBy, TreeNode, default_hidden_patterns,
 };
 pub use error::{FsError, FsErrorInfo};
+pub use file_lock::{try_lock_exclusive, try_lock_shared};
+pub use file_names::FileNameIndex;
+pub use host_lock::{DEFAULT_HOST_WAIT, HOST_WRITE_LOCK, HostLockGuard, lock_host, lock_vault_writes};
+pub use links::{EntryClass, EntryFlags, FILE_ATTRIBUTE_REPARSE_POINT, is_link_or_reparse_point};
 pub use mutate::{
     EditFileRequest, EditFileResult, FilesystemService, FilesystemServiceConfig, RoutedFilesystemServiceConfig,
     TextEdit,
 };
 pub use read::{
-    Attachment, AttachmentRequest, Filesystem, FilesystemConfig, FsLimits, GuardsAtomicWrites, LineRange, ReadLimit,
-    ReadManyRequest, ReadManyResult, ReadTextRequest, ReadTextResult, mime_type_for_extension,
+    Attachment, AttachmentRequest, Filesystem, FilesystemConfig, FsLimits, GuardsAtomicWrites, LineRange,
+    MAX_ATTACHMENT_BYTES, ReadLimit, ReadManyRequest, ReadManyResult, ReadTextRequest, ReadTextResult,
+    mime_type_for_extension,
 };
+pub use read_part::{BytePart, ReadPartRequest, ReadPartResult};
+pub use regular_file::{
+    is_not_regular_file, open_regular_file, open_without_waiting, read_regular_file, read_regular_text,
+};
+pub use server_owned::ServerOwnedFolder;
+pub use version::FileVersion;
 
 impl contextos_core::ReadsVault for Filesystem {
     type Error = FsError;

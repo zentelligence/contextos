@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 contextos-core = { path = "../contextos-core" }
+contextos-fs = { path = "../contextos-fs" }
 contextos-obsidian = { path = "../contextos-obsidian" }
 fastembed = { workspace = true, optional = true }
 fjall.workspace = true
@@ -28,6 +29,7 @@ tracing.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true
+tracing-subscriber.workspace = true
 
 [[bench]]
 name = "graph_persistence"
@@ -37,32 +39,30 @@ harness = false
 default = ["semantic-local"]
 # Local, offline ONNX embedding inference via `fastembed`'s user-defined
 # model API (an injected model directory, never `hf-hub` auto-download).
-# Default-on per phase-5-decision-addendum.md A1, so a standard build
-# always satisfies FR-54's local, no-network, no-key default provider;
-# `--no-default-features` still yields a lean build with the trait, the
-# deterministic fake, and `OpenAiCompatible`.
+# Default-on so a standard build always has a local, no-network, no-key
+# default provider; `--no-default-features` still yields a lean build
+# with the trait, the deterministic fake, and `OpenAiCompatible`.
 #
 # `StoresVectors` and `SqliteVecStore` (`rusqlite`, `sqlite-vec`) are
 # unconditionally compiled, with or without this feature: `--no-default-
 # features` sheds only the ONNX runtime weight of the local embedding
-# provider (per A1's stated goal, "a lean hermetic build remains available
-# via `--no-default-features`"). The vector store itself is architecture.md
-# core catalogue (`StoresVectors` alongside `IndexesText`), not part of the
-# provider that A1 gates; `sqlite-vec`'s statically linked C amalgamation
+# provider, so a lean hermetic build remains available. The vector store is a
+# core capability (`StoresVectors` alongside `IndexesText`), not part of the
+# provider this feature gates; `sqlite-vec`'s statically linked C amalgamation
 # is a small, offline, no-network dependency, unlike the ONNX runtime.
 semantic-local = ["dep:fastembed"]
 
 [lints]
 # `unsafe_code` is downgraded from the workspace's `forbid` to `deny` only
 # in this crate, so the one approved `unsafe` block in `vector_store.rs`
-# (phase-5-decision-addendum.md A3: the `sqlite3_auto_extension`
+# (the `sqlite3_auto_extension`
 # registration required to load the statically linked `sqlite-vec`
 # extension) can carry a narrow, documented `#[allow(unsafe_code)]`. Rust's
 # lint system cannot downgrade a `forbid` level from an inner scope, even
 # within the same crate, so this table is re-declared in full here rather
 # than inherited via `workspace = true`; every other lint matches
 # `[workspace.lints]` exactly. A second `unsafe` occurrence anywhere in this
-# crate is a defect per A3.
+# crate is a defect.
 [lints.rust]
 unsafe_code = "deny"
 

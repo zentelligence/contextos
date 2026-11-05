@@ -1,0 +1,84 @@
+{% if let Some(focus) = focus %}
+{% if let Some(drill_label) = focus.drill_label %}
+  <div class="task-section-header">
+    <span class="section-label">{{ drill_label }} &middot; {{ focus.drill_cards.len() }}</span>
+    <a class="btn small" href="{{ focus.clear_filter_href }}">Clear filter</a>
+  </div>
+  <div class="task-card-grid">
+  {% for card in focus.drill_cards %}
+    {% include "task_card.html" %}
+  {% endfor %}
+  {% if focus.drill_cards.is_empty() %}
+    <p class="hint">No tasks match this view.</p>
+  {% endif %}
+  </div>
+{% else %}
+  <div class="task-focus-section">
+    <div class="task-section-header">
+      <span class="section-label">Now &mdash; in flight</span>
+      <span class="hint">{{ focus.now_total }} active &middot; WIP limit 6</span>
+    </div>
+    <div class="task-card-grid">
+    {% for card in focus.now_cards %}
+      {% include "task_card.html" %}
+    {% endfor %}
+    {% if focus.now_cards.is_empty() %}
+      <p class="hint">Nothing in flight.</p>
+    {% endif %}
+    </div>
+  {% if let Some(overflow) = focus.now_overflow %}
+    <a class="task-focus-overflow" href="{{ overflow.href }}">+{{ overflow.count }} more in flight than the WIP limit shows &mdash; view all</a>
+  {% endif %}
+  </div>
+
+  <div class="task-focus-section">
+    <div class="task-section-header">
+      <span class="section-label">Needs your call</span>
+      <span class="hint">{{ focus.needs_call_total }} item(s)</span>
+    </div>
+    <div class="task-card-grid">
+    {% for card in focus.needs_call_cards %}
+      {% include "task_card.html" %}
+    {% endfor %}
+    {% if focus.needs_call_cards.is_empty() %}
+      <p class="hint">Nothing waiting on you.</p>
+    {% endif %}
+    </div>
+  </div>
+
+  <div class="task-focus-panels">
+    <div class="task-panel">
+      <div class="task-panel-header">
+        <span class="section-label">Backlog</span>
+        <span class="hint">{{ focus.backlog_total }} waiting</span>
+        <a class="btn small" href="{{ focus.backlog_browse_href }}">Browse all</a>
+      </div>
+    {% if let Some(pull_next_href) = focus.pull_next_href %}
+      <a class="btn task-pull-next" href="{{ pull_next_href }}">
+        <span class="ic ic-arrow-right" aria-hidden="true"></span>
+        Pull next task &mdash; {{ focus.pull_next_title }}
+      </a>
+    {% endif %}
+    {% for row in focus.backlog_rows %}
+      {% include "task_mini_row.html" %}
+    {% endfor %}
+    {% if focus.backlog_rows.is_empty() %}
+      <p class="hint">Nothing backlogged.</p>
+    {% endif %}
+    </div>
+    <div class="task-panel">
+      <div class="task-panel-header">
+        <span class="section-label">Done</span>
+        <span class="hint">{{ focus.done_total }} completed</span>
+        <a class="btn small" href="{{ focus.done_browse_href }}">View all</a>
+      </div>
+    {% for row in focus.done_rows %}
+      {% include "task_mini_row.html" %}
+    {% endfor %}
+    {% if focus.done_rows.is_empty() %}
+      <p class="hint">Nothing completed yet.</p>
+    {% endif %}
+    </div>
+  </div>
+{% endif %}
+{% endif %}

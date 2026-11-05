@@ -1,0 +1,6 @@
+# Standard output carries a command's result and standard error carries the log, so a stray write corrupts the one or
+# loses the other. The few functions that own a stream say so with a narrow, reasoned allow.
+disallowed-methods = [
+    { path = "std::io::stdout", reason = "standard output carries a command's result; only a function that owns the result writes to it, with a reasoned #[allow(clippy::disallowed_methods)]" },
+    { path = "std::io::stderr", reason = "standard error carries the log; only the tracing sink and a last-resort error line write to it, with a reasoned #[allow(clippy::disallowed_methods)]" },
+]

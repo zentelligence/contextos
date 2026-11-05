@@ -4,9 +4,8 @@
 //! configuration change rather than a rebuild.
 //!
 //! Failures here are typed [`SearchError`] values the caller degrades on;
-//! this provider never touches the write pipeline (architecture.md
-//! mutation boundary), and never runs during construction beyond reading
-//! the configured API key's environment variable.
+//! this provider never touches the write pipeline, and never runs during construction beyond reading
+//! the configured API key, or the environment variable that holds it.
 
 use std::io::Read as _;
 use std::sync::OnceLock;
@@ -38,9 +37,32 @@ pub struct OpenAiCompatibleConfig {
     pub endpoint: String,
     /// The model name sent in each request body.
     pub model: String,
-    /// Name of the environment variable holding the API key; never the key
-    /// value itself.
-    pub api_key_env: String,
+    /// Where the API key comes from: the key itself, or the environment
+    /// variable that holds it.
+    pub api_key: ApiKeySource,
+}
+
+/// Where the provider's API key comes from. Both forms are first-class:
+/// the server runs locally, so a key written in its configuration file is
+/// no more exposed than the file itself, and many operators cannot set
+/// environment variables at all.
+#[derive(Clone, Eq, PartialEq)]
+pub enum ApiKeySource {
+    /// The key itself, written in configuration.
+    Value(String),
+    /// The name of an environment variable holding the key.
+    Environment(String),
+}
+
+impl std::fmt::Debug for ApiKeySource {
+    /// Names the variable but never prints a key value, so a configuration
+    /// holding one can be logged or asserted on safely.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Value(_) => formatter.write_str("Value(\"<redacted>\")"),
+            Self::Environment(variable) => formatter.debug_tuple("Environment").field(variable).finish(),
+        }
+    }
 }
 
 /// Newtype wrapping the resolved API key so any accidental future `Debug`
@@ -53,6 +75,36 @@ struct ApiKey(String);
 impl std::fmt::Debug for ApiKey {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("ApiKey(\"<redacted>\")")
+    }
+}
+
+impl TryFrom<ApiKeySource> for ApiKey {
+    type Error = SearchError;
+
+    /// Takes a configured value as it is, or reads the named variable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SearchError::EmbeddingConfig`] for an empty value or an
+    /// empty variable, either of which would otherwise send a bare `Bearer`
+    /// header, and
+    /// [`SearchError::EmbeddingApiKeyMissing`] when the named variable is
+    /// not set.
+    fn try_from(value: ApiKeySource) -> Result<Self, Self::Error> {
+        match value {
+            ApiKeySource::Value(key) if key.is_empty() => Err(SearchError::EmbeddingConfig {
+                reason: "api_key is empty; write the key itself, or name its environment variable in api_key_env"
+                    .to_owned(),
+            }),
+            ApiKeySource::Value(key) => Ok(Self(key)),
+            ApiKeySource::Environment(variable) => match std::env::var(&variable) {
+                Ok(key) if key.is_empty() => Err(SearchError::EmbeddingConfig {
+                    reason: format!("environment variable {variable}, named by api_key_env, is set but empty"),
+                }),
+                Ok(key) => Ok(Self(key)),
+                Err(_source) => Err(SearchError::EmbeddingApiKeyMissing { variable }),
+            },
+        }
     }
 }
 
@@ -91,15 +143,14 @@ impl OpenAiCompatible {
     ///
     /// # Errors
     ///
-    /// Returns [`SearchError::EmbeddingApiKeyMissing`] when the environment
-    /// variable named by `config.api_key_env` is not set, and
+    /// Returns [`SearchError::EmbeddingConfig`] when the configured key is
+    /// empty, [`SearchError::EmbeddingApiKeyMissing`] when the environment
+    /// variable it names is not set, and
     /// [`SearchError::EmbeddingTransport`] when the underlying HTTP client
     /// cannot be built. No network request is made by this constructor.
     pub fn with_timeout(config: OpenAiCompatibleConfig, timeout: Duration) -> Result<Self, SearchError> {
         Self::reject_insecure_endpoint(&config.endpoint)?;
-        let key = std::env::var(&config.api_key_env).map_err(|_source| SearchError::EmbeddingApiKeyMissing {
-            variable: config.api_key_env.clone(),
-        })?;
+        let key = ApiKey::try_from(config.api_key)?;
         let client = Client::builder()
             .timeout(timeout)
             .build()
@@ -110,7 +161,7 @@ impl OpenAiCompatible {
         Ok(Self {
             endpoint: config.endpoint,
             model: config.model,
-            api_key: ApiKey(key),
+            api_key: key,
             client,
             timeout,
             dimension: OnceLock::new(),
@@ -190,8 +241,9 @@ impl TryFrom<OpenAiCompatibleConfig> for OpenAiCompatible {
     ///
     /// # Errors
     ///
-    /// Returns [`SearchError::EmbeddingApiKeyMissing`] when the environment
-    /// variable named by `value.api_key_env` is not set. No network request
+    /// Returns [`SearchError::EmbeddingConfig`] when the configured key is
+    /// empty, and [`SearchError::EmbeddingApiKeyMissing`] when the
+    /// environment variable it names is not set. No network request
     /// is made by this constructor.
     fn try_from(value: OpenAiCompatibleConfig) -> Result<Self, Self::Error> {
         Self::with_timeout(value, DEFAULT_TIMEOUT)

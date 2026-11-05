@@ -1,0 +1,23 @@
+<div class="alerts-list" hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-swap="outerHTML">
+  <p class="alerts-list-count hint">{{ count }} alert{% if count != 1 %}s{% endif %}</p>
+{% if alerts.is_empty() %}
+  <p class="hint">Nothing needs you right now.</p>
+{% else %}
+  <ul class="alert-items">
+  {% for alert in alerts %}
+    <li class="alert-item">
+      <span class="ic ic-{{ alert.icon() }} alert-tone-{{ alert.tone() }}" aria-hidden="true"></span>
+      <span class="alert-text">
+        {% if let Some(href) = alert.href %}<a class="alert-title" href="{{ href }}">{{ alert.title }}</a>{% else %}<span class="alert-title">{{ alert.title }}</span>{% endif %}
+        {% if !alert.detail.is_empty() %}<span class="alert-detail">{{ alert.detail }}</span>{% endif %}
+      </span>
+      <span class="alert-when">{{ alert.when }}</span>
+    </li>
+  {% endfor %}
+  </ul>
+  {% if more > 0 %}<p class="hint">and {{ more }} more</p>{% endif %}
+{% endif %}
+{% if incomplete %}
+  <p class="hint">Some sources could not be read, so this list may be incomplete.</p>
+{% endif %}
+</div>

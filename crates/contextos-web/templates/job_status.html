@@ -1,0 +1,39 @@
+<section id="job-status" class="panel job-status" data-lifecycle="{{ lifecycle }}">
+  <header class="panel-header">
+    <h2>Status</h2>
+{% if attention %}    <span class="badge attention">Needs attention</span>
+{% endif %}  </header>
+  <dl class="job-properties">
+    <div><dt>State</dt><dd>{{ lifecycle }}</dd></div>
+    <div><dt>Schedule</dt><dd>{% if let Some(schedule) = schedule %}<code>{{ schedule }}</code> (local time, {{ zone }}){% else %}Not scheduled{% endif %}</dd></div>
+{% if on_trial %}    <div><dt>First run</dt><dd>The next live run is the first of this version, so its first live run is on trial: a failure suspends the job.</dd></div>
+{% endif %}{% if let Some(suspension) = suspension %}    <div><dt>Suspended</dt><dd><code>{{ suspension.code }}</code> {{ suspension.reason }}<span class="hint">{% if let Some(by) = suspension.by %} by {{ by }}{% endif %}{% if let Some(at) = suspension.at %} at <time>{{ at }}</time>{% endif %}{% if let Some(run) = suspension.run %}, run {% if let Some(link) = suspension.run_link %}<a href="{{ link }}">R-{{ run }}</a>{% else %}R-{{ run }}{% endif %}{% endif %}</span></dd></div>
+{% endif %}    <div><dt>Last validation</dt><dd>
+{% if let Some(validation) = validation %}{% if validation.passed %}Validation passed at <time>{{ validation.at }}</time>{% else %}Validation failed at <time>{{ validation.at }}</time>{% endif %}
+{% else %}Never validated
+{% endif %}</dd></div>
+    <div><dt>Last dry run</dt><dd>{% if let Some(at) = dry_run_at %}<time>{{ at }}</time>{% else %}Never dry-run{% endif %}</dd></div>
+  </dl>
+{% if let Some(validation) = validation %}{% if !validation.failures.is_empty() || !validation.unverifiable.is_empty() %}  <ul class="validation-failures">
+{% for failure in validation.failures %}    <li><code>{{ failure.code }}</code> <code>{{ failure.artefact }}</code> {{ failure.message }}</li>
+{% endfor %}{% for check in validation.unverifiable %}    <li>{{ check }} could not be checked</li>
+{% endfor %}  </ul>
+{% endif %}{% endif %}{% if let Some(message) = message %}  <p class="job-message" role="{% if message.ok %}status{% else %}alert{% endif %}">{{ message.text }}</p>
+{% endif %}  <div class="job-actions">
+{% if offered.validate() %}    <button type="button" class="btn small" hx-put="{{ base_path }}/execute/validate" hx-target="#job-status" hx-swap="outerHTML">Validate</button>
+{% endif %}{% if offered.resume() %}    <button type="button" class="btn small primary" hx-put="{{ base_path }}/execute/resume" hx-target="#job-status" hx-swap="outerHTML">Resume</button>
+{% endif %}{% if offered.schedule() %}    <form class="job-schedule-form" hx-ext="json-enc" hx-patch="{{ base_path }}" hx-target="#job-status" hx-swap="outerHTML">
+      <label>Schedule (cron, local time in {{ zone }}) <input type="text" name="schedule" placeholder="0 3 * * *" required></label>
+      <button type="submit" class="btn small">Set schedule</button>
+    </form>
+{% endif %}{% if offered.clear_schedule() %}    <button type="button" class="btn small" hx-ext="json-enc" hx-patch="{{ base_path }}" hx-vals='{"schedule": ""}' hx-target="#job-status" hx-swap="outerHTML">Clear schedule</button>
+{% endif %}{% if offered.suspend() %}    <form class="job-suspend-form" hx-ext="json-enc" hx-put="{{ base_path }}/execute/suspend" hx-target="#job-status" hx-swap="outerHTML">
+      <label>Reason <input type="text" name="reason" required></label>
+      <button type="submit" class="btn small">Suspend</button>
+    </form>
+{% endif %}{% if offered.retire() %}    <button type="button" class="btn small" hx-put="{{ base_path }}/execute/retire" hx-target="#job-status" hx-swap="outerHTML">Retire</button>
+{% endif %}{% if offered.reactivate() %}    <button type="button" class="btn small primary" hx-put="{{ base_path }}/execute/reactivate" hx-target="#job-status" hx-swap="outerHTML">Re-activate</button>
+{% endif %}{% if offered.delete() %}    <button type="button" class="btn small" hx-get="{{ base_path }}/confirm-delete" hx-target="#job-confirm" hx-swap="innerHTML">Delete</button>
+    <div id="job-confirm"></div>
+{% endif %}  </div>
+</section>

@@ -1,8 +1,7 @@
-//! Vault content route contract tests (Phase 15, `delivery-plan.md`'s
-//! gate): real `contextos-mcp` sessions against real temporary vault
-//! fixtures, exercising `GET`/`POST`/`PATCH`/`PUT`/`DELETE
-//! /{{vault_name}}/{{relative-path}}` end to end. No mocking, per
-//! `testing.md`.
+//! Vault content route contract tests: real `contextos-mcp` sessions
+//! against real temporary vault fixtures, exercising `GET`/`POST`/`PATCH`/
+//! `PUT`/`DELETE /{{vault_name}}/{{relative-path}}` end to end. No mocking,
+//! per `testing.md`.
 
 mod support;
 
@@ -27,7 +26,6 @@ async fn router_over(vault_dir: &Path, config_dir: &Path) -> Result<Router, BoxE
         clients,
         Some(config_dir),
         &config_dir.join("web.toml"),
-        "contextos".to_owned(),
     ))
 }
 
@@ -98,43 +96,100 @@ async fn a_nonexistent_path_in_a_real_vault_is_a_404_with_no_listing_fallback() 
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_directory_route_renders_that_directorys_index_md() -> Result<(), BoxError> {
+async fn a_folder_no_section_owns_is_not_shown_and_neither_is_its_index() -> Result<(), BoxError> {
     let vault_dir = tempfile::tempdir()?;
     let config_dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Vault root\n\nWelcome.\n")?;
     write(
         vault_dir.path(),
-        "notes/index.md",
-        "# Notes directory\n\nSome operator prose.\n",
+        "docs/index.md",
+        "# Docs directory\n\nSome operator prose.\n",
     )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("Vault root"));
-    assert!(body.contains("Welcome."));
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/notes/")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("Notes directory"));
-    assert!(body.contains("Some operator prose."));
+    for path in ["docs/", "docs/index.md"] {
+        let (status, body) = get(&router, &format!("/{VAULT_NAME}/{path}")).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(!body.contains("Some operator prose."), "{path}");
+    }
     Ok(())
 }
 
 #[tokio::test]
-async fn a_bare_path_resolving_to_a_directory_renders_the_same_as_its_trailing_slash_form() -> Result<(), BoxError> {
+async fn the_vault_root_dashboard_never_renders_its_own_index_md_body() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    // Unlike every other directory, the vault root is the Command Centre
+    // dashboard: its own view is the Task widget strip, never a fall
+    // through to `index.md`'s rendered body.
+    write(vault_dir.path(), "index.md", "# Vault root\n\nWelcome.\n")?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("dashboard-task-widgets"));
+    assert!(!body.contains("Vault root"));
+    assert!(!body.contains("Welcome."));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_vault_root_renders_the_overview_dashboard_with_every_panel() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Vault root\n\nWelcome.\n")?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // A discrete dashboard page, not the vault root's index note: the Task lifecycle strip renders with the page...
+    assert!(body.contains("vault-overview"));
+    assert!(body.contains("Task lifecycle"));
+    assert!(body.contains("dashboard-task-widgets"));
+    // ...beside every other panel, each loaded from the vault as its own region rather than shown as a placeholder.
+    for heading in [
+        "Bridge",
+        "System status",
+        "Needs a call from you",
+        "Alert rail",
+        "Inputs",
+    ] {
+        assert!(body.contains(heading), "missing panel: {heading}");
+    }
+    assert!(!body.contains("Not yet available"), "{body}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bare_folder_path_goes_where_its_trailing_slash_form_does() -> Result<(), BoxError> {
     let vault_dir = tempfile::tempdir()?;
     let config_dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "notes/index.md", "# Notes\n")?;
+    write(vault_dir.path(), "memory/wiki/topics/one.md", "# One\n")?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status_slash, body_slash) = get(&router, &format!("/{VAULT_NAME}/notes/")).await?;
-    let (status_bare, body_bare) = get(&router, &format!("/{VAULT_NAME}/notes")).await?;
-    assert_eq!(status_slash, StatusCode::OK);
-    assert_eq!(status_bare, StatusCode::OK);
-    assert_eq!(body_slash, body_bare);
+    let slash = see_other(&router, &format!("/{VAULT_NAME}/memory/wiki/topics/")).await?;
+    let bare = see_other(&router, &format!("/{VAULT_NAME}/memory/wiki/topics")).await?;
+    assert_eq!(slash.as_deref(), Some("/contract-fixture/wiki/"));
+    assert_eq!(bare, slash);
     Ok(())
+}
+
+/// The `Location` of a `303 See Other` answer to `path`, or `None` for any other answer.
+async fn see_other(router: &Router, path: &str) -> Result<Option<String>, BoxError> {
+    let response = router
+        .clone()
+        .oneshot(Request::builder().uri(path).body(Body::empty())?)
+        .await?;
+    Ok((response.status() == StatusCode::SEE_OTHER)
+        .then(|| {
+            response
+                .headers()
+                .get("location")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        })
+        .flatten())
 }
 
 #[tokio::test]
@@ -154,40 +209,33 @@ async fn a_bare_vault_root_with_no_trailing_slash_renders_the_same_as_its_traili
 }
 
 #[tokio::test]
-async fn the_sidebar_and_top_bar_breadcrumbs_link_every_ancestor_of_a_nested_directory() -> Result<(), BoxError> {
+async fn a_nested_page_files_breadcrumb_links_each_ancestor_to_its_screens_folder() -> Result<(), BoxError> {
     let vault_dir = tempfile::tempdir()?;
     let config_dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "docs/index.md", "# Docs\n")?;
-    write(vault_dir.path(), "docs/guides/index.md", "# Guides\n")?;
+    write(
+        vault_dir.path(),
+        "memory/wiki/boards/plan.canvas",
+        "{\"nodes\":[],\"edges\":[]}",
+    )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/docs/guides/")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/boards/plan.canvas")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-
-    // Both the sidebar's directory heading and the top bar link every
-    // ancestor directory (vault root, then "docs"); the currently-viewed
-    // directory itself ("guides") is the trail's own unlinked last segment.
-    assert!(body.contains(&format!("<a href=\"/{VAULT_NAME}/\">{VAULT_NAME}</a>")));
-    assert!(body.contains(&format!("<a href=\"/{VAULT_NAME}/docs/\">docs</a>")));
-    assert!(body.contains("<span class=\"breadcrumb-current\">guides</span>"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_top_bar_breadcrumb_links_every_ancestor_directory_of_a_nested_file() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "docs/guides/note.md", "# Note\n")?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/docs/guides/note.md")).await?;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains(&format!("<a href=\"/{VAULT_NAME}/\">{VAULT_NAME}</a>")));
-    assert!(body.contains(&format!("<a href=\"/{VAULT_NAME}/docs/\">docs</a>")));
-    assert!(body.contains(&format!("<a href=\"/{VAULT_NAME}/docs/guides/\">guides</a>")));
-    assert!(body.contains("<span class=\"breadcrumb-current\">note.md</span>"));
+    // The board is shown on the wiki screen, so each ancestor is that screen's own folder.
+    assert!(!body.contains(&format!("href=\"/{VAULT_NAME}/memory/\"")), "{body}");
+    assert!(
+        body.contains(&format!("<a href=\"/{VAULT_NAME}/wiki/\">wiki</a>")),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!("<a href=\"/{VAULT_NAME}/wiki/boards/\">boards</a>")),
+        "{body}"
+    );
+    assert!(
+        body.contains("<span class=\"breadcrumb-current\">plan.canvas</span>"),
+        "{body}"
+    );
     Ok(())
 }
 
@@ -211,56 +259,24 @@ async fn the_bare_server_root_redirects_to_the_first_configured_vault() -> Resul
     Ok(())
 }
 
-// ---------------------------------------------------------------------
-// Nav tree: sub-directories only, hidden entries excluded
-// ---------------------------------------------------------------------
-
+/// A real `contextos` process started against a `config.toml` naming zero vaults: the whole pipeline this exercises
+/// (real MCP handshake against a real zero-vault server, `contextos-web`'s own routing over that connection) is
+/// what a fresh install, before any vault has been added yet, actually looks like.
 #[tokio::test]
-async fn the_nav_tree_lists_sub_directories_only_never_files() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
+async fn the_bare_server_root_redirects_to_settings_when_no_vault_is_configured_at_all() -> Result<(), BoxError> {
     let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "readme.md", "# Readme\n")?;
-    write(vault_dir.path(), "notes/index.md", "# Notes\n")?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+    let config_path = support::write_zero_vault_config(config_dir.path())?;
+    let entry = support::real_contextos_entry("contextos", &config_path)?;
+    let clients = Arc::new(McpClientSet::connect(&[entry]).await?);
+    let router = contextos_web::build_router(clients, Some(config_dir.path()), &config_dir.path().join("web.toml"));
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(&format!("/{VAULT_NAME}/notes/")));
-    assert!(!body.contains(&format!("/{VAULT_NAME}/readme.md")));
-    Ok(())
-}
+    let response = router.oneshot(Request::builder().uri("/").body(Body::empty())?).await?;
 
-#[tokio::test]
-async fn the_nav_tree_excludes_dot_prefixed_entries() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "notes/index.md", "# Notes\n")?;
-    write(vault_dir.path(), ".obsidian/workspace.json", "{}")?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(&format!("/{VAULT_NAME}/notes/")));
-    assert!(!body.contains(".obsidian"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_nav_tree_excludes_entries_matched_by_the_vault_roots_own_gitignore() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "notes/index.md", "# Notes\n")?;
-    write(vault_dir.path(), "build-output/index.md", "# Build output\n")?;
-    write(vault_dir.path(), ".gitignore", "build-output/\n")?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains(&format!("/{VAULT_NAME}/notes/")));
-    assert!(!body.contains(&format!("/{VAULT_NAME}/build-output/")));
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let Some(location) = response.headers().get("location") else {
+        return Err("a redirect carries a Location header".into());
+    };
+    assert_eq!(location, "/settings/");
     Ok(())
 }
 
@@ -275,18 +291,22 @@ async fn wikilink_resolution_covers_live_dead_and_doubly_nested_embed() -> Resul
     write(vault_dir.path(), "index.md", "# Root\n")?;
     write(
         vault_dir.path(),
-        "target-note.md",
+        "memory/wiki/target-note.md",
         "# Target\n\nThis is the target note.\n",
     )?;
-    write(vault_dir.path(), "third-file.md", "# Third\n\nThird-file content.\n")?;
     write(
         vault_dir.path(),
-        "embed-target.md",
+        "memory/wiki/third-file.md",
+        "# Third\n\nThird-file content.\n",
+    )?;
+    write(
+        vault_dir.path(),
+        "memory/wiki/embed-target.md",
         "# Embed target\n\n![[third-file]]\n",
     )?;
     write(
         vault_dir.path(),
-        "example-note.md",
+        "memory/wiki/example-note.md",
         "# Example\n\n\
          See [[target-note]] for a live link.\n\n\
          See [[does-not-exist]] for a dead link.\n\n\
@@ -294,11 +314,12 @@ async fn wikilink_resolution_covers_live_dead_and_doubly_nested_embed() -> Resul
     )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/example-note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/example-note.md")).await?;
     assert_eq!(status, StatusCode::OK);
 
-    // Live link resolves to the target's own route.
-    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/target-note.md\"")));
+    // Live link resolves to the target's own screen. The fixtures live in the wiki folder because a note no screen
+    // owns has no route.
+    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/wiki/target-note.md\"")));
     assert!(body.contains("class=\"wikilink\""));
 
     // Dead link renders as a visually distinct span, never a broken anchor.
@@ -310,7 +331,10 @@ async fn wikilink_resolution_covers_live_dead_and_doubly_nested_embed() -> Resul
     // ...and the doubly-nested embed inside it (embed-target embeds
     // third-file) renders as a plain link at that second level, not a
     // second recursive inline.
-    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/third-file.md\"")));
+    assert!(
+        body.contains(&format!("href=\"/{VAULT_NAME}/wiki/third-file.md\"")),
+        "{body}"
+    );
     assert!(!body.contains("Third-file content."));
     Ok(())
 }
@@ -322,21 +346,21 @@ async fn a_heading_reference_link_resolves_to_the_targets_own_slugged_heading_id
     write(vault_dir.path(), "index.md", "# Root\n")?;
     write(
         vault_dir.path(),
-        "target-note.md",
+        "memory/wiki/target-note.md",
         "# Target\n\n## Some Heading\n\nDetail.\n",
     )?;
     write(
         vault_dir.path(),
-        "note.md",
+        "memory/wiki/note.md",
         "# Note\n\nSee [[target-note#Some Heading]].\n",
     )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/target-note.md#some-heading\"")));
+    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/wiki/target-note.md#some-heading\"")));
 
-    let (status, target_body) = get(&router, &format!("/{VAULT_NAME}/target-note.md")).await?;
+    let (status, target_body) = get(&router, &format!("/{VAULT_NAME}/wiki/target-note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{target_body}");
     assert!(target_body.contains("<h2 id=\"some-heading\">Some Heading</h2>"));
     Ok(())
@@ -349,23 +373,24 @@ async fn a_block_reference_link_resolves_to_an_invisible_anchor_at_the_blocks_ow
     write(vault_dir.path(), "index.md", "# Root\n")?;
     write(
         vault_dir.path(),
-        "target-note.md",
+        "memory/wiki/target-note.md",
         "# Target\n\nThis paragraph can be linked to. ^my-block-id\n",
     )?;
     write(
         vault_dir.path(),
-        "note.md",
+        "memory/wiki/note.md",
         "# Note\n\nSee [[target-note#^my-block-id]].\n",
     )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/target-note.md#my-block-id\"")));
+    // A block's anchor is `^` and its id, so it can never be mistaken for a heading's; the `^` is encoded in the URL.
+    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/wiki/target-note.md#%5Emy-block-id\"")));
 
-    let (status, target_body) = get(&router, &format!("/{VAULT_NAME}/target-note.md")).await?;
+    let (status, target_body) = get(&router, &format!("/{VAULT_NAME}/wiki/target-note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{target_body}");
-    assert!(target_body.contains("<span id=\"my-block-id\"></span>"));
+    assert!(target_body.contains("<span class=\"block-anchor\" id=\"^my-block-id\"></span>"));
     Ok(())
 }
 
@@ -376,20 +401,24 @@ async fn a_base_embed_renders_its_own_card_grid_not_a_raw_yaml_dump() -> Result<
     write(vault_dir.path(), "index.md", "# Root\n")?;
     write(
         vault_dir.path(),
-        "tasks.base",
+        "memory/wiki/tasks.base",
         "views:\n  - type: table\n    name: \"Active\"\n    order:\n      - file.path\n      - status\n",
     )?;
     write(
         vault_dir.path(),
-        "task-one.md",
+        "memory/wiki/task-one.md",
         "---\nstatus: active\n---\n# Task one\n",
     )?;
-    write(vault_dir.path(), "note.md", "# Note\n\n![[tasks.base]]\n")?;
+    write(vault_dir.path(), "memory/wiki/note.md", "# Note\n\n![[tasks.base]]\n")?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/task-one.md\"")));
+    // `task-one.md` is a wiki note, so its card opens it on the wiki screen.
+    assert!(
+        body.contains(&format!("href=\"/{VAULT_NAME}/wiki/task-one.md\"")),
+        "{body}"
+    );
     assert!(body.contains("active"));
     assert!(
         !body.contains("views:"),
@@ -405,7 +434,7 @@ async fn a_block_reference_embed_inlines_only_the_referenced_block() -> Result<(
     write(vault_dir.path(), "index.md", "# Root\n")?;
     write(
         vault_dir.path(),
-        "target-note.md",
+        "memory/wiki/target-note.md",
         "# Target\n\n\
          - Item 1\n\
          - Item 2\n\
@@ -413,10 +442,14 @@ async fn a_block_reference_embed_inlines_only_the_referenced_block() -> Result<(
          ^list-id\n\n\
          This paragraph is not part of the referenced block.\n",
     )?;
-    write(vault_dir.path(), "note.md", "# Note\n\n![[target-note#^list-id]]\n")?;
+    write(
+        vault_dir.path(),
+        "memory/wiki/note.md",
+        "# Note\n\n![[target-note#^list-id]]\n",
+    )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Item 1"));
     assert!(body.contains("Item 2"));
@@ -432,13 +465,15 @@ async fn an_image_embed_renders_as_an_img_tag_not_a_dead_link() -> Result<(), Bo
     write(vault_dir.path(), "index.md", "# Root\n")?;
     // Content need not be a real JPEG: MIME detection falls back to the
     // extension, and the embed path never decodes the bytes at all.
-    write(vault_dir.path(), "photo.jpg", "not-a-real-jpeg")?;
-    write(vault_dir.path(), "note.md", "# Note\n\n![[photo.jpg]]\n")?;
+    write(vault_dir.path(), "memory/wiki/photo.jpg", "not-a-real-jpeg")?;
+    write(vault_dir.path(), "memory/wiki/note.md", "# Note\n\n![[photo.jpg]]\n")?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains(&format!("<img class=\"embed-image\" src=\"/{VAULT_NAME}/photo.jpg\"")));
+    assert!(body.contains(&format!(
+        "<img class=\"embed-image\" src=\"/{VAULT_NAME}/memory/wiki/photo.jpg\""
+    )));
     assert!(!body.contains("wikilink dead"));
     Ok(())
 }
@@ -448,11 +483,15 @@ async fn an_image_embeds_size_hint_becomes_width_and_height_attributes() -> Resu
     let vault_dir = tempfile::tempdir()?;
     let config_dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "photo.jpg", "not-a-real-jpeg")?;
-    write(vault_dir.path(), "note.md", "# Note\n\n![[photo.jpg|640x480]]\n")?;
+    write(vault_dir.path(), "memory/wiki/photo.jpg", "not-a-real-jpeg")?;
+    write(
+        vault_dir.path(),
+        "memory/wiki/note.md",
+        "# Note\n\n![[photo.jpg|640x480]]\n",
+    )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("width=\"640\" height=\"480\""));
     Ok(())
@@ -463,22 +502,24 @@ async fn audio_and_pdf_embeds_render_as_media_not_dead_links() -> Result<(), Box
     let vault_dir = tempfile::tempdir()?;
     let config_dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "clip.mp3", "not-a-real-mp3")?;
-    write(vault_dir.path(), "handout.pdf", "not-a-real-pdf")?;
+    write(vault_dir.path(), "memory/wiki/clip.mp3", "not-a-real-mp3")?;
+    write(vault_dir.path(), "memory/wiki/handout.pdf", "not-a-real-pdf")?;
     write(
         vault_dir.path(),
-        "note.md",
+        "memory/wiki/note.md",
         "# Note\n\n![[clip.mp3]]\n\n![[handout.pdf]]\n",
     )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains(&format!(
-        "<audio class=\"embed-audio\" controls src=\"/{VAULT_NAME}/clip.mp3\""
+        "<audio class=\"embed-audio\" controls src=\"/{VAULT_NAME}/memory/wiki/clip.mp3\""
     )));
-    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/handout.pdf\"")));
-    assert!(body.contains("class=\"wikilink\""));
+    // A PDF opens in the browser's own viewer, in a frame.
+    assert!(body.contains(&format!(
+        "<iframe class=\"embed-pdf\" src=\"/{VAULT_NAME}/memory/wiki/handout.pdf\" title=\"handout\"></iframe>"
+    )));
     assert!(!body.contains("wikilink dead"));
     Ok(())
 }
@@ -490,7 +531,7 @@ async fn ofm_extensions_render_together_comments_highlight_tags_and_a_callout_al
     write(vault_dir.path(), "index.md", "# Root\n")?;
     write(
         vault_dir.path(),
-        "note.md",
+        "memory/wiki/note.md",
         "# Note\n\n\
          Visible %%but this stays hidden%% text.\n\n\
          This is ==important==.\n\n\
@@ -500,13 +541,13 @@ async fn ofm_extensions_render_together_comments_highlight_tags_and_a_callout_al
     )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Visible"));
     assert!(!body.contains("but this stays hidden"));
     assert!(body.contains("<mark>important</mark>"));
     assert!(body.contains("<span class=\"tag\">#project</span>"));
-    // The documented alias ("hint") is styled as its canonical type
+    // The documented alias ("hint") is styled as the type it stands for
     // ("tip") but keeps its own literal kind for the default title.
     assert!(body.contains("class=\"callout callout-tip\""));
     assert!(body.contains("data-callout=\"hint\""));
@@ -520,7 +561,7 @@ async fn triple_colon_fences_and_callouts_render_with_raw_source_available() -> 
     write(vault_dir.path(), "index.md", "# Root\n")?;
     write(
         vault_dir.path(),
-        "note.md",
+        "memory/wiki/note.md",
         "# Note\n\n\
          :::warning\nThis may break things.\n:::\n\n\
          :::mystery-fence\nUnrecognised body.\n:::\n\n\
@@ -528,7 +569,7 @@ async fn triple_colon_fences_and_callouts_render_with_raw_source_available() -> 
     )?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("fence-recognised"));
     assert!(body.contains("This may break things."));
@@ -537,300 +578,10 @@ async fn triple_colon_fences_and_callouts_render_with_raw_source_available() -> 
     assert!(body.contains("callout-tip"));
     assert!(body.contains("Handy hint"));
 
-    let (status, raw) = get(&router, &format!("/{VAULT_NAME}/note.md?raw=1")).await?;
+    let (status, raw) = get(&router, &format!("/{VAULT_NAME}/memory/wiki/note.md?raw=1")).await?;
     assert_eq!(status, StatusCode::OK);
     assert!(raw.contains(":::warning"));
     assert!(raw.contains("> [!tip]"));
-    Ok(())
-}
-
-// ---------------------------------------------------------------------
-// Mermaid rendering
-// ---------------------------------------------------------------------
-
-#[tokio::test]
-async fn a_valid_standalone_mermaid_file_renders_to_svg() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "diagram.mermaid", "graph TD\n  A --> B\n")?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/diagram.mermaid")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("<svg"));
-    assert!(!body.contains("diagnostic-panel"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_malformed_mermaid_diagram_renders_the_diagnostic_panel_not_a_server_error() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "bad.mermaid", "not valid mermaid syntax {{{\n")?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/bad.mermaid")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("diagnostic-panel"));
-    assert!(!body.contains("<svg"));
-    Ok(())
-}
-
-// ---------------------------------------------------------------------
-// Canvas rendering
-// ---------------------------------------------------------------------
-
-const VALID_CANVAS: &str = r#"{
-  "nodes": [
-    {"id": "n1", "type": "text", "x": 0, "y": 0, "width": 200, "height": 60, "text": "Node One"},
-    {"id": "n2", "type": "text", "x": 300, "y": 0, "width": 200, "height": 60, "text": "Node Two"}
-  ],
-  "edges": [
-    {"id": "e1", "fromNode": "n1", "toNode": "n2"}
-  ]
-}"#;
-
-#[tokio::test]
-async fn a_valid_canvas_file_renders_to_svg_using_its_own_positions() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "diagram.canvas", VALID_CANVAS)?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/diagram.canvas")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("<svg"));
-    assert!(body.contains("data-id=\"n1\""));
-    assert!(body.contains("x=\"0\""));
-    assert!(body.contains("x=\"300\""));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_malformed_canvas_file_renders_the_diagnostic_panel_not_a_server_error() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "bad.canvas", "{ this is not valid json")?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/bad.canvas")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("diagnostic-panel"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn canvas_mutation_methods_all_return_405_read_only_in_v1() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "diagram.canvas", VALID_CANVAS)?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    for method in ["POST", "PATCH", "PUT", "DELETE"] {
-        let (status, _) = request(&router, method, &format!("/{VAULT_NAME}/diagram.canvas"), "{}").await?;
-        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "method {method}");
-    }
-    // The file was never touched by the read-only route.
-    assert_eq!(
-        std::fs::read_to_string(vault_dir.path().join("diagram.canvas"))?,
-        VALID_CANVAS
-    );
-    Ok(())
-}
-
-// ---------------------------------------------------------------------
-// `.base` rendering and CRUD round trip
-// ---------------------------------------------------------------------
-
-const TASKS_BASE: &str =
-    "views:\n  - type: table\n    name: \"Active\"\n    order:\n      - file.path\n      - status\n";
-
-#[tokio::test]
-async fn a_base_file_renders_its_matched_rows_as_a_card_grid() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "tasks.base", TASKS_BASE)?;
-    write(
-        vault_dir.path(),
-        "task-one.md",
-        "---\nstatus: active\n---\n# Task one\n",
-    )?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/tasks.base")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("task-one.md"));
-    assert!(body.contains(&format!("href=\"/{VAULT_NAME}/task-one.md\"")));
-    assert!(body.contains("active"));
-    Ok(())
-}
-
-/// The view switcher must be `base_query`-backed (real `?view=`
-/// resolution), never a client-side re-filter of already-fetched rows: a
-/// per-view `filters` expression (`base_query.rs`'s
-/// `QueryDefinition::from_document`, `merge_and`) narrows which rows each
-/// named view actually returns, and switching the `?view=` query parameter
-/// on the real route must return the differently-filtered row set.
-const MULTI_VIEW_BASE: &str = "views:\n  - type: table\n    name: \"Active\"\n    filters: 'status == \"active\"'\n    order:\n      - file.path\n      - status\n  - type: table\n    name: \"Done\"\n    filters: 'status == \"done\"'\n    order:\n      - file.path\n      - status\n";
-
-#[tokio::test]
-async fn switching_the_view_tab_re_queries_base_query_with_the_named_views_own_filters() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "tasks.base", MULTI_VIEW_BASE)?;
-    write(
-        vault_dir.path(),
-        "task-active.md",
-        "---\nstatus: active\n---\n# Task active\n",
-    )?;
-    write(
-        vault_dir.path(),
-        "task-done.md",
-        "---\nstatus: done\n---\n# Task done\n",
-    )?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    // No `?view=` at all: defaults to the first view ("Active"), matching
-    // `base_query`'s own default and the tab strip marking it active.
-    //
-    // Checked via each row's own `data-note-path` (the row-edit form's own
-    // marker), not a bare filename substring match: the nav shell's own
-    // current-directory tree section also links every root-level file by
-    // name, `task-done.md` included, so a bare substring check would pass
-    // even when the base view itself correctly excluded that row.
-    let (status, default_body) = get(&router, &format!("/{VAULT_NAME}/tasks.base")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(default_body.contains("data-note-path=\"task-active.md\""));
-    assert!(!default_body.contains("data-note-path=\"task-done.md\""));
-    assert!(tab_is_active(&default_body, "Active"), "{default_body}");
-    assert!(!tab_is_active(&default_body, "Done"), "{default_body}");
-
-    // Switching to the "Done" tab: a real `?view=Done` request, the exact
-    // request the tab's own `hx-get` issues, returns the "Done" view's own
-    // differently-filtered rows.
-    let (status, done_body) = get(&router, &format!("/{VAULT_NAME}/tasks.base?view=Done")).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert!(done_body.contains("data-note-path=\"task-done.md\""));
-    assert!(!done_body.contains("data-note-path=\"task-active.md\""));
-    assert!(tab_is_active(&done_body, "Done"), "{done_body}");
-    assert!(!tab_is_active(&done_body, "Active"), "{done_body}");
-    Ok(())
-}
-
-/// Whether the view-tab button labelled `name` carries the `active` class,
-/// tolerant of `askama`'s own exact attribute whitespace/ordering: finds
-/// the `<button ...>{name}</button>` block and checks its own `class`
-/// attribute value, rather than matching a brittle multi-line literal.
-fn tab_is_active(body: &str, name: &str) -> bool {
-    let label = format!(">{name}</button>");
-    let Some(label_at) = body.find(&label) else {
-        return false;
-    };
-    let Some(button_at) = body[..label_at].rfind("<button") else {
-        return false;
-    };
-    body[button_at..label_at].contains("class=\"active\"")
-}
-
-#[tokio::test]
-async fn editing_a_row_dispatches_frontmatter_update_never_touching_the_base_file() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "tasks.base", TASKS_BASE)?;
-    write(
-        vault_dir.path(),
-        "task-one.md",
-        "---\nstatus: active\n---\n# Task one\n",
-    )?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, _) = request(
-        &router,
-        "PATCH",
-        &format!("/{VAULT_NAME}/tasks.base"),
-        r#"{"target": "row", "note_path": "task-one.md", "patch": {"status": "done"}}"#,
-    )
-    .await?;
-    assert_eq!(status, StatusCode::OK);
-
-    // The row's own note was updated...
-    let note = std::fs::read_to_string(vault_dir.path().join("task-one.md"))?;
-    assert!(note.contains("status: done"));
-    // ...and the `.base` file's own definition was never written (the two
-    // mutation targets are never conflated).
-    let base_source = std::fs::read_to_string(vault_dir.path().join("tasks.base"))?;
-    assert_eq!(base_source, TASKS_BASE);
-    Ok(())
-}
-
-#[tokio::test]
-async fn editing_the_view_definition_dispatches_base_apply_never_touching_a_matched_note() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "tasks.base", TASKS_BASE)?;
-    write(
-        vault_dir.path(),
-        "task-one.md",
-        "---\nstatus: active\n---\n# Task one\n",
-    )?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, _) = request(
-        &router,
-        "PATCH",
-        &format!("/{VAULT_NAME}/tasks.base"),
-        r#"{"target": "definition", "operations": [{"op": "add_formula", "name": "count_it", "expression": "1"}]}"#,
-    )
-    .await?;
-    assert_eq!(status, StatusCode::OK);
-
-    // The `.base` file's own definition changed...
-    let base_source = std::fs::read_to_string(vault_dir.path().join("tasks.base"))?;
-    assert_ne!(base_source, TASKS_BASE);
-    assert!(base_source.contains("count_it"));
-    // ...and the matched note was never written.
-    let note = std::fs::read_to_string(vault_dir.path().join("task-one.md"))?;
-    assert!(note.contains("status: active"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn deleting_from_a_base_route_removes_a_definition_entry_never_a_note() -> Result<(), BoxError> {
-    let vault_dir = tempfile::tempdir()?;
-    let config_dir = tempfile::tempdir()?;
-    write(vault_dir.path(), "index.md", "# Root\n")?;
-    let base_with_formula =
-        "formulas:\n  count_it: '1'\nviews:\n  - type: table\n    name: \"Active\"\n    order:\n      - file.path\n";
-    write(vault_dir.path(), "tasks.base", base_with_formula)?;
-    write(
-        vault_dir.path(),
-        "task-one.md",
-        "---\nstatus: active\n---\n# Task one\n",
-    )?;
-    let router = router_over(vault_dir.path(), config_dir.path()).await?;
-
-    let (status, _) = request(
-        &router,
-        "DELETE",
-        &format!("/{VAULT_NAME}/tasks.base"),
-        r#"{"operations": [{"op": "remove_formula", "name": "count_it"}]}"#,
-    )
-    .await?;
-    assert_eq!(status, StatusCode::OK);
-
-    let base_source = std::fs::read_to_string(vault_dir.path().join("tasks.base"))?;
-    assert!(!base_source.contains("count_it"));
-    // The note file still exists, untouched.
-    assert!(vault_dir.path().join("task-one.md").exists());
     Ok(())
 }
 
@@ -932,10 +683,10 @@ async fn a_note_past_the_read_text_threshold_still_renders_its_full_content() ->
     let vault_dir = tempfile::tempdir()?;
     let config_dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "big-note.md", &oversized_note_body())?;
+    write(vault_dir.path(), "memory/wiki/big-note.md", &oversized_note_body())?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/big-note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/big-note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("UNIQUE-TAIL-MARKER-XYZ"));
     Ok(())
@@ -946,12 +697,88 @@ async fn an_embed_of_a_note_past_the_read_text_threshold_still_inlines_its_full_
     let vault_dir = tempfile::tempdir()?;
     let config_dir = tempfile::tempdir()?;
     write(vault_dir.path(), "index.md", "# Root\n")?;
-    write(vault_dir.path(), "big-target.md", &oversized_note_body())?;
-    write(vault_dir.path(), "note.md", "# Note\n\n![[big-target]]\n")?;
+    write(vault_dir.path(), "memory/wiki/big-target.md", &oversized_note_body())?;
+    write(vault_dir.path(), "memory/wiki/note.md", "# Note\n\n![[big-target]]\n")?;
     let router = router_over(vault_dir.path(), config_dir.path()).await?;
 
-    let (status, body) = get(&router, &format!("/{VAULT_NAME}/note.md")).await?;
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/note.md")).await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("UNIQUE-TAIL-MARKER-XYZ"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_vault_svg_opened_directly_cannot_run_script_in_the_interface() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write(
+        vault_dir.path(),
+        "memory/wiki/evil.svg",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>fetch('/mcp/contextos/fs_delete_file')</script></svg>",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/{VAULT_NAME}/memory/wiki/evil.svg"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
+    assert_eq!(header("x-content-type-options").as_deref(), Some("nosniff"));
+    let policy = header("content-security-policy").unwrap_or_default();
+    assert!(
+        policy.starts_with("sandbox;") && policy.contains("default-src 'none'"),
+        "{policy}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn script_written_in_a_note_never_reaches_the_rendered_page() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write(
+        vault_dir.path(),
+        "memory/wiki/clipped.md",
+        "# Clipped\n\n<img src=\"x\" onerror=\"alert(1)\">\n\n<script>alert(2)</script>\n\n\
+         [click](javascript:alert(3)) and <a href=\"jav&#97;script:alert(4)\">this</a> ==<b onclick=\"x\">bold</b>==\n",
+    )?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (status, body) = get(&router, &format!("/{VAULT_NAME}/wiki/clipped.md")).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rendered = body
+        .split("<div class=\"wiki-rendered\">")
+        .nth(1)
+        .and_then(|rest| rest.split("</article>").next())
+        .unwrap_or_default();
+    for forbidden in [
+        "onerror",
+        "alert(2)",
+        "href=\"javascript",
+        "src=\"javascript",
+        "onclick",
+        "<script",
+    ] {
+        assert!(!rendered.contains(forbidden), "{forbidden} in {rendered}");
+    }
+    // The link that named a script address is shown as unavailable, its text kept only as inert data.
+    assert!(
+        rendered.contains("<span class=\"internal-link dead\" data-target=\"javascript:alert(3)\">click</span>"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("<mark><b>bold</b></mark>"), "{rendered}");
     Ok(())
 }

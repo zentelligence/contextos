@@ -1,0 +1,20 @@
+[package]
+name = "contextos-logging"
+description = "Rotating, retention-bounded tracing log destination shared by every ContextOS binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+contextos-host = { path = "../contextos-host" }
+same-file.workspace = true
+time = { workspace = true, features = ["formatting", "parsing", "macros"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

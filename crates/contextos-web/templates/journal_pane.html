@@ -1,0 +1,19 @@
+<div class="journal-section" id="pane-{{ index }}" {% if hidden %}hidden{% endif %}>
+  <div class="section-label">{{ label }}</div>
+{% if let Some(error) = error %}
+  <p class="hint error">{{ error }}</p>
+{% endif %}
+{% if !guidance_html.is_empty() %}
+  <div class="hint journal-guidance">{{ guidance_html|safe }}</div>
+{% endif %}
+{% if is_empty %}
+  <p class="hint italic">Nothing written here yet.</p>
+{% else %}
+  <div class="journal-text-body">{{ body_html|safe }}</div>
+{% endif %}
+{% if !read_only %}
+  <div class="save-bar">
+    <button type="button" class="btn small" hx-get="{{ edit_url }}" hx-target="#pane-{{ index }}" hx-swap="outerHTML">Edit</button>
+  </div>
+{% endif %}
+</div>

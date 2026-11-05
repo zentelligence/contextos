@@ -11,15 +11,17 @@ publish.workspace = true
 [dependencies]
 camino.workspace = true
 dunce.workspace = true
+jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-time.workspace = true
+time = { workspace = true, features = ["formatting"] }
 
 [dev-dependencies]
 dunce.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true
