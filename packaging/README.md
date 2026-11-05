@@ -1,6 +1,6 @@
 # ContextOS
 
-ContextOS gives AI assistants safe, structured access to your knowledge vault: a folder of Markdown notes that also opens in Obsidian. It keeps a recoverable history of every change, keeps indexes up to date, and adds a web interface for reading your vault, running apps, and scheduling workflows.
+ContextOS gives AI assistants safe, structured access to your ContextOS knowledge vault: a folder of Markdown notes with a defined structure, which also opens in Obsidian. It keeps a recoverable history of every change, keeps indexes up to date, and adds a web interface for reading your vault, running apps, and scheduling workflows.
 
 This package needs no other software to run. No Rust or developer tools are required.
 

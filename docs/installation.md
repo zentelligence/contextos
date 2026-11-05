@@ -62,12 +62,6 @@ To configure by hand instead, copy [`config.example.toml`](config.example.toml) 
 contextos --config /path/to/config.toml
 ```
 
-or point at one or more vault directories directly, without a configuration file:
-
-```sh
-contextos --vault /path/to/vault
-```
-
 ## Verify the setup
 
 ```sh

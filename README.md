@@ -1,6 +1,6 @@
 # ContextOS
 
-ContextOS operates knowledge vaults: Obsidian-flavoured Markdown vaults with structured notes, Bases, and Canvas files, used by people and AI agents together. It ships as three programs built from this Rust workspace, and a plugin that teaches agents to use them.
+ContextOS operates ContextOS knowledge vaults: Obsidian-flavoured Markdown vaults with a defined folder structure, structured notes, Bases, and Canvas files, used by people and AI agents together. It is built for that structure, not as a general tool for any Obsidian vault. It ships as three programs built from this Rust workspace, and a plugin that teaches agents to use them.
 
 | Program | Role |
 | --- | --- |
@@ -46,6 +46,8 @@ See [`docs/web-first-launch.md`](docs/web-first-launch.md) and [`docs/web-workfl
 
 Download the archive for your platform from [Releases](https://github.com/zentelligence/contextos/releases). Each one holds all three programs and a README that walks through installing, setting up, and updating them; [`docs/installation.md`](docs/installation.md) covers the same ground.
 
+### Optional: Build from source
+
 To build from source instead, you need a recent stable Rust toolchain (see `rust-version` in `Cargo.toml`):
 
 ```sh
@@ -65,12 +67,6 @@ Run the guided setup, which creates `config.toml`, adds a vault, and can registe
 
 ```sh
 contextos config
-```
-
-Or run directly against a vault with no configuration file:
-
-```sh
-contextos --vault /path/to/vault
 ```
 
 Check configuration, vault reachability, and recovery state at any time with:
