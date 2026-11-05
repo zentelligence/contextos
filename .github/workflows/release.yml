@@ -347,6 +347,15 @@ jobs:
           expect "${work}/path/contextos${suffix}" "ContextOS ${version}"
           expect "${work}/path/contextos-web${suffix}" "ContextOS Web ${version}"
 
+          # A registration made through the launcher must record the launcher, so it survives later updates.
+          "${work}/path/contextos${suffix}" --config "${work}/config.toml" config mcp register \
+            --host claude-desktop --config-path "${work}/host.json" --force
+          grep -Eq 'path[/\\]+contextos' "${work}/host.json" || {
+            echo "::error::the registration did not record the launcher"
+            cat "${work}/host.json"
+            exit 1
+          }
+
   promote:
     name: promote to latest
     needs: verify-install

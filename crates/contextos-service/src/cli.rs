@@ -89,7 +89,7 @@ impl ServiceHost {
         let folders = contextos_host::HostFolders::detect().ok_or(ServiceCliError::NoHomeDirectory)?;
         Ok(Self {
             os: std::env::consts::OS,
-            binary_path: std::env::current_exe().map_err(|source| ServiceCliError::Path {
+            binary_path: contextos_host::stable_executable().map_err(|source| ServiceCliError::Path {
                 program: identity.program,
                 config_file: identity.config_file,
                 source,

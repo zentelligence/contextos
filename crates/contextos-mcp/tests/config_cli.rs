@@ -308,3 +308,35 @@ fn config_vault_remove_rejects_an_unknown_name() -> Result<(), Box<dyn std::erro
     assert!(!output.status.success());
     Ok(())
 }
+
+// A host keeps the command it is given and runs it long after this one has gone. Started by the launcher, this
+// program runs from a versioned folder that an update leaves behind, so the host must be given the launcher.
+#[test]
+fn config_mcp_register_records_the_launcher_that_started_this_program() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempdir()?;
+    let launcher = fixture.path().join(
+        std::path::Path::new(env!("CARGO_BIN_EXE_contextos"))
+            .file_name()
+            .ok_or("no binary name")?,
+    );
+    fs::write(&launcher, b"a launcher")?;
+    let host_config = fixture.path().join("host.json");
+    let config = fixture.path().join("config.toml");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_contextos"))
+        .env("CONTEXTOS_LAUNCHER", &launcher)
+        .args(["--config", config.to_str().ok_or("non-UTF-8 config")?])
+        .args(["config", "mcp", "register", "--host", "claude-desktop", "--force"])
+        .args(["--config-path", host_config.to_str().ok_or("non-UTF-8 host config")?])
+        .output()?;
+
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let registered: serde_json::Value = serde_json::from_slice(&fs::read(host_config)?)?;
+    let command = registered["mcpServers"]
+        .as_object()
+        .and_then(|servers| servers.values().next())
+        .and_then(|server| server["command"].as_str())
+        .ok_or("no registered command")?;
+    assert_eq!(std::path::Path::new(command), launcher);
+    Ok(())
+}

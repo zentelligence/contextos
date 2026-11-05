@@ -16,6 +16,34 @@ use thiserror::Error;
 /// The name every folder of this workspace's own carries under the platform's data folder.
 const PRODUCT: &str = "contextos";
 
+/// The variable `contextos-launcher` sets on the program it starts, naming the launcher's own path.
+pub const LAUNCHER_VARIABLE: &str = "CONTEXTOS_LAUNCHER";
+
+/// The path that keeps starting this program across updates, for anything that records how to start it later: a
+/// background service or an MCP host's registration.
+///
+/// A program started by the launcher runs from a versioned folder that a later update leaves behind and cleanup
+/// deletes, so the launcher's path is the one to record. A program started any other way has only its own.
+///
+/// # Errors
+///
+/// The underlying [`std::io::Error`] when this process's executable cannot be named.
+pub fn stable_executable() -> std::io::Result<PathBuf> {
+    Ok(launcher_or_running(
+        std::env::current_exe()?,
+        std::env::var_os(LAUNCHER_VARIABLE),
+    ))
+}
+
+/// The launcher, when `launcher` names an existing absolute file with the same name as the `running` program. The
+/// variable is inherited by everything this process starts, so it may have been set for another program.
+fn launcher_or_running(running: PathBuf, launcher: Option<OsString>) -> PathBuf {
+    launcher
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file() && path.file_stem() == running.file_stem())
+        .unwrap_or(running)
+}
+
 /// Why the environment names no home folder.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum HostFoldersError {

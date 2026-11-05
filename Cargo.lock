@@ -771,6 +771,7 @@ name = "contextos-host"
 version = "0.23.7"
 dependencies = [
  "directories",
+ "tempfile",
  "thiserror",
  "tracing",
 ]
@@ -795,6 +796,8 @@ dependencies = [
 name = "contextos-launcher"
 version = "0.23.7"
 dependencies = [
+ "contextos-host",
+ "tempfile",
  "updater-launcher",
 ]
 

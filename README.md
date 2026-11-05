@@ -93,7 +93,7 @@ The plugin is published in the [`zentelligence/marketplace`](https://github.com/
 /plugin install context-os@zentelligence-plugins
 ```
 
-Then run `/vault init` in your vault. The marketplace README covers Codex and ChatGPT desktop.
+Then run `/vault init` in your vault folder. The marketplace README covers Codex and ChatGPT desktop.
 
 ## Design principles
 

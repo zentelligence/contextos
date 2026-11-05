@@ -89,7 +89,7 @@ contextos update
 
 `contextos rollback` returns to the previous version.
 
-If you installed a background service or registered ContextOS with an assistant, run `contextos service install`, `contextos-web service install`, or `contextos config mcp register` again after updating, so that it uses the new version.
+A background service keeps running the version it started with, so after updating, run `contextos service restart` or `contextos-web service restart`. Restart any assistant connected over stdio too.
 
 ## Learn more
 

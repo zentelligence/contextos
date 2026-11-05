@@ -54,6 +54,46 @@ fn status_with_nothing_installed_says_so_and_registers_nothing() -> Result<(), B
     Ok(())
 }
 
+// A service runs long after the command that installed it. Started by the launcher, that command runs from a
+// versioned folder an update leaves behind, so the service must start the launcher. A stand-in `systemctl` keeps
+// the test away from the real user manager.
+#[cfg(target_os = "linux")]
+#[test]
+fn install_records_the_launcher_that_started_this_program() -> Result<(), BoxError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempdir()?;
+    let tools = directory.path().join("tools");
+    std::fs::create_dir(&tools)?;
+    let systemctl = tools.join("systemctl");
+    std::fs::write(&systemctl, "#!/bin/sh\nexit 0\n")?;
+    std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o755))?;
+    let launcher = directory.path().join("contextos");
+    std::fs::write(&launcher, b"a launcher")?;
+    let path = format!("{}:{}", tools.display(), std::env::var("PATH")?);
+    let config = directory.path().join("config.toml");
+    std::fs::write(&config, "")?;
+
+    let output = contextos(directory.path())
+        .env("PATH", path)
+        .env("CONTEXTOS_LAUNCHER", &launcher)
+        .arg("--config")
+        .arg(config)
+        .args(["service", "install"])
+        .stdin(Stdio::null())
+        .output()?;
+
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let units = directory.path().join("xdg-config").join("systemd").join("user");
+    let unit = std::fs::read_dir(units)?.next().ok_or("no unit was written")??;
+    let contents = std::fs::read_to_string(unit.path())?;
+    assert!(
+        contents.contains(&format!("ExecStart=\"{}\"", launcher.display())),
+        "{contents}"
+    );
+    Ok(())
+}
+
 #[test]
 fn install_refuses_a_configuration_that_cannot_load_and_registers_nothing() -> Result<(), BoxError> {
     let directory = tempdir()?;

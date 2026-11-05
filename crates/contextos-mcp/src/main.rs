@@ -629,7 +629,7 @@ async fn run_config_command(action: ConfigAction, config_path: PathBuf) -> Resul
 /// dependencies, unlike `run_interview` itself, which is exercised in tests
 /// against a scripted `Interviewer` and fake dependencies instead.
 async fn run_config_interview(config_path: PathBuf) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let command = std::env::current_exe()?
+    let command = contextos_host::stable_executable()?
         .to_str()
         .ok_or_else(|| std::io::Error::other("this binary's own path is not valid UTF-8"))?
         .to_owned();
@@ -706,7 +706,7 @@ async fn run_config_mcp_command(
             force,
         } => {
             let host_path = resolve_host_config_path(host, config_path)?;
-            let command = std::env::current_exe()?
+            let command = contextos_host::stable_executable()?
                 .to_str()
                 .ok_or_else(|| std::io::Error::other("this binary's own path is not valid UTF-8"))?
                 .to_owned();

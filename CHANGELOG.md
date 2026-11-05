@@ -19,6 +19,7 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ### Fixed
 
+- Services and MCP host registrations created through the launcher record the launcher, so they follow updates and rollbacks rather than staying on a versioned folder that cleanup later deletes. On Linux and macOS the launcher now becomes the program it starts, so a service stop reaches the server and it shuts down cleanly.
 - `contextos install` and `contextos update` work. In 0.23.6 they failed on every platform: the updater could not read a version with a `v` in front of it, and the Linux and macOS archives held `release.json` inside a folder rather than at the top.
 
 ## [0.23.6] - 2026-11-05

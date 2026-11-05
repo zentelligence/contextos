@@ -27,7 +27,7 @@ contextos rollback
 
 `update check` reports whether a newer release set is available, `update` verifies and installs it, and `rollback` returns to the previous one. Every update is checked against a signed manifest before it is installed.
 
-A background service or MCP host registration records the executable that created it. After updating, repeat `contextos service install`, `contextos-web service install`, or `contextos config mcp register` so that it uses the new release set.
+A background service or MCP host registration created through the launcher records the launcher, so it follows updates and rollbacks. Anything already running keeps its version until it restarts: use `contextos service restart` or `contextos-web service restart`, and restart any MCP host connected over stdio.
 
 ## From source
 

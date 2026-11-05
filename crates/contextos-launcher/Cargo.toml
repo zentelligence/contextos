@@ -13,4 +13,8 @@ name = "contextos-launcher"
 path = "src/main.rs"
 
 [dependencies]
+contextos-host = { path = "../contextos-host" }
 updater-launcher = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
