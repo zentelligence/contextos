@@ -9,6 +9,12 @@ name: Release
 # signed `latest.json`; and publishes everything as assets on a GitHub
 # Release for that tag.
 #
+# The release starts as a prerelease, which `releases/latest` never serves, so
+# no client can reach it yet. `verify-install` then installs it on every
+# platform, through its real manifest URL, signature, and archives, and only
+# `promote` makes it the latest release. A failed install leaves a prerelease
+# that clients never see.
+#
 # PREREQUISITES: the updater crates and the `updater-keytool` that signs
 # `latest.json` come from the public `zentelligence/auto-updater` repository.
 # Signing needs a `RELEASE_SIGNING_KEY` repository secret set to the private key half of
@@ -30,7 +36,7 @@ name: Release
 #
 # `workflow_dispatch` allows a manual dry run of the build and packaging
 # matrix (e.g. from main, with no tag) without publishing a GitHub Release:
-# the `manifest` and `publish` jobs below only run for an actual tag push.
+# the jobs after `build` only run for an actual tag push.
 
 on:
   push:
@@ -136,7 +142,9 @@ jobs:
         run: |
           set -euo pipefail
           staging="contextos-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
-          tar -czf "${staging}.tar.gz" "${staging}"
+          # The updater reads `release.json` from the top of the archive, so the archive holds the folder's contents,
+          # not the folder. COPYFILE_DISABLE keeps macOS metadata files out.
+          (cd "${staging}" && COPYFILE_DISABLE=1 tar -czf "../${staging}.tar.gz" *)
           shasum -a 256 "${staging}.tar.gz" > "${staging}.tar.gz.sha256"
 
       - name: Package (zip)
@@ -274,4 +282,79 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            --verify-tag
+            --verify-tag \
+            --prerelease
+
+  verify-install:
+    name: verify install (${{ matrix.target }})
+    needs: publish
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            suffix: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            suffix: ".exe"
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            suffix: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install the published release set and run it through the launcher
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The tag's own manifest, because `releases/latest` does not serve a prerelease.
+          CONTEXTOS_UPDATE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/latest.json
+          CONTEXTOS_INSTALL_ROOT: ${{ runner.temp }}/install-root
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          suffix="${{ matrix.suffix }}"
+          work="${RUNNER_TEMP}/verify"
+          mkdir -p "${work}/unpacked" "${work}/path"
+
+          asset="contextos-${version}-${{ matrix.target }}.${{ matrix.archive }}"
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern "${asset}" --dir "${work}"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            7z x -bd -o"${work}/unpacked" "${work}/${asset}"
+          else
+            tar -xzf "${work}/${asset}" -C "${work}/unpacked"
+          fi
+
+          "${work}/unpacked/bin/contextos${suffix}" install --version "${version}"
+          "${work}/unpacked/bin/contextos${suffix}" update check
+
+          # One launcher binary serves both commands, under each public name.
+          cp "${work}/unpacked/bin/contextos-launcher${suffix}" "${work}/path/contextos${suffix}"
+          cp "${work}/unpacked/bin/contextos-launcher${suffix}" "${work}/path/contextos-web${suffix}"
+          expect() {
+            local actual
+            actual="$("$1" --version | tr -d '\r')"
+            if [ "${actual}" != "$2" ]; then
+              echo "::error::$1 reported '${actual}', expected '$2'"
+              exit 1
+            fi
+          }
+          expect "${work}/path/contextos${suffix}" "ContextOS ${version}"
+          expect "${work}/path/contextos-web${suffix}" "ContextOS Web ${version}"
+
+  promote:
+    name: promote to latest
+    needs: verify-install
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make the verified release the one clients receive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --prerelease=false --latest

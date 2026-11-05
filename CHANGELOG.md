@@ -8,6 +8,17 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ## [Unreleased]
 
+## [0.23.7] - 2026-11-06
+
+### Changed
+
+- `contextos --version` and `contextos-web --version` print `ContextOS 0.23.7` and `ContextOS Web 0.23.7`, in place of the lowercase names and a `v` before the version.
+- A release now starts as a prerelease that no client can reach. It becomes the latest release only after a real install from it passes on Linux, Windows, and macOS.
+
+### Fixed
+
+- `contextos install` and `contextos update` work. In 0.23.6 they failed on every platform: the updater could not read a version with a `v` in front of it, and the Linux and macOS archives held `release.json` inside a folder rather than at the top.
+
 ## [0.23.6] - 2026-11-05
 
 ### Upgrade notes

@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-core"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "camino",
  "dunce",
@@ -702,7 +702,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-ephemeris"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "astro",
  "thiserror",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-events"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-fs"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "dunce",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-git"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-host"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "directories",
  "thiserror",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-index"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -793,14 +793,14 @@ dependencies = [
 
 [[package]]
 name = "contextos-launcher"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "updater-launcher",
 ]
 
 [[package]]
 name = "contextos-logging"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-host",
  "same-file",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-markdown"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-obsidian",
  "math-core",
@@ -824,7 +824,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-mcp"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -872,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-mermaid"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "merman-core",
  "merman-render",
@@ -881,7 +881,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-obsidian"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "proptest",
@@ -894,7 +894,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-oplog"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-packages"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-projection"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -943,7 +943,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-search"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-service"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "clap",
  "contextos-fs",
@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-web"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "askama",
  "axum",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-workflows"
-version = "0.23.6"
+version = "0.23.7"
 dependencies = [
  "contextos-core",
  "croner",

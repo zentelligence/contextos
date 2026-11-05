@@ -32,7 +32,8 @@ use tracing_setup::initialise_tracing;
 #[derive(Debug, Parser)]
 #[command(
     name = "contextos-web",
-    version = concat!("v", env!("CARGO_PKG_VERSION")),
+    display_name = "ContextOS Web",
+    version,
     about = "ContextOS web UI"
 )]
 struct Cli {

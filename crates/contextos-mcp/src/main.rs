@@ -22,7 +22,8 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(
     name = "contextos",
-    version = concat!("v", env!("CARGO_PKG_VERSION")),
+    display_name = "ContextOS",
+    version,
     about = "ContextOS MCP server"
 )]
 struct Cli {
