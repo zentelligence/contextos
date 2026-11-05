@@ -109,10 +109,11 @@ enum CliCommand {
     },
     /// Roll back to the previously active release set. Vault-independent.
     Rollback,
-    /// Install a specific, pinned release set, for CI and automation. Vault-independent.
+    /// Install the current release and put the `contextos` and `contextos-web` commands on your `PATH`. Vault-independent.
     Install {
+        /// Install this exact release, for CI and automation. It must be the channel's current release.
         #[arg(long)]
-        version: String,
+        version: Option<String>,
     },
     /// Install, remove, or report on one per-user background `contextos` that serves MCP over HTTP alone
     /// (`systemd --user` on Linux, a `launchd` `LaunchAgent` on macOS, a Startup App on Windows), and start, stop, or
@@ -500,7 +501,7 @@ async fn run_update_transaction(
 }
 
 /// Dispatches `contextos update[/check/cleanup/diagnostics]`, `rollback`, and
-/// `install --version`, all of which are vault-independent and never reach `Config::try_from`.
+/// `install`, all of which are vault-independent and never reach `Config::try_from`.
 async fn dispatch_update_command(command: CliCommand) -> Result<(), Box<dyn Error + Send + Sync>> {
     match command {
         CliCommand::Update { action, yes } => {

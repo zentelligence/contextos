@@ -4,18 +4,17 @@ ContextOS ships as `contextos` (the MCP server), `contextos-web` (the web interf
 
 ## From a release
 
-Download the archive for your platform from [Releases](https://github.com/zentelligence/contextos/releases) and unpack it. No Rust toolchain is needed. From the unpacked folder, replacing `VERSION` with the version in the archive's name:
+Download the archive for your platform from [Releases](https://github.com/zentelligence/contextos/releases) and unpack it. From the unpacked folder:
 
 ```sh
-./bin/contextos install --version VERSION
-mkdir -p ~/.local/bin
-cp bin/contextos-launcher ~/.local/bin/contextos
-cp bin/contextos-launcher ~/.local/bin/contextos-web
+./bin/contextos install
 ```
 
-On Windows, run `bin\contextos.exe install --version VERSION`, then copy `bin\contextos-launcher.exe` to `contextos.exe` and `contextos-web.exe` in a folder on your `PATH`. The README in the archive gives the PowerShell commands.
+On Windows, run `bin\contextos.exe install`. Then open a new terminal.
 
-Release sets are kept in `~/.local/share/contextos` on Linux and macOS, and `%LOCALAPPDATA%\contextos` on Windows. `CONTEXTOS_INSTALL_ROOT` chooses another folder.
+`install` downloads and verifies the channel's current release set, keeps it in `~/.local/share/contextos` on Linux and macOS or `%LOCALAPPDATA%\contextos` on Windows, and sets up the `contextos` and `contextos-web` commands. `CONTEXTOS_INSTALL_ROOT` chooses another folder for the release sets. `--version` installs an exact release, for CI and automation, and must name the channel's current release.
+
+The commands are copies of the launcher, in `~/.local/bin` on Linux and macOS and `%LOCALAPPDATA%\Programs\ContextOS` on Windows. A file already there that is not this launcher is left alone and reported. If the folder is not on your `PATH`, `install` adds it: in `~/.zshrc` for zsh, in `~/.bashrc` and `~/.bash_profile` or `~/.profile` for bash, and in the user `Path` on Windows. For any other shell it tells you to add the folder yourself. Running `install` again repeats this without reinstalling.
 
 ### Updating
 

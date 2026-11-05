@@ -2,52 +2,39 @@
 
 ContextOS gives AI assistants safe, structured access to your ContextOS knowledge vault: a folder of Markdown notes with a defined structure, which also opens in Obsidian. It keeps a recoverable history of every change, keeps indexes up to date, and adds a web interface for reading your vault, running apps, and scheduling workflows.
 
-This package needs no other software to run. No Rust or developer tools are required.
-
 ## What is in this package
 
 | File | What it is |
 | --- | --- |
 | `bin/contextos` | The MCP server. AI assistants connect to it to read, search, and change your vaults. It also holds the setup, health check, and update commands. |
 | `bin/contextos-web` | The web interface, served on your own machine. It shows your vaults, hosts your apps, and runs your scheduled workflows. |
-| `bin/contextos-launcher` | The small program you put on your `PATH`. It starts whichever installed version is active, so updates take effect without changing your setup. |
+| `bin/contextos-launcher` | A small program that starts whichever installed version is active, so updates take effect without changing your setup. Installing sets it up for you. |
 
 On Windows, each of these ends in `.exe`.
 
 ## Install
 
-Open a terminal in the folder you unpacked this package into. In the commands below, replace `VERSION` with the version in the package's file name, such as `0.23.7`.
+Open a terminal in the folder you unpacked this package into, and run one command.
 
 **Linux and macOS**
 
 ```sh
-./bin/contextos install --version VERSION
-mkdir -p ~/.local/bin
-cp bin/contextos-launcher ~/.local/bin/contextos
-cp bin/contextos-launcher ~/.local/bin/contextos-web
+./bin/contextos install
 ```
-
-If `~/.local/bin` is not on your `PATH`, add it in your shell's profile.
 
 **Windows (PowerShell)**
 
 ```powershell
-.\bin\contextos.exe install --version VERSION
-$bin = "$env:LOCALAPPDATA\Programs\ContextOS"
-New-Item -ItemType Directory -Force $bin
-Copy-Item bin\contextos-launcher.exe "$bin\contextos.exe"
-Copy-Item bin\contextos-launcher.exe "$bin\contextos-web.exe"
-$path = [Environment]::GetEnvironmentVariable("Path", "User")
-[Environment]::SetEnvironmentVariable("Path", "$path;$bin", "User")
+.\bin\contextos.exe install
 ```
 
-Then open a new terminal and check that it works:
+This downloads and checks the current release, then sets up the `contextos` and `contextos-web` commands. Open a new terminal, and they are ready to use:
 
 ```sh
 contextos --version
 ```
 
-The installed versions are kept in `~/.local/share/contextos` on Linux and macOS, and in `%LOCALAPPDATA%\contextos` on Windows. You can delete the unpacked folder afterwards.
+You can delete the unpacked folder afterwards. ContextOS keeps its own copy in `~/.local/share/contextos` on Linux and macOS, and in `%LOCALAPPDATA%\contextos` on Windows. The commands go in `~/.local/bin` or `%LOCALAPPDATA%\Programs\ContextOS`, and that folder is added to your `PATH` if it is not there already. On Linux and macOS, that means adding a line to your shell profile.
 
 These programs are not signed with an Apple or Microsoft certificate, so macOS or Windows may warn you before running them the first time. On macOS, allow them under System Settings, Privacy & Security. On Windows, choose More info, then Run anyway.
 

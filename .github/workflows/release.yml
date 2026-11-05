@@ -320,7 +320,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           suffix="${{ matrix.suffix }}"
           work="${RUNNER_TEMP}/verify"
-          mkdir -p "${work}/unpacked" "${work}/path"
+          mkdir -p "${work}/unpacked"
 
           asset="contextos-${version}-${{ matrix.target }}.${{ matrix.archive }}"
           gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern "${asset}" --dir "${work}"
@@ -330,12 +330,20 @@ jobs:
             tar -xzf "${work}/${asset}" -C "${work}/unpacked"
           fi
 
-          "${work}/unpacked/bin/contextos${suffix}" install --version "${version}"
+          # Twice, because installing again must succeed and change nothing.
+          "${work}/unpacked/bin/contextos${suffix}" install
+          "${work}/unpacked/bin/contextos${suffix}" install
           "${work}/unpacked/bin/contextos${suffix}" update check
 
-          # One launcher binary serves both commands, under each public name.
-          cp "${work}/unpacked/bin/contextos-launcher${suffix}" "${work}/path/contextos${suffix}"
-          cp "${work}/unpacked/bin/contextos-launcher${suffix}" "${work}/path/contextos-web${suffix}"
+          if [[ -n "${suffix}" ]]; then
+            commands="${LOCALAPPDATA}/Programs/ContextOS"
+            powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')" | grep -q 'Programs.ContextOS' || {
+              echo "::error::the commands' folder was not added to the user's Path"
+              exit 1
+            }
+          else
+            commands="${HOME}/.local/bin"
+          fi
           expect() {
             local actual
             actual="$("$1" --version | tr -d '\r')"
@@ -344,13 +352,13 @@ jobs:
               exit 1
             fi
           }
-          expect "${work}/path/contextos${suffix}" "ContextOS ${version}"
-          expect "${work}/path/contextos-web${suffix}" "ContextOS Web ${version}"
+          expect "${commands}/contextos${suffix}" "ContextOS ${version}"
+          expect "${commands}/contextos-web${suffix}" "ContextOS Web ${version}"
 
           # A registration made through the launcher must record the launcher, so it survives later updates.
-          "${work}/path/contextos${suffix}" --config "${work}/config.toml" config mcp register \
+          "${commands}/contextos${suffix}" --config "${work}/config.toml" config mcp register \
             --host claude-desktop --config-path "${work}/host.json" --force
-          grep -Eq 'path[/\\]+contextos' "${work}/host.json" || {
+          grep -Eq '(\.local[/\\]+bin|Programs[/\\]+ContextOS)[/\\]+contextos' "${work}/host.json" || {
             echo "::error::the registration did not record the launcher"
             cat "${work}/host.json"
             exit 1

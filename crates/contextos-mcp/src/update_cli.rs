@@ -1,4 +1,4 @@
-//! `contextos update`/`rollback`/`install --version` subcommands: the self-update composition
+//! `contextos update`/`rollback`/`install` subcommands: the self-update composition
 //! root for this product, using `updater-core`/`updater-launcher`/`updater-engine` directly with
 //! `contextos`-specific defaults baked in (product name, declared commands, default update URL,
 //! and the production trusted signing key).
@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::io::Write;
 
+use crate::command_setup::set_up_commands;
 use updater_core::{ActivationPort, ActiveVersionReader, ProductVersion};
 use updater_engine::{
     Ed25519ManifestVerifier, FilesystemActivationPort, InstallCollaborators, SpawnVersionProbe, SystemClock,
@@ -96,7 +97,7 @@ pub fn run_check() -> CliResult<String> {
     let outcome = check_for_update(&transport, &verifier, &activation, &context)?;
     Ok(match (&outcome.active_version, outcome.update_available) {
         (None, _) => format!(
-            "No release set is installed yet. Run 'contextos install --version {}' to install it.",
+            "No release set is installed yet. Run 'contextos install' to install {}.",
             outcome.manifest.version
         ),
         (Some(active), true) => format!(
@@ -150,16 +151,17 @@ pub fn run_update(yes: bool) -> CliResult<String> {
     ))
 }
 
-/// `contextos install --version <version>`: installs a specific, pinned release for CI and
-/// automation. Only satisfiable when the requested version matches the channel's current
-/// manifest, since this product publishes one "latest" manifest per channel.
+/// `contextos install`: installs the channel's current release set and sets up the `contextos` and `contextos-web`
+/// commands. `--version` pins the release for CI and automation; it is only satisfiable when it matches the channel's
+/// current manifest, since this product publishes one "latest" manifest per channel. Running it again sets the
+/// commands up again without reinstalling.
 ///
 /// # Errors
 ///
 /// Returns an error if the requested version is malformed, does not match the channel's current
-/// manifest, or the install transaction itself fails.
-pub fn run_install(requested_version: String) -> CliResult<String> {
-    let requested = ProductVersion::try_from(requested_version)?;
+/// manifest, the install transaction itself fails, or the commands cannot be set up.
+pub fn run_install(requested_version: Option<String>) -> CliResult<String> {
+    let requested = requested_version.map(ProductVersion::try_from).transpose()?;
 
     let root = resolve_installation_root(&ProcessEnvironment, ENV_PREFIX, PRODUCT)?;
     let target = detect_target()?;
@@ -181,7 +183,9 @@ pub fn run_install(requested_version: String) -> CliResult<String> {
     let clock = SystemClock;
 
     let outcome = check_for_update(&transport, &verifier, &activation, &context)?;
-    if outcome.manifest.version != requested {
+    if let Some(requested) = requested
+        && outcome.manifest.version != requested
+    {
         return Err(format!(
             "pinned version {requested} is not available; the channel currently offers {}",
             outcome.manifest.version
@@ -189,15 +193,23 @@ pub fn run_install(requested_version: String) -> CliResult<String> {
         .into());
     }
 
-    let collaborators = InstallCollaborators {
-        transport: &transport,
-        verifier: &verifier,
-        probe: &probe,
-        activation: &activation,
-        clock: &clock,
+    let installed = if outcome.active_version.as_ref() == Some(&outcome.manifest.version) {
+        outcome.manifest.version
+    } else {
+        let collaborators = InstallCollaborators {
+            transport: &transport,
+            verifier: &verifier,
+            probe: &probe,
+            activation: &activation,
+            clock: &clock,
+        };
+        install_update(&collaborators, &context, true)?
     };
-    let installed = install_update(&collaborators, &context, true)?;
-    Ok(format!("Installed pinned release set {installed}."))
+
+    let commands_report = set_up_commands(root.as_path(), &installed.to_string())?;
+    Ok(format!(
+        "Installed ContextOS {installed}.\n{commands_report}\nOpen a new terminal, then run 'contextos config' to set up your vault."
+    ))
 }
 
 /// `contextos rollback`: switches the whole release set back to the previous one.

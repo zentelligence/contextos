@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod command_setup;
 mod commit_schedule;
 mod config;
 mod config_io;
