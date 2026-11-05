@@ -88,7 +88,7 @@ fn a_double_moustache_placeholder_is_not_reported_as_invalid_frontmatter() -> Re
     // The real case found scanning an operator vault: an unquoted `{{`
     // is otherwise indistinguishable from opening a YAML flow mapping,
     // so a template using the `{{...}}` placeholder convention (the
-    // same one `context-os-plugin`'s `vault_lint.py`
+    // same one the plugin's `vault_lint.py`
     // `UNRESOLVED_PLACEHOLDER_RE` recognises) fails strict parsing on
     // syntax alone, not on any real structural problem.
     std::fs::write(

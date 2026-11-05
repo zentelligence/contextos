@@ -206,7 +206,23 @@ impl EventSpec<'_> {
     /// Writes the note under `root` and returns its vault path.
     pub fn write_to(&self, root: &Path, slug: &str) -> std::io::Result<String> {
         let path = self.path(slug);
-        write(root, &path, &self.text())?;
-        Ok(path)
+        let text = self.text();
+        // A server that has just started sweeps its events folder and removes the empty folders it finds, which can
+        // take the one `write` has just made, and on Windows a folder being removed refuses access until it has gone. It
+        // removes each at most once, so a few attempts always land.
+        let mut attempts = 0;
+        loop {
+            match write(root, &path, &text) {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                    ) && attempts < 4 =>
+                {
+                    attempts += 1;
+                }
+                outcome => return outcome.map(|()| path),
+            }
+        }
     }
 }

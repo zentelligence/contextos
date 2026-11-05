@@ -3,9 +3,9 @@
 # vocabulary the plugin's vault scaffold ships is the one the renderer carries as its default, and that the event kind
 # definitions the scaffold ships pass the checks this server applies to a vault's definitions.
 #
-# The plugin is a separate repository. Point CONTEXTOS_PLUGIN_DIR at its checkout, or keep it beside this repository as
-# `context-os-plugin`. With no checkout the check is reported as skipped, never as passed. A checkout that lacks the
-# skill fails, since deleting the skill is drift too.
+# The plugin lives in the marketplace repository. Keep that repository beside this one, or point CONTEXTOS_PLUGIN_DIR at
+# the plugin folder. With no checkout the check is reported as skipped, never as passed. A checkout that lacks the skill
+# fails, since deleting the skill is drift too.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +19,7 @@ if [[ ! -d "${plugin_dir}" ]]; then
     printf 'CONTEXTOS_PLUGIN_DIR is set to %s, which is not a directory.\n' "${plugin_dir}" >&2
     exit 1
   fi
-  printf 'SKIPPED plugin skill check: no plugin checkout at %s (set CONTEXTOS_PLUGIN_DIR to the context-os-plugin checkout).\n' \
+  printf 'SKIPPED plugin skill check: no plugin checkout at %s (set CONTEXTOS_PLUGIN_DIR to the plugin folder).\n' \
     "${plugin_dir}" >&2
   exit 0
 fi

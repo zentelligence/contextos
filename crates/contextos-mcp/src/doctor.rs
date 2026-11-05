@@ -645,7 +645,7 @@ pub(crate) fn file_exists(
 /// True when `content`'s frontmatter parses once every `{{...}}` token is
 /// replaced by a YAML-safe placeholder scalar. `{{...}}` is the vault's
 /// operator-facing "unresolved placeholder" convention (the same one
-/// `context-os-plugin`'s `vault_lint.py` `UNRESOLVED_PLACEHOLDER_RE`
+/// the plugin's `vault_lint.py` `UNRESOLVED_PLACEHOLDER_RE`
 /// recognises), used generally, not only under a `templates/` directory.
 /// An unquoted `{` opens a YAML flow mapping, so a plain scalar value
 /// containing this convention fails strict parsing on syntax alone. This

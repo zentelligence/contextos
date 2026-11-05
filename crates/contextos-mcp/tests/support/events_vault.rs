@@ -155,12 +155,12 @@ pub const EVENT_TEMPLATE: &str = concat!(
     "# {{What happened}}\n",
 );
 
-/// The kind definition the plugin ships as `file`, when a plugin checkout is beside this repository or named by
-/// `CONTEXTOS_PLUGIN_DIR`. The scaffold's own definitions are what a real vault holds, so tests prefer them to a copy
+/// The kind definition the plugin ships as `file`, when the marketplace repository is beside this one or
+/// `CONTEXTOS_PLUGIN_DIR` names the plugin folder. The scaffold's own definitions are what a real vault holds, so tests prefer them to a copy
 /// that could drift; `.claude/scripts/check-plugin-skill.sh` checks the shipped definitions against the server's rules.
 fn shipped_kind(file: &str) -> Option<String> {
     let plugin = std::env::var_os("CONTEXTOS_PLUGIN_DIR").map_or_else(
-        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../context-os-plugin"),
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../marketplace/plugins/context-os"),
         std::path::PathBuf::from,
     );
     std::fs::read_to_string(

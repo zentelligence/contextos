@@ -71,6 +71,8 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 ### Fixed
 
 - `doctor --resolve` and its `--dry-run` now write only what they report, take the vault write locks, report failed remediations as failed, and survive a vault whose search state cannot open. `doctor` no longer creates stores or misreports a repository with no commits.
+- On Windows, a write no longer fails with access denied when a reader that allows deletion has the file open, as most modern programs do. This could also leave a workflow run's record stuck at `running`. A program that forbids deletion, as C's `fopen` does, still refuses the write, and the file is left whole.
+- A vault write keeps the permissions of the file it replaces, and a new file takes the usual default. Every write used to leave the file private to its owner on Unix, dropping shared access and executable bits. Each write also now flushes its folder entry.
 - Named pipes in a vault can no longer hang a server thread on Unix.
 - Installing a package with files in folders no longer fails, on any platform, and `contextos-web service` no longer fails on Windows where nothing is registered yet.
 - OAuth2 tokens now refresh for open sessions and workflow runs.

@@ -415,6 +415,135 @@ fn process_kill_child() -> Result<(), Box<dyn std::error::Error>> {
     Err(std::io::Error::other(format!("kill-test write unexpectedly returned: {result:?}")).into())
 }
 
+/// A note is rarely alone on a desktop: an editor, an indexer, or a virus scanner can hold it open at any moment, and
+/// none of them is a reason for a write to fail.
+#[test]
+fn a_write_replaces_a_file_that_a_reader_has_open() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = tempdir()?;
+    let (service, roots) = fixture(vault.path().to_path_buf())?;
+    let note = path(&roots, "note.md")?;
+    std::fs::write(vault.path().join("note.md"), "original")?;
+    let _reader = std::fs::File::open(vault.path().join("note.md"))?;
+
+    service.write_file(&WriteMutation {
+        path: note,
+        content: "replaced".to_owned().into(),
+        expected_hash: None,
+        force: true,
+        origin: Origin::Tool("fs_write_file".to_owned()),
+    })?;
+
+    assert_eq!(std::fs::read_to_string(vault.path().join("note.md"))?, "replaced");
+    Ok(())
+}
+
+/// A write changes a note's content and nothing else about it: a vault shared with a second account, or a tracked
+/// script, must not lose its access or its executable bit because a tool wrote to it.
+#[cfg(unix)]
+#[test]
+fn a_write_keeps_the_permissions_of_the_file_it_replaces() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let vault = tempdir()?;
+    let (service, roots) = fixture(vault.path().to_path_buf())?;
+    let file = vault.path().join("script.md");
+    std::fs::write(&file, "original")?;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
+
+    service.write_file(&WriteMutation {
+        path: path(&roots, "script.md")?,
+        content: "replaced".to_owned().into(),
+        expected_hash: None,
+        force: true,
+        origin: Origin::Tool("fs_write_file".to_owned()),
+    })?;
+
+    assert_eq!(std::fs::metadata(&file)?.permissions().mode() & 0o777, 0o755);
+    Ok(())
+}
+
+/// A new note takes the access any other file made in its folder would, not the private mode of the temporary file it
+/// started as.
+#[cfg(unix)]
+#[test]
+fn a_new_file_takes_the_permissions_a_hand_made_file_would() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let vault = tempdir()?;
+    let (service, roots) = fixture(vault.path().to_path_buf())?;
+    let by_hand = vault.path().join("by-hand.md");
+    std::fs::write(&by_hand, "by hand")?;
+
+    service.write_file(&WriteMutation {
+        path: path(&roots, "written.md")?,
+        content: "written".to_owned().into(),
+        expected_hash: None,
+        force: false,
+        origin: Origin::Tool("fs_write_file".to_owned()),
+    })?;
+
+    assert_eq!(
+        std::fs::metadata(vault.path().join("written.md"))?.permissions().mode() & 0o777,
+        std::fs::metadata(&by_hand)?.permissions().mode() & 0o777
+    );
+    Ok(())
+}
+
+/// A program that opens a file without letting it be deleted, as the C runtime's `fopen` does, holds it against any
+/// replacement Windows offers. The write is refused and the note is left whole, never half replaced.
+#[cfg(windows)]
+#[test]
+fn a_write_refused_by_a_holder_that_forbids_replacement_leaves_the_file_whole() -> Result<(), Box<dyn std::error::Error>>
+{
+    use std::os::windows::fs::OpenOptionsExt as _;
+    const FILE_SHARE_READ: u32 = 1;
+
+    let vault = tempdir()?;
+    let (service, roots) = fixture(vault.path().to_path_buf())?;
+    let file = vault.path().join("note.md");
+    std::fs::write(&file, "original")?;
+    let holder = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&file)?;
+
+    let refused = service.write_file(&WriteMutation {
+        path: path(&roots, "note.md")?,
+        content: "replaced".to_owned().into(),
+        expected_hash: None,
+        force: true,
+        origin: Origin::Tool("fs_write_file".to_owned()),
+    });
+
+    assert!(refused.is_err());
+    drop(holder);
+    assert_eq!(std::fs::read_to_string(&file)?, "original");
+    Ok(())
+}
+
+/// The temporary file a write starts from is marked as temporary, which tells Windows it need not reach the disk. A
+/// note must not keep that mark once it is in place.
+#[cfg(windows)]
+#[test]
+fn a_written_file_is_not_left_marked_as_temporary() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::windows::fs::MetadataExt as _;
+    const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x100;
+
+    let vault = tempdir()?;
+    let (service, roots) = fixture(vault.path().to_path_buf())?;
+    service.write_file(&WriteMutation {
+        path: path(&roots, "note.md")?,
+        content: "content".to_owned().into(),
+        expected_hash: None,
+        force: false,
+        origin: Origin::Tool("fs_write_file".to_owned()),
+    })?;
+
+    let attributes = std::fs::metadata(vault.path().join("note.md"))?.file_attributes();
+    assert_eq!(attributes & FILE_ATTRIBUTE_TEMPORARY, 0);
+    Ok(())
+}
+
 #[test]
 fn existing_file_requires_hash_or_explicit_force() -> Result<(), Box<dyn std::error::Error>> {
     let vault = tempdir()?;

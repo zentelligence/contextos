@@ -527,3 +527,32 @@ fn removing_a_file_that_is_not_there_reports_nothing_removed_and_flushes_nothing
     assert!(observer.0.borrow().is_empty());
     Ok(())
 }
+
+#[test]
+fn a_replacement_lands_on_a_file_a_reader_has_open() -> TestResult {
+    let folder = tempdir()?;
+    let path = folder.path().join("state.toml");
+    fs::write(&path, "old")?;
+    let _reader = fs::File::open(&path)?;
+
+    replace_file_atomically(&path, b"new")?;
+
+    assert_eq!(fs::read_to_string(&path)?, "new");
+    Ok(())
+}
+
+#[test]
+fn a_replacement_that_cannot_land_leaves_no_temporary_file_behind() -> TestResult {
+    let folder = tempdir()?;
+    let target = folder.path().join("occupied");
+    fs::create_dir(&target)?;
+    fs::write(target.join("child"), "kept")?;
+
+    assert!(replace_file_atomically(&target, b"new").is_err());
+
+    let names: Vec<_> = fs::read_dir(folder.path())?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<_, _>>()?;
+    assert_eq!(names, vec![std::ffi::OsString::from("occupied")]);
+    Ok(())
+}

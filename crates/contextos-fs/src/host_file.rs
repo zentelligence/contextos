@@ -105,29 +105,45 @@ pub fn replace_file_observed(path: &Path, contents: &[u8], observer: &dyn FileRe
         })?;
     // An existing target's permissions are applied here, before the rename, so no reader ever sees the replacement with
     // the temporary file's default mode. A target that does not exist yet keeps that default.
-    if let Ok(existing) = fs::metadata(path)
-        && existing.is_file()
-    {
-        temporary
-            .as_file()
-            .set_permissions(existing.permissions())
-            .map_err(|source| FsError::WriteTemporary {
-                path: path.to_path_buf(),
-                source,
-            })?;
-    }
+    match_existing_permissions(&temporary, path).map_err(|source| FsError::WriteTemporary {
+        path: path.to_path_buf(),
+        source,
+    })?;
     observer
         .reached(FileReplaceStep::TemporaryReady)
         .map_err(|source| FsError::AtomicWriteInterrupted {
             path: path.to_path_buf(),
             source,
         })?;
-    temporary.persist(path).map_err(|error| FsError::PersistTemporary {
+    replace_with_temporary(temporary, path).map_err(|source| FsError::PersistTemporary {
         path: path.to_path_buf(),
-        source: error.error,
+        source,
     })?;
     sync_directory(parent);
     Ok(())
+}
+
+/// Gives `temporary` the permissions of the file already at `target`, when there is one.
+pub(crate) fn match_existing_permissions(temporary: &NamedTempFile, target: &Path) -> io::Result<()> {
+    match fs::metadata(target) {
+        Ok(existing) if existing.is_file() => temporary.as_file().set_permissions(existing.permissions()),
+        _ => Ok(()),
+    }
+}
+
+/// Moves the finished `temporary` onto `target`, replacing any file there.
+///
+/// `NamedTempFile::persist` is not used because on Windows it refuses to replace a file that anything has open, even a
+/// reader that allows it. `fs::rename` replaces a file whose readers allow deletion, as Rust's and most modern
+/// programs' do, and those readers keep the bytes they opened. A holder that forbids deletion, as the C runtime's
+/// `fopen` does, still refuses the rename, and `target` is left whole. `keep` comes first because it clears the
+/// temporary mark Windows files carry, which a rename alone would leave on `target`, and it hands cleaning up after a
+/// failed rename to this function.
+pub(crate) fn replace_with_temporary(temporary: NamedTempFile, target: &Path) -> io::Result<()> {
+    let kept = temporary.into_temp_path().keep().map_err(|failure| failure.error)?;
+    fs::rename(&kept, target).inspect_err(|_| {
+        let _ = fs::remove_file(&kept);
+    })
 }
 
 /// Creates `path` with exactly `contents`, and never replaces a file that is already there: a uniquely named temporary
@@ -194,7 +210,7 @@ pub fn create_file_observed(path: &Path, contents: &[u8], observer: &dyn FileRep
 
 /// A temporary file in `parent` that takes the permissions a hand-placed file would: on Unix the mode is requested as
 /// `0o666` and the process umask narrows it, instead of the private `0o600` a bare temporary file gets.
-fn new_shareable_temporary(parent: &Path) -> io::Result<NamedTempFile> {
+pub(crate) fn new_shareable_temporary(parent: &Path) -> io::Result<NamedTempFile> {
     #[cfg(unix)]
     {
         tempfile::Builder::new()
@@ -219,7 +235,7 @@ fn parent_of(path: &Path) -> Result<&Path, FsError> {
 
 /// Flushes the folder entry the rename wrote, where the platform lets a folder be opened. A failure is ignored: the
 /// file itself is already flushed, and this only narrows the window in which the rename could be lost.
-fn sync_directory(directory: &Path) {
+pub(crate) fn sync_directory(directory: &Path) {
     #[cfg(unix)]
     if let Ok(handle) = fs::File::open(directory) {
         let _ = handle.sync_all();

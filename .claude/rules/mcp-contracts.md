@@ -28,7 +28,7 @@ Tests should invoke the MCP adapter rather than calling only the underlying serv
 
 ## Plugin skill currency
 
-The ContextOS plugin ships an `mcp-tools` skill (`skills/mcp-tools/` in the `context-os-plugin` repository) that teaches agents to use these tools efficiently and safely. It is not a schema catalogue, because agents already read schemas from the advertised catalogue. It records what schemas cannot: which tool is cheapest for a job, which sequences are safe, and what the server maintains on its own. It is the agent-facing documentation of this public contract, so it changes in the same delivery as the behaviour it describes.
+The ContextOS plugin ships an `mcp-tools` skill (`plugins/context-os/skills/mcp-tools/` in the `marketplace` repository) that teaches agents to use these tools efficiently and safely. It is not a schema catalogue, because agents already read schemas from the advertised catalogue. It records what schemas cannot: which tool is cheapest for a job, which sequences are safe, and what the server maintains on its own. It is the agent-facing documentation of this public contract, so it changes in the same delivery as the behaviour it describes.
 
 Update the skill when a change:
 
@@ -41,8 +41,8 @@ Update the skill when a change:
 Working rules:
 
 1. State the skill impact in the change brief, even when it is none.
-2. Edit the skill in the plugin repository and follow that repository's authoring rules, including its manifest and version bump.
-3. Run `.claude/scripts/check-plugin-skill.sh`, which `just ci` includes. It fails when a shipped tool is not named in the skill, the skill names a tool that no longer exists, or the fence vocabulary the plugin's vault workflow package ships (`workflows/vault/templates/shipped/.contextos/fences.toml`) differs from the renderer's default (`crates/contextos-markdown/default-fences.toml`). It reports a skip when no plugin checkout is available, and a skipped check is reported as skipped, never counted as passed. `CONTEXTOS_PLUGIN_DIR` points it at a checkout that is not beside this repository, and a value that is not a directory fails rather than skips.
+2. Edit the skill in the `marketplace` repository and follow that repository's authoring rules, including its manifest and version bump.
+3. Run `.claude/scripts/check-plugin-skill.sh`, which `just ci` includes. It fails when a shipped tool is not named in the skill, the skill names a tool that no longer exists, or the fence vocabulary the plugin's vault workflow package ships (`workflows/vault/templates/shipped/.contextos/fences.toml`) differs from the renderer's default (`crates/contextos-markdown/default-fences.toml`). It reports a skip when no plugin checkout is available, and a skipped check is reported as skipped, never counted as passed. `CONTEXTOS_PLUGIN_DIR` points it at the plugin folder when the `marketplace` repository is not beside this one, and a value that is not a directory fails rather than skips.
 4. Report what changed in the skill, or why no change was needed.
 
 The check is mechanical and covers names only. Whether the advice is still right is a review question, answered through the review lenses.

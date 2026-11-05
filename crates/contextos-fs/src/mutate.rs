@@ -2,6 +2,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::host_file::{match_existing_permissions, new_shareable_temporary, replace_with_temporary, sync_directory};
 use contextos_core::{
     AppendMutation, AppendOutcome, AppendsVault, AppliesMutations, Clock, ContentHash, CreateDirectoryMutation,
     CreateDirectoryOutcome, DeleteMode, DeleteMutation, DeleteOutcome, LineEndingsConverted, MoveMutation, MoveOutcome,
@@ -12,7 +13,6 @@ use contextos_core::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
-use tempfile::NamedTempFile;
 
 use crate::discover::hash_file;
 use crate::read::MAX_ATTACHMENT_BYTES;
@@ -320,7 +320,7 @@ impl AppliesMutations for Filesystem {
         })?;
         self.revalidate(&request.path)?;
 
-        let mut temporary = NamedTempFile::new_in(parent).map_err(|source| FsError::CreateTemporary {
+        let mut temporary = new_shareable_temporary(parent).map_err(|source| FsError::CreateTemporary {
             path: target.clone(),
             source,
         })?;
@@ -337,16 +337,21 @@ impl AppliesMutations for Filesystem {
                 path: target.clone(),
                 source,
             })?;
+        match_existing_permissions(&temporary, &target).map_err(|source| FsError::WriteTemporary {
+            path: target.clone(),
+            source,
+        })?;
         self.atomic_write_guard
             .after_flush(&target)
             .map_err(|source| FsError::AtomicWriteInterrupted {
                 path: target.clone(),
                 source,
             })?;
-        temporary.persist(&target).map_err(|error| FsError::PersistTemporary {
+        replace_with_temporary(temporary, &target).map_err(|source| FsError::PersistTemporary {
             path: target.clone(),
-            source: error.error,
+            source,
         })?;
+        sync_directory(parent);
 
         let mut hasher = Sha256::new();
         hasher.update(request.content.as_bytes());
