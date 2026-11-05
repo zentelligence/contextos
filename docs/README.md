@@ -1,8 +1,8 @@
 # Documentation
 
-Usage documentation for the `contextos` MCP server.
+Usage documentation for the `contextos` MCP server and the `contextos-web` web interface.
 
-- [`installation.md`](installation.md): building, installing, and first run
+- [`installation.md`](installation.md): installing from a release or from source, first run, and updating
 - [`configuration.md`](configuration.md): `config.toml` field reference (see also [`config.example.toml`](config.example.toml), a complete annotated example)
 - [`cli-reference.md`](cli-reference.md): every `contextos` subcommand
 - [`mcp-service.md`](mcp-service.md): running the MCP server as a background service over HTTP: installing, starting, stopping, and recovering it

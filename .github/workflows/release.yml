@@ -116,7 +116,8 @@ jobs:
             contextos_path="bin/contextos"
             contextos_web_path="bin/contextos-web"
           fi
-          cp README.md "${staging}/"
+          # The README for people running these programs, not the repository's own.
+          cp packaging/README.md "${staging}/README.md"
           # The product's own licence and notice, and the attribution every bundled third-party crate's licence
           # requires to travel with the binaries.
           cp LICENSE NOTICE THIRD_PARTY_LICENSES.md "${staging}/"
