@@ -186,7 +186,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: zentelligence/auto-updater
-          ref: 715093a3259c83945cb667cc56b69fde0823d281
+          ref: ecd9e8e844d341d8be20c1ca429a1c0087dd79ba
           path: auto-updater
 
       - uses: dtolnay/rust-toolchain@stable
