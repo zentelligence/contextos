@@ -149,7 +149,7 @@ pub(crate) fn run_update(yes: bool) -> CliResult<String> {
         format!("Installed release set {installed}."),
         format!("All new command invocations will now use {installed}."),
     ];
-    lines.extend(refresh_launchers(root.as_path(), &installed.to_string())?);
+    lines.extend(refresh_launchers(root.as_path(), &installed)?);
     Ok(lines.join("\n"))
 }
 
@@ -208,7 +208,7 @@ pub(crate) fn run_install(requested_version: Option<String>) -> CliResult<String
         install_update(&collaborators, &context, true)?
     };
 
-    let commands_report = set_up_commands(root.as_path(), &installed.to_string())?;
+    let commands_report = set_up_commands(root.as_path(), &installed)?;
     Ok(format!(
         "Installed ContextOS {installed}.\n{commands_report}\nOpen a new terminal, then run 'contextos config' to set up your vault."
     ))

@@ -180,17 +180,17 @@ tower-http = { version = "0.6", default-features = false, features = ["fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 trash = { version = "5.2.6", default-features = false }
-# The self-update client: `contextos-mcp` embeds `update`/`rollback`/
-# `install --version` and `contextos-launcher` resolves the active release.
+# The self-update client: `contextos-launcher` resolves the active release, and
+# installs, updates, and removes the suite through these crates.
 # Pinned to a commit of the public `zentelligence/auto-updater` repository, so
 # every machine and CI build the same updater. The release workflow builds
 # `updater-keytool` from the same commit; move both together. To work on the
 # updater alongside this workspace, override these in an untracked
 # `[patch."https://github.com/zentelligence/auto-updater.git"]` table rather
 # than editing them here.
-updater-core = { git = "https://github.com/zentelligence/auto-updater.git", rev = "715093a3259c83945cb667cc56b69fde0823d281" }
-updater-engine = { git = "https://github.com/zentelligence/auto-updater.git", rev = "715093a3259c83945cb667cc56b69fde0823d281" }
-updater-launcher = { git = "https://github.com/zentelligence/auto-updater.git", rev = "715093a3259c83945cb667cc56b69fde0823d281" }
+updater-core = { git = "https://github.com/zentelligence/auto-updater.git", rev = "ecd9e8e844d341d8be20c1ca429a1c0087dd79ba" }
+updater-engine = { git = "https://github.com/zentelligence/auto-updater.git", rev = "ecd9e8e844d341d8be20c1ca429a1c0087dd79ba" }
+updater-launcher = { git = "https://github.com/zentelligence/auto-updater.git", rev = "ecd9e8e844d341d8be20c1ca429a1c0087dd79ba" }
 walkdir = "2.5"
 yaml_serde = "0.10.4"
 

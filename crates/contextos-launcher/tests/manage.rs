@@ -9,8 +9,10 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Serialises these tests. They write programs and then run them, and a process started by another test at that moment
 /// inherits the open file, which makes the kernel refuse to run it with "Text file busy".
+#[cfg(unix)]
 static EXECUTABLES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(unix)]
 fn exclusive() -> std::sync::MutexGuard<'static, ()> {
     EXECUTABLES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
