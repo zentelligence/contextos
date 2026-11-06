@@ -1,4 +1,4 @@
-//! The host's shared workflows and the jobs under them: `GET /shared` lists every workflow of every installed package with
+//! The host's shared workflows and the jobs under them: `GET /shared/workflows` lists every workflow of every installed package with
 //! its jobs, filterable by state, and `GET /shared/workflows/{{package}}/{{workflow}}` shows one. A job, and what an operator
 //! does to it, is in [`crate::routes::shared_workflow_jobs`].
 //!
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use contextos_workflows::{Clock, JobLifecycle, JobState, JobsState, SystemClock};
+use contextos_workflows::{Clock, JobsState, SystemClock};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -22,12 +22,12 @@ use crate::jobs::is_url_safe_slug;
 use crate::mcp_client::{McpClient, McpClientSet};
 use crate::page_runs::PageRuns;
 use crate::release_views::{ReleasesInput, ReleasesSection};
-use crate::rendering::page::{self, BreadcrumbSegment};
+use crate::rendering::page::{self, BreadcrumbSegment, PageTitle};
 use crate::rendering::shell::{self, ActiveScreen};
 use crate::routes::vault::{error_response, html_response, not_found, unreachable};
 use crate::routes::workflow_views::{
-    CardParts, Fact, JobCard, Link, Problem, StateFilter, WorkflowDetail, WorkflowEntry, WorkflowsList, chips,
-    render_detail, render_list,
+    CardParts, Fact, JobCard, Link, Problem, Scope, StateCounts, StateFilter, WorkflowDetail, WorkflowEntry,
+    WorkflowsList, render_detail, render_list, state_tiles,
 };
 use crate::run_control_shared::{SharedRunControl, SharedRunHost};
 use crate::scheduler::{RunKind, run_allowed};
@@ -36,6 +36,7 @@ use crate::shared_index::{SharedIndexError, SharedIndexedJob, SharedWorkflow, in
 use crate::shared_runs::recent_shared_runs;
 use crate::shared_state::{SharedStateError, SharedStateStore};
 use crate::shared_validation::SharedValidationHost;
+use crate::view_favourites::WORKFLOWS;
 use crate::workflow_releases_stores::SharedReleases;
 
 /// Where the host keeps what the shared pages read, under the platform app-data directory.
@@ -205,23 +206,8 @@ pub(crate) fn card(job: &SharedIndexedJob, state: &JobsState, runs_root: &std::p
     })
 }
 
-fn entry(
-    workflow: &SharedWorkflow,
-    state: &JobsState,
-    runs_root: &std::path::Path,
-    filter: StateFilter,
-) -> SharedEntry {
-    let jobs = workflow
-        .jobs
-        .iter()
-        .filter(|job| {
-            let lifecycle = state
-                .job(&job.key.package, &job.key.workflow, &job.key.job)
-                .map_or_else(JobLifecycle::default, JobState::lifecycle);
-            filter.admits(lifecycle)
-        })
-        .map(|job| card(job, state, runs_root))
-        .collect();
+fn entry(workflow: &SharedWorkflow, state: &JobsState, runs_root: &std::path::Path) -> SharedEntry {
+    let jobs = workflow.jobs.iter().map(|job| card(job, state, runs_root)).collect();
     let facts = vec![
         Fact {
             label: "Package",
@@ -255,10 +241,10 @@ fn entry(
     }
 }
 
-/// Every shared workflow with the jobs the filter admits, newest state and latest run read from the host.
+/// Every shared workflow with its jobs, newest state and latest run read from the host.
 ///
 /// Blocking: reads the package store, the job files, the state file, and run records, so call it from a blocking thread.
-pub(crate) fn entries(roots: &SharedRoots, filter: StateFilter) -> Result<Vec<SharedEntry>, PageError> {
+pub(crate) fn entries(roots: &SharedRoots) -> Result<Vec<SharedEntry>, PageError> {
     let indexed = index_shared(&roots.store_root, &roots.jobs_root)?;
     let state = SharedStateStore::new(roots.state_root.clone()).read()?;
     Ok(indexed
@@ -272,7 +258,7 @@ pub(crate) fn entries(roots: &SharedRoots, filter: StateFilter) -> Result<Vec<Sh
             }
             addressable
         })
-        .map(|workflow| entry(workflow, &state, &roots.runs_root, filter))
+        .map(|workflow| entry(workflow, &state, &roots.runs_root))
         .collect())
 }
 
@@ -302,11 +288,45 @@ pub(crate) async fn shell_nav(
         },
         shell::mcp_status(&state.clients),
     );
+    // The shared screens sit among a vault's workflows, so they keep the sidebar of the vault the header already leads
+    // to rather than leaving someone with no navigation at all. Only the sidebar: the page itself still has no vault.
+    if let Some(target) = nav.nav_target_vault.clone() {
+        let vault_nav = Box::pin(shell::build_nav(
+            client,
+            ActiveScreen::Jobs,
+            Some(&target),
+            Some("Workflows"),
+            None,
+            None,
+            &server_names,
+        ))
+        .await;
+        nav.sidebar_groups = vault_nav.sidebar_groups;
+    }
     nav.breadcrumb = breadcrumb;
     nav.appearance = appearance;
     nav.sidebar_wide = sidebar_wide;
     nav.mcp_status = mcp_status;
     nav
+}
+
+/// The configured vaults' names, for the tabs that lead back to them, or none with no session to ask.
+pub(crate) async fn vault_names(state: &SharedRoutesState) -> Vec<String> {
+    match crate::routes::primary_session(&state.clients) {
+        Ok(client) => shell::vault_names(&client).await,
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The title bar of a shared screen, which has no favourite: favourites belong to a vault.
+pub(crate) fn screen_title(label: &str, icon: &'static str) -> PageTitle {
+    PageTitle {
+        icon,
+        label: label.to_owned(),
+        actions_html: String::new(),
+        download_html: String::new(),
+        favourite_toggle_html: String::new(),
+    }
 }
 
 pub(crate) fn crumb(label: &str, href: Option<String>) -> BreadcrumbSegment {
@@ -323,6 +343,17 @@ pub(crate) async fn respond(
     breadcrumb: Vec<BreadcrumbSegment>,
     fragment: String,
 ) -> Response {
+    respond_titled(state, headers, breadcrumb, fragment, None).await
+}
+
+/// [`respond`], with the title bar of a screen that has one.
+pub(crate) async fn respond_titled(
+    state: &SharedRoutesState,
+    headers: &HeaderMap,
+    breadcrumb: Vec<BreadcrumbSegment>,
+    fragment: String,
+    title: Option<PageTitle>,
+) -> Response {
     if headers.contains_key("hx-request") {
         return html_response(fragment);
     }
@@ -330,13 +361,14 @@ pub(crate) async fn respond(
         Ok(client) => client,
         Err(response) => return *response,
     };
-    let nav = shell_nav(
+    let mut nav = shell_nav(
         state,
         &client,
         breadcrumb,
         crate::routes::sidebar_wide_from_headers(headers),
     )
     .await;
+    nav.page_title = title;
     html_response(page::render_page(&nav, "Workflows", &fragment))
 }
 
@@ -351,7 +383,19 @@ pub struct SharedQuery {
     state: Option<String>,
 }
 
-/// `GET /shared`: lists every shared workflow with its jobs, or only the jobs in the state `?state=` names.
+/// `all`, with only the jobs `filter` admits.
+fn admitted(all: Vec<SharedEntry>, filter: StateFilter) -> Vec<SharedEntry> {
+    all.into_iter()
+        .map(|mut shared| {
+            shared.entry.jobs.retain(|job| filter.admits(job.lifecycle));
+            shared
+        })
+        // A filter hides a workflow with no job in it, which would only be an empty heading.
+        .filter(|shared| filter == StateFilter::All || !shared.entry.jobs.is_empty())
+        .collect()
+}
+
+/// `GET /shared/workflows`: lists every shared workflow with its jobs, or only the jobs in the state `?state=` names.
 pub async fn list(
     State(state): State<SharedRoutesState>,
     Query(query): Query<SharedQuery>,
@@ -361,7 +405,7 @@ pub async fn list(
         return error_response(StatusCode::BAD_REQUEST, "workflows/unknown-state-filter");
     };
     let roots = Arc::clone(&state.roots);
-    let gathered = tokio::task::spawn_blocking(move || entries(&roots, filter)).await;
+    let gathered = tokio::task::spawn_blocking(move || entries(&roots)).await;
     let all = match gathered {
         Ok(Ok(all)) => all,
         Ok(Err(error)) => return page_failure(&error),
@@ -370,25 +414,26 @@ pub async fn list(
             return unreachable();
         }
     };
-    let workflows: Vec<WorkflowEntry> = all
-        .into_iter()
-        .map(|shared| shared.entry)
-        // A filter hides a workflow with no job in it, which would only be an empty heading.
-        .filter(|workflow| filter == StateFilter::All || !workflow.jobs.is_empty())
+    let counts: StateCounts = all
+        .iter()
+        .flat_map(|shared| shared.entry.jobs.iter().map(|job| job.lifecycle))
         .collect();
-    let shown = workflows.iter().map(|workflow| workflow.jobs.len()).sum();
+    let workflows: Vec<WorkflowEntry> = admitted(all, filter).into_iter().map(|shared| shared.entry).collect();
     let fragment = render_list(&WorkflowsList {
-        links: vec![Link {
-            href: "/shared/packages".to_owned(),
-            label: "Library releases",
-        }],
+        scope: Scope::SharedWorkflows.tabs(&vault_names(&state).await),
         filter_value: filter.value(),
-        chips: chips("/shared", filter),
+        tiles: state_tiles(crate::urls::SHARED_WORKFLOWS, filter, &counts),
         workflows,
-        shown,
         notices: Vec::new(),
     });
-    respond(&state, &headers, vec![crumb("shared", None)], fragment).await
+    respond_titled(
+        &state,
+        &headers,
+        vec![crumb("Shared workflows", None)],
+        fragment,
+        Some(screen_title("Shared workflows", WORKFLOWS.icon)),
+    )
+    .await
 }
 
 /// `GET /shared/workflows/{{package}}/{{workflow}}`: one shared workflow, the release it comes from, and its jobs.
@@ -401,7 +446,7 @@ pub async fn workflow(
         return not_found();
     }
     let roots = Arc::clone(&state.roots);
-    let gathered = tokio::task::spawn_blocking(move || entries(&roots, StateFilter::All)).await;
+    let gathered = tokio::task::spawn_blocking(move || entries(&roots)).await;
     let all = match gathered {
         Ok(Ok(all)) => all,
         Ok(Err(error)) => return page_failure(&error),
@@ -440,7 +485,7 @@ pub async fn workflow(
     };
     let fragment = render_detail(&WorkflowDetail {
         back: Link {
-            href: "/shared".to_owned(),
+            href: crate::urls::SHARED_WORKFLOWS.to_owned(),
             label: "All shared workflows",
         },
         workflow: found.entry,
@@ -450,7 +495,7 @@ pub async fn workflow(
         &state,
         &headers,
         vec![
-            crumb("shared", Some("/shared".to_owned())),
+            crumb("Shared workflows", Some(crate::urls::SHARED_WORKFLOWS.to_owned())),
             crumb(&package, None),
             crumb(&workflow, None),
         ],

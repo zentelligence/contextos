@@ -25,8 +25,8 @@ use crate::rendering::page;
 use crate::rendering::shell::{self, ActiveScreen};
 use crate::routes::vault::{error_response, html_response, not_found, server_not_configured, unreachable};
 use crate::routes::workflow_views::{
-    CardParts, Fact, JobCard, Link, Problem, StateFilter, WorkflowDetail, WorkflowEntry, WorkflowsList, chips,
-    render_detail, render_list,
+    CardParts, Fact, JobCard, Link, Problem, Scope, StateCounts, StateFilter, WorkflowDetail, WorkflowEntry,
+    WorkflowsList, render_detail, render_list, state_tiles,
 };
 use crate::run_settings::HostContext;
 use crate::scheduler::{self, RunKind, run_allowed};
@@ -321,22 +321,22 @@ pub async fn list(
             jobs: Vec::new(),
         }));
     }
-    let shown = workflows.iter().map(|workflow| workflow.jobs.len()).sum();
+    let counts: StateCounts = indexed
+        .workflows
+        .iter()
+        .flat_map(|workflow| {
+            workflow.jobs.iter().map(|job| {
+                job_state
+                    .job(&workflow.package, &workflow.slug, &job.slug)
+                    .map_or_else(JobLifecycle::default, JobState::lifecycle)
+            })
+        })
+        .collect();
     let fragment = render_list(&WorkflowsList {
-        links: vec![
-            Link {
-                href: "/shared".to_owned(),
-                label: "Shared workflows",
-            },
-            Link {
-                href: crate::urls::VaultUrls::from(&*vault_name).packages(),
-                label: "Library releases",
-            },
-        ],
+        scope: Scope::VaultWorkflows(&vault_name).tabs(&[]),
         filter_value: filter.value(),
-        chips: chips(&list_path, filter),
+        tiles: state_tiles(&list_path, filter, &counts),
         workflows,
-        shown,
         notices: crate::team_notice::team_notice(&client, &vault_name)
             .await
             .into_iter()

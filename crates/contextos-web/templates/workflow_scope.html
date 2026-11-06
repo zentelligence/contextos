@@ -1,0 +1,3 @@
+<nav class="workflow-scope" aria-label="Workflow screens">
+{% for tab in scope %}  <a class="btn small{% if tab.active %} primary{% endif %}" href="{{ tab.href }}"{% if tab.active %} aria-current="page"{% endif %}>{{ tab.label }}</a>
+{% endfor %}</nav>

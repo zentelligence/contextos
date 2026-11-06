@@ -456,10 +456,50 @@ a.journal-calendar-day:hover{background:var(--bg-panel-raised);text-decoration:n
 .jobs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:12px;}
 .job-avatar{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;flex:0 0 36px;border-radius:50%;border:1px solid var(--job-accent,var(--accent-primary));color:var(--job-accent,var(--accent-primary));box-shadow:0 0 14px -4px var(--job-accent,var(--accent-primary));}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid var(--border);border-radius:var(--radius-badge);font-size:calc(11rem / 14);color:var(--fg-muted);}
-.job-status,.job-detail-summary,.job-card-meta,.job-run-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.job-card-meta{justify-content:space-between;margin:12px 0;}
+.job-run-state,.job-detail-summary,.job-card-meta,.job-card-state,.job-run-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.job-card-meta{justify-content:space-between;margin:12px 0 4px;}
 .job-schedule,.job-run-times{font-family:var(--font-mono);font-size:calc(11rem / 14);color:var(--fg-muted);overflow-wrap:anywhere;}
-.job-properties{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0;}
+.workflow-scope{display:flex;gap:8px;flex-wrap:wrap;}
+.jobs-screen .task-stage-strip{margin-bottom:0;}
+.job-tile-attention .task-stage-count{color:var(--status-attention);}
+.workflow-section .panel-header h2 a{color:var(--fg);}
+.back-link{display:inline-flex;align-items:center;gap:4px;align-self:flex-start;color:var(--fg-muted);text-decoration:none;font-size:calc(12.5rem / 14);}
+.back-link:hover{color:var(--fg);}
+.job-card{display:flex;flex-direction:column;min-width:0;}
+.job-card .panel-header{margin-bottom:10px;}
+.job-card .panel-header h3{flex:1;min-width:0;margin:0;overflow-wrap:anywhere;font:var(--fw-medium) var(--fs-sm,1rem)/1.3 var(--font-ui);}
+.job-card .panel-header h3 a{color:var(--fg);}
+.job-card-state{margin:0 0 8px;}
+.job-schedule{margin:0;}
+.job-card-last-run{margin:0 0 12px;}
+.job-card .row-card-actions{margin-top:auto;}
+.job-run-state{font-size:calc(12rem / 14);color:var(--fg-muted);}
+.badge.lifecycle-enabled{color:var(--status-ok);}
+.badge.lifecycle-suspended,.badge.lifecycle-draft{color:var(--status-attention);}
+.badge.lifecycle-validated,.badge.lifecycle-registered{color:var(--accent-primary);}
+.badge.lifecycle-retired{color:var(--fg-faint);}
+.job-status-panel>.job-properties{margin-top:0;}
+.job-actions{display:flex;align-items:flex-end;gap:8px 12px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);}
+#job-runs .job-actions{margin:0 0 12px;padding-top:0;border-top:0;}
+.job-schedule-form,.job-suspend-form{display:flex;align-items:flex-end;gap:8px;margin:0;}
+.job-schedule-form label,.job-suspend-form label{display:flex;flex-direction:column;gap:4px;font-size:calc(11rem / 14);color:var(--fg-muted);}
+.job-schedule-form input,.job-suspend-form input{min-width:0;padding:4px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--bg);color:var(--fg);font:inherit;font-size:calc(12.5rem / 14);}
+.job-schedule-form input{font-family:var(--font-mono);}
+.job-confirm-delete{flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.job-confirm-delete p{flex-basis:100%;margin:0;}
+.btn.danger{border-color:var(--status-blocked);color:var(--status-blocked);}
+.job-message{margin:0;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--bg-panel-raised);}
+.job-message[role=alert]{border-color:var(--status-blocked);color:var(--status-blocked);}
+.job-active-run{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;}
+.validation-failures{margin:0 0 12px;padding-left:18px;color:var(--status-blocked);}
+.validation-failures li{margin-bottom:4px;overflow-wrap:anywhere;}
+.content table.packages-table{display:table;width:100%;margin:0;border-collapse:collapse;}
+.content .packages-table th,.content .packages-table td{padding:8px 12px;border:0;border-bottom:1px solid var(--border);background:none;text-align:left;vertical-align:top;overflow-wrap:anywhere;}
+.content .packages-table thead th{font-size:calc(11rem / 14);font-weight:var(--fw-medium);color:var(--fg-muted);}
+.content .packages-table tbody tr:last-child>*{border-bottom:0;}
+.content .packages-table tbody th{font-size:inherit;font-weight:var(--fw-medium);}
+.jobs-screen>.hint{margin:0;}
+.job-properties{display:flex;gap:12px 24px;flex-wrap:wrap;margin:12px 0;}
 .job-properties dt{font-size:calc(11rem / 14);color:var(--fg-muted);}
 .job-properties dd{margin:4px 0 0;overflow-wrap:anywhere;}
 .job-run-log{list-style:none;margin:0;padding:0;}
@@ -479,8 +519,12 @@ a.journal-calendar-day:hover{background:var(--bg-panel-raised);text-decoration:n
 
 /* Release pages: a workflow's releases, a job's release and chain, and a store's library releases with their checks. */
 .job-run-mark{font-family:var(--font-mono);font-size:calc(11rem / 14);overflow-wrap:anywhere;}
-.workflow-releases,.job-release,.library-releases{display:flex;flex-direction:column;gap:12px;}
-.workflow-releases .release{padding:12px 0;border-top:1px solid var(--border);}
+.workflow-releases,.job-release,.library-releases{display:flex;flex-direction:column;gap:8px;}
+.job-release>.panel-header,.workflow-releases>.panel-header,.library-releases>.panel-header{margin-bottom:0;}
+.job-release p,.job-release .job-properties,.workflow-releases p,.workflow-releases .job-properties{margin:0;}
+.workflow-releases details{margin-top:8px;}
+.workflow-releases summary{cursor:pointer;color:var(--fg-muted);font-size:calc(12.5rem / 14);}
+.workflow-releases .release{padding:12px 0 12px 12px;border-top:1px solid var(--border);}
 .workflow-releases .release:first-of-type{border-top:0;}
 .workflow-releases .release h3{margin:0 0 8px;font:var(--fw-medium) var(--fs-sm,1rem)/1.3 var(--font-ui);}
 .release-current{border-left:2px solid var(--status-ok);padding-left:12px;}

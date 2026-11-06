@@ -10,11 +10,16 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ### Fixed
 
+- The shared workflows and library pages have a title, the sidebar, and tabs that lead back to each vault. They had no way back.
+- A job's Status panel lays out its heading, fields, and actions in order, rather than in one row.
 - A launcher saved under another name, such as a browser's `contextos-launcher (1)`, still installs and updates. It used to report that ContextOS was not installed.
 
 ### Changed
 
-- Release and CI jobs have time limits, so a hung job fails within about an hour instead of six.
+- Release jobs and the CI test jobs have time limits, so a hung job fails long before GitHub's six-hour default.
+- The shared workflows list moves from `/shared` to `/shared/workflows`, in line with the pages beneath it. Nothing answers at `/shared` any more.
+- The workflows lists show a strip of job counts by state, which also filters the list, in place of plain links.
+- The workflow, job, and library screens now follow the rest of the interface, with tidier job cards, an actions row, and styled forms and tables.
 
 ## [0.23.7] - 2026-11-06
 

@@ -7,6 +7,12 @@
 
 use crate::inbox_outbox::encode_query_value;
 
+/// The host's shared workflows, which belong to no vault.
+pub(crate) const SHARED_WORKFLOWS: &str = "/shared/workflows";
+
+/// The host's library releases, beside its shared workflows.
+pub(crate) const SHARED_PACKAGES: &str = "/shared/packages";
+
 /// The URLs within one vault.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VaultUrls {

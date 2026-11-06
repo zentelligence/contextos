@@ -51,7 +51,11 @@ fn a_renamed_launcher_still_manages_the_installation() -> Result<(), BoxError> {
             .env("CONTEXTOS_INSTALL_ROOT", directory.path().join("root"))
             .output()?;
 
-        assert!(output.status.success(), "{name}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let expected = format!("ContextOS Launcher {}\n", env!("CARGO_PKG_VERSION"));
         assert_eq!(String::from_utf8(output.stdout)?, expected, "{name}");
     }

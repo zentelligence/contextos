@@ -620,6 +620,18 @@ pub async fn build_nav(
 #[path = "shell_test.rs"]
 mod tests;
 
+/// The configured vaults' names, or none when the server cannot say. A warning, because a page that wants them still
+/// shows without them.
+pub(crate) async fn vault_names(client: &McpClient) -> Vec<String> {
+    match fetch_vault_info(client).await {
+        Ok(info) => info.vaults.into_iter().map(|vault| vault.name).collect(),
+        Err(error) => {
+            tracing::warn!(%error, "the configured vaults could not be read");
+            Vec::new()
+        }
+    }
+}
+
 /// The main content panel's title bar for `view`: its icon and name, and the star that un/favourites it, showing the
 /// vault's stored state.
 pub(crate) async fn page_title(client: &McpClient, vault: &str, view: &crate::view_favourites::View) -> PageTitle {

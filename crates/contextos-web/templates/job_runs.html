@@ -1,4 +1,4 @@
-<section id="job-runs" class="panel job-runs"{% if beside_another %} hx-swap-oob="outerHTML"{% endif %}{% if self.polling() %} hx-get="{{ base_path }}/runs" hx-trigger="every 3s" hx-target="this" hx-swap="outerHTML"{% endif %}>
+<section id="job-runs" class="panel"{% if beside_another %} hx-swap-oob="outerHTML"{% endif %}{% if self.polling() %} hx-get="{{ base_path }}/runs" hx-trigger="every 3s" hx-target="this" hx-swap="outerHTML"{% endif %}>
   <header class="panel-header"><h2>Run log</h2><span class="hint">Most recent first · Up to 20 runs</span></header>
 {% if let Some(message) = message %}  <p class="job-message" role="{% if message.ok %}status{% else %}alert{% endif %}">{{ message.text }}</p>
 {% endif %}{% if let Some(active) = active %}  <p class="job-active-run" role="status">Run <strong>{{ active.label }}</strong> is running, since <time>{{ active.since }}</time>.

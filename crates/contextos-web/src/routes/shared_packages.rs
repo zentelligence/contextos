@@ -24,9 +24,11 @@ use crate::package_op_error::PackageOpError;
 use crate::package_standing::StoreStanding;
 use crate::package_store::{self, UnreadableRelease};
 use crate::package_stores::SharedPackages;
-use crate::routes::shared_workflows::{SharedRoutesState, crumb, job_href, respond, workflow_href};
+use crate::routes::shared_workflows::{
+    SharedRoutesState, crumb, job_href, respond_titled, screen_title, vault_names, workflow_href,
+};
 use crate::routes::vault::{html_response, not_found, unreachable};
-use crate::routes::workflow_views::Link;
+use crate::routes::workflow_views::{Scope, ScopeTab};
 use crate::saved_jobs::SavedJobs;
 use crate::shared_claim::SharedJobKey;
 use crate::shared_job_authoring::{JobListing, SharedJobAuthoring};
@@ -43,7 +45,8 @@ struct PackageRow {
 #[derive(Template)]
 #[template(path = "packages_list.html")]
 struct PackagesPage {
-    back: Link,
+    /// The tabs to the shared workflows and back to each vault.
+    scope: Vec<ScopeTab>,
     rows: Vec<PackageRow>,
     unreadable: Vec<UnreadableRelease>,
     /// The library releases and the workflow releases locked to each.
@@ -53,10 +56,7 @@ struct PackagesPage {
 impl From<PackageListing> for PackagesPage {
     fn from(listing: PackageListing) -> Self {
         Self {
-            back: Link {
-                href: "/shared".to_owned(),
-                label: "All shared workflows",
-            },
+            scope: Vec::new(),
             rows: listing
                 .releases()
                 .iter()
@@ -222,6 +222,7 @@ pub async fn list(State(state): State<SharedRoutesState>, headers: HeaderMap) ->
     };
     let mut page = PackagesPage::from(PackageListing::from(inventory));
     page.libraries = libraries_of(&state).await;
+    page.scope = Scope::SharedLibraries.tabs(&vault_names(&state).await);
     let fragment = match page.render() {
         Ok(fragment) => fragment,
         Err(error) => {
@@ -229,11 +230,15 @@ pub async fn list(State(state): State<SharedRoutesState>, headers: HeaderMap) ->
             return unreachable();
         }
     };
-    respond(
+    respond_titled(
         &state,
         &headers,
-        vec![crumb("shared", Some("/shared".to_owned())), crumb("packages", None)],
+        vec![
+            crumb("Shared workflows", Some(crate::urls::SHARED_WORKFLOWS.to_owned())),
+            crumb("Library releases", None),
+        ],
         fragment,
+        Some(screen_title("Library releases", "library")),
     )
     .await
 }

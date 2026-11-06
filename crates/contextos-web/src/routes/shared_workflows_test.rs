@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use contextos_workflows::{
-    Actor, JobFingerprint, JobSchedule, ReleaseFingerprintInput, StoreKind, SuspensionReason, Transition,
+    Actor, JobFingerprint, JobLifecycle, JobSchedule, ReleaseFingerprintInput, StoreKind, SuspensionReason, Transition,
 };
 use tempfile::tempdir;
 use time::macros::datetime;
@@ -102,7 +102,7 @@ fn a_job_is_a_card_under_its_shared_workflow_with_a_shared_url_and_no_favourite_
         "name = \"Nightly\"\ntimeout_secs = 60\nversion = \"1.0.0\"\n",
     )?;
 
-    let all = entries(&roots, StateFilter::All)?;
+    let all = entries(&roots)?;
 
     let workflow = find(&all, "acme", "sync")?;
     assert_eq!(workflow.entry.name, "acme / sync");
@@ -133,7 +133,7 @@ fn a_workflow_no_installed_package_provides_is_flagged_not_installed() -> TestRe
         "name = \"Nightly\"\ntimeout_secs = 60\nversion = \"1.0.0\"\n",
     )?;
 
-    let all = entries(&roots, StateFilter::All)?;
+    let all = entries(&roots)?;
 
     let problem = find(&all, "gone", "sync")?
         .entry
@@ -151,7 +151,7 @@ fn a_workflows_facts_name_its_package_release_and_script() -> TestResult {
     install(&roots, "acme", "1.0.0", "sync")?;
     install(&roots, "acme", "1.3.0", "sync")?;
 
-    let all = entries(&roots, StateFilter::All)?;
+    let all = entries(&roots)?;
 
     let facts: Vec<(&str, &str)> = find(&all, "acme", "sync")?
         .entry
@@ -179,7 +179,7 @@ fn a_job_file_that_does_not_load_is_a_card_that_says_so() -> TestResult {
         "name = \"Broken\"\nschedule = \"0 3 * * *\"\n",
     )?;
 
-    let all = entries(&roots, StateFilter::All)?;
+    let all = entries(&roots)?;
 
     let card = &find(&all, "acme", "sync")?.entry.jobs[0];
     assert_eq!(card.name, "broken");
@@ -208,9 +208,9 @@ fn the_filter_keeps_only_the_jobs_it_admits() -> TestResult {
     )?;
     suspend(&roots, "held")?;
 
-    let suspended = entries(&roots, StateFilter::State(JobLifecycle::Suspended))?;
-    let drafts = entries(&roots, StateFilter::State(JobLifecycle::Draft))?;
-    let attention = entries(&roots, StateFilter::Attention)?;
+    let suspended = admitted(entries(&roots)?, StateFilter::State(JobLifecycle::Suspended));
+    let drafts = admitted(entries(&roots)?, StateFilter::State(JobLifecycle::Draft));
+    let attention = admitted(entries(&roots)?, StateFilter::Attention);
 
     let names = |all: &[SharedEntry]| -> Result<Vec<String>, String> {
         Ok(find(all, "acme", "sync")?
@@ -237,7 +237,7 @@ fn a_state_file_that_does_not_parse_is_an_error_and_not_an_empty_list() -> TestR
     install(&roots, "acme", "1.0.0", "sync")?;
     write(&roots.state_root.join("shared-jobs.toml"), "packages = 7\n")?;
 
-    let refused = entries(&roots, StateFilter::All);
+    let refused = entries(&roots);
 
     assert!(refused.is_err());
     Ok(())
@@ -262,7 +262,7 @@ fn a_workflow_whose_package_name_cannot_be_part_of_a_url_is_left_out_and_not_lin
     install(&roots, "acme", "1.0.0", "sync")?;
     install(&roots, "Mixed_Case", "1.0.0", "sync")?;
 
-    let all = entries(&roots, StateFilter::All)?;
+    let all = entries(&roots)?;
 
     let packages: Vec<&str> = all.iter().map(|shared| shared.package.as_str()).collect();
     assert_eq!(packages, ["acme"]);

@@ -123,8 +123,8 @@ pub(crate) fn workflows_router(state: WorkflowRoutesState) -> Router {
 /// vault: `/shared/workflows/{package}` stands where `/{vault}/workflows/{package}` does for a vault's workflows, and the shape beneath it is the same.
 pub fn shared_router(state: SharedRoutesState) -> Router {
     Router::new()
-        .route("/shared", get(routes::shared_workflows::list))
-        .route("/shared/", get(routes::shared_workflows::list))
+        .route("/shared/workflows", get(routes::shared_workflows::list))
+        .route("/shared/workflows/", get(routes::shared_workflows::list))
         .route("/shared/packages", get(routes::shared_packages::list))
         .route(
             "/shared/packages/{name}/versions/{version}/execute/{command}",

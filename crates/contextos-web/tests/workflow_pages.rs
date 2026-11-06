@@ -166,7 +166,26 @@ fn job_url(tail: &str) -> String {
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_list_shows_each_workflow_with_its_jobs_and_a_filter_chip_per_state() -> Result<(), BoxError> {
+async fn the_vault_list_counts_its_jobs_by_state_and_leads_to_the_shared_workflows() -> Result<(), BoxError> {
+    let site = site().await?;
+    for path in [
+        format!("/{VAULT}/workflows"),
+        format!("/{VAULT}/workflows?state=enabled"),
+    ] {
+        let page = site.get(&path).await?;
+        for expected in [
+            "aria-label=\"All: 1\"",
+            "aria-label=\"draft: 1\"",
+            "href=\"/shared/workflows\"",
+        ] {
+            assert!(page.body.contains(expected), "{path} lacks {expected}: {}", page.body);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_list_shows_each_workflow_with_its_jobs_and_a_tile_per_state() -> Result<(), BoxError> {
     let site = site().await?;
 
     let page = site.get(&format!("/{VAULT}/workflows")).await?;
@@ -178,11 +197,11 @@ async fn the_list_shows_each_workflow_with_its_jobs_and_a_filter_chip_per_state(
         page.body
     );
     assert!(page.body.contains(&job_url("")), "{}", page.body);
-    for chip in ["Needs attention", "draft", "suspended", "retired"] {
-        assert!(page.body.contains(chip), "{chip}");
+    for tile in ["Needs attention", "draft", "suspended", "retired"] {
+        assert!(page.body.contains(tile), "{tile}");
     }
     assert!(
-        page.body.contains("href=\"/shared\""),
+        page.body.contains("href=\"/shared/workflows\""),
         "the shared workflows are one link away:\n{}",
         page.body
     );

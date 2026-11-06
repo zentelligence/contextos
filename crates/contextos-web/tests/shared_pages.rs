@@ -123,10 +123,86 @@ async fn a_shared_workflow_page_lists_its_releases_with_the_jobs_on_each() -> Re
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_list_shows_each_shared_workflow_with_its_jobs_and_a_filter_chip_per_state() -> Result<(), BoxError> {
+async fn the_list_is_at_shared_workflows_and_nothing_answers_at_shared() -> Result<(), BoxError> {
+    let site = site(JOB).await?;
+    assert_eq!(site.get("/shared/workflows").await?.status, StatusCode::OK);
+    assert_eq!(site.get("/shared/workflows/").await?.status, StatusCode::OK);
+    assert_eq!(site.get("/shared").await?.status, StatusCode::NOT_FOUND);
+    assert_eq!(site.get("/shared/").await?.status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+// The strip is how an operator sees what needs them, so a filter narrows the jobs listed and never the counts.
+#[tokio::test]
+async fn the_state_strip_counts_every_job_whichever_filter_is_in_use() -> Result<(), BoxError> {
+    let site = site(JOB).await?;
+    for path in ["/shared/workflows", "/shared/workflows?state=enabled"] {
+        let page = site.get(path).await?;
+        for count in [
+            "aria-label=\"All: 1\"",
+            "aria-label=\"draft: 1\"",
+            "aria-label=\"enabled: 0\"",
+        ] {
+            assert!(page.body.contains(count), "{path} lacks {count}: {}", page.body);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_shared_list_is_titled_and_leads_back_to_each_vaults_workflows() -> Result<(), BoxError> {
+    let site = site(JOB).await?;
+    let page = site.get("/shared/workflows").await?;
+    assert!(page.body.contains("class=\"page-title\""), "{}", page.body);
+    assert!(page.body.contains("Shared workflows"), "{}", page.body);
+    assert!(
+        page.body.contains("href=\"/contract-fixture/workflows\""),
+        "{}",
+        page.body
+    );
+    assert!(page.body.contains("href=\"/shared/packages\""), "{}", page.body);
+    Ok(())
+}
+
+// A fragment replaces the whole screen, so a filter must not lose the way back.
+#[tokio::test]
+async fn a_filtered_fragment_keeps_the_way_back_to_the_vault() -> Result<(), BoxError> {
+    let site = site(JOB).await?;
+    let fragment = site.send("GET", "/shared/workflows?state=draft", true, None).await?;
+    assert!(
+        fragment.body.contains("href=\"/contract-fixture/workflows\""),
+        "{}",
+        fragment.body
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_shared_pages_keep_the_sidebar_of_the_vault_the_header_leads_to() -> Result<(), BoxError> {
+    let site = site(JOB).await?;
+    let page = site.get("/shared/workflows").await?;
+    assert!(page.body.contains("href=\"/contract-fixture/tasks"), "{}", page.body);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_library_page_leads_back_to_the_shared_workflows_and_each_vault() -> Result<(), BoxError> {
+    let site = site(JOB).await?;
+    let page = site.get("/shared/packages").await?;
+    assert!(page.body.contains("href=\"/shared/workflows\""), "{}", page.body);
+    assert!(
+        page.body.contains("href=\"/contract-fixture/workflows\""),
+        "{}",
+        page.body
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_list_shows_each_shared_workflow_with_its_jobs_and_a_tile_per_state() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let page = site.get("/shared").await?;
+    let page = site.get("/shared/workflows").await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(
@@ -135,8 +211,8 @@ async fn the_list_shows_each_shared_workflow_with_its_jobs_and_a_filter_chip_per
         page.body
     );
     assert!(page.body.contains(JOB_URL), "{}", page.body);
-    for chip in ["Needs attention", "draft", "suspended", "retired"] {
-        assert!(page.body.contains(chip), "{chip}");
+    for tile in ["Needs attention", "draft", "suspended", "retired"] {
+        assert!(page.body.contains(tile), "{tile}");
     }
     assert!(
         !page.body.contains("Run now"),
@@ -150,9 +226,9 @@ async fn the_list_shows_each_shared_workflow_with_its_jobs_and_a_filter_chip_per
 async fn the_state_filter_shows_only_the_jobs_in_that_state() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let drafts = site.get("/shared?state=draft").await?;
-    let enabled = site.get("/shared?state=enabled").await?;
-    let unknown = site.get("/shared?state=sleeping").await?;
+    let drafts = site.get("/shared/workflows?state=draft").await?;
+    let enabled = site.get("/shared/workflows?state=enabled").await?;
+    let unknown = site.get("/shared/workflows?state=sleeping").await?;
 
     assert!(drafts.body.contains("Nightly"));
     assert!(
@@ -168,7 +244,7 @@ async fn the_state_filter_shows_only_the_jobs_in_that_state() -> Result<(), BoxE
 async fn an_htmx_request_for_the_list_gets_the_fragment() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let fragment = site.send("GET", "/shared?state=draft", true, None).await?;
+    let fragment = site.send("GET", "/shared/workflows?state=draft", true, None).await?;
 
     assert!(
         fragment.body.contains("id=\"workflows-screen\"") && !fragment.body.contains("<html"),
@@ -317,7 +393,7 @@ async fn a_job_file_that_does_not_load_is_listed_as_needing_attention_and_can_be
         "name = \"Broken\"\ntimeout_secs = 30\nversion = \"1.0.0\"\nowner = \"nobody\"\n",
     )?;
 
-    let attention = site.get("/shared?state=attention").await?;
+    let attention = site.get("/shared/workflows?state=attention").await?;
     let validated = site
         .put("/shared/workflows/acme/sync/jobs/broken/execute/validate", None)
         .await?;
@@ -414,7 +490,7 @@ async fn deleting_a_retired_shared_job_from_its_page_removes_its_file_too() -> R
     assert_eq!(deleted.status, StatusCode::OK);
     assert!(!site.fixture.job_path().exists(), "the job file goes with its state");
     assert!(site.fixture.read()?.job("acme", "sync", "nightly").is_none());
-    let relisted = site.get("/shared").await?;
+    let relisted = site.get("/shared/workflows").await?;
     assert!(
         !relisted.body.contains("nightly"),
         "the deleted job is not listed again: {}",
@@ -579,7 +655,7 @@ async fn the_packages_page_shows_each_releases_exports_and_the_installed_package
         !fragment.body.contains("<script"),
         "the page adds no client-side script"
     );
-    let list = site.get("/shared").await?;
+    let list = site.get("/shared/workflows").await?;
     assert!(
         list.body.contains("/shared/packages"),
         "the workflows list links to the packages page"

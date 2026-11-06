@@ -1,9 +1,11 @@
 <div class="jobs-screen" id="packages-screen">
-  <p class="hint"><a href="{{ back.href }}">{{ back.label }}</a> · {{ rows.len() }} installed</p>
+{% include "workflow_scope.html" %}
+  <p class="hint">{{ rows.len() }} installed</p>
 {% if rows.is_empty() && unreadable.is_empty() %}
   <section class="panel"><p class="hint">No packages are installed.</p></section>
 {% else %}
   <section class="panel">
+    <header class="panel-header"><h2>Packages</h2></header>
     <table class="packages-table">
       <thead><tr><th scope="col">Package</th><th scope="col">Version</th><th scope="col">Exports</th><th scope="col">Required by</th></tr></thead>
       <tbody>
