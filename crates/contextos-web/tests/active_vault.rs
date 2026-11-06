@@ -194,12 +194,12 @@ async fn an_active_vault_that_is_not_configured_is_ignored() -> Result<(), BoxEr
 }
 
 #[tokio::test]
-async fn the_sidebar_says_which_view_is_showing_and_which_vault_its_links_open() -> Result<(), BoxError> {
+async fn the_sidebar_names_the_view_showing_and_the_vault_its_menu_belongs_to() -> Result<(), BoxError> {
     let site = site().await?;
     let shared = site.get("/shared/workflows", Some("cc_active_vault=beta")).await?;
     assert!(shared.body.contains("class=\"sidebar-scope\""), "{}", shared.body);
     assert!(shared.body.contains(">Shared view<"), "{}", shared.body);
-    assert!(shared.body.contains("Links open beta"), "{}", shared.body);
+    assert!(shared.body.contains("Vault menu: beta"), "{}", shared.body);
 
     let settings = site.get("/settings/", Some("cc_active_vault=beta")).await?;
     assert!(settings.body.contains("class=\"sidebar-scope\""), "{}", settings.body);

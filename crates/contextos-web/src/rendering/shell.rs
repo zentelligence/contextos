@@ -635,7 +635,7 @@ impl HostScreen {
         HostView {
             icon,
             label,
-            detail: vault.map(|vault| format!("Links open {vault}")),
+            detail: vault.map(|vault| format!("Vault menu: {vault}")),
         }
     }
 }
