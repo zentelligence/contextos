@@ -7,7 +7,7 @@
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use contextos_host::HostFolders;
@@ -224,11 +224,13 @@ fn remove_set_aside(folder: &Path) {
 }
 
 /// Whether `folder` is one of the folders in the `PATH` value `path`.
+#[cfg(any(not(windows), test))]
 pub(crate) fn path_holds(path: Option<&OsStr>, folder: &Path) -> bool {
     path.is_some_and(|path| std::env::split_paths(path).any(|entry| entry == folder))
 }
 
 /// The profiles that `shell` reads, under `home`. Empty for a shell whose profile this does not know how to edit.
+#[cfg(any(not(windows), test))]
 pub(crate) fn profile_files(home: &Path, shell: Option<&OsStr>) -> Vec<PathBuf> {
     match shell.map(Path::new).and_then(Path::file_name).and_then(OsStr::to_str) {
         Some("zsh") => vec![home.join(".zshrc")],
@@ -250,7 +252,10 @@ fn profile_block() -> String {
 }
 
 /// Adds `~/.local/bin` to `PATH` in `profile`, once, returning whether it changed the file.
+#[cfg(any(not(windows), test))]
 pub(crate) fn add_to_profile(profile: &Path) -> io::Result<bool> {
+    use std::io::Write;
+
     let existing = match fs::read_to_string(profile) {
         Ok(existing) => existing,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
