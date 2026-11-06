@@ -545,7 +545,7 @@ pub enum ConfigWriterError {
     NumberOutOfRange { value: u64 },
     #[error("no vault named {name} is configured")]
     UnknownVaultName { name: String },
-    #[error("the edited configuration is invalid")]
+    #[error("the edited configuration is invalid: {source}")]
     Invalid {
         #[source]
         source: ConfigError,

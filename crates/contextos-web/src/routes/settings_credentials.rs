@@ -1,7 +1,7 @@
-//! `[mcp_server.auth]`/`[mcp_server.headers]` view-building for the `/settings/` per-entry edit
+//! `[mcp_server.auth]`/`[mcp_server.headers]` view-building for the `/server/settings/` per-entry edit
 //! form, the credential-store snapshot `routes::settings::render` reads before rendering, the
-//! `?oauth_connected=`/`?oauth_error=` banner `GET /settings/` shows, and the pasted-secret
-//! extraction `PATCH /settings/` runs before a submitted `auth` patch ever reaches
+//! `?oauth_connected=`/`?oauth_error=` banner `GET /server/settings/` shows, and the pasted-secret
+//! extraction `PATCH /server/settings/` runs before a submitted `auth` patch ever reaches
 //! [`crate::config_writer::WebConfigDocument`]'s JSON-to-TOML bridge.
 //!
 //! Split out of `routes::settings` to keep that file under this repository's own per-file line
@@ -41,7 +41,7 @@ pub(crate) struct McpServerAuthView {
     /// first time an operator pastes one.
     pub(crate) bearer_credential_ref: String,
     /// Whether `bearer_credential_ref` currently resolves to a stored
-    /// [`CredentialRecord::Bearer`] record. Never the value itself: `/settings/` shows a stored
+    /// [`CredentialRecord::Bearer`] record. Never the value itself: `/server/settings/` shows a stored
     /// secret only when the operator asks for it (`routes::settings_secrets`).
     pub(crate) bearer_credential_configured: bool,
     pub(crate) oauth_client_id: String,
@@ -110,7 +110,7 @@ impl McpServerAuthView {
     }
 }
 
-/// A `POST /settings/oauth/{server_name}/detect` result for exactly one named entry, applied only
+/// A `POST /server/settings/oauth/{server_name}/detect` result for exactly one named entry, applied only
 /// to that entry's own [`McpServerAuthView`] by [`mcp_server_auth_view`] and never persisted: the
 /// operator's own explicit edit-and-save step is what would write any of this to `web.toml`, not a
 /// detection render. `server_name` lets [`mcp_server_auth_view`]'s every other caller apply this
@@ -291,10 +291,10 @@ pub(crate) async fn credential_snapshot(
 }
 
 // ---------------------------------------------------------------------
-// `GET /settings/`'s `?oauth_connected=`/`?oauth_error=` banner
+// `GET /server/settings/`'s `?oauth_connected=`/`?oauth_error=` banner
 // ---------------------------------------------------------------------
 
-/// `GET /settings/`'s optional query parameters: the `OAuth2`
+/// `GET /server/settings/`'s optional query parameters: the `OAuth2`
 /// connect/callback flow's own redirect target, carrying its outcome back as a plain query
 /// string rather than any persisted state.
 #[derive(Debug, Default, Deserialize)]
@@ -322,7 +322,7 @@ fn oauth_error_detail(reason: &str) -> &'static str {
     }
 }
 
-/// The transient, query-parameter-driven notice/error `GET /settings/` shows after an `OAuth2`
+/// The transient, query-parameter-driven notice/error `GET /server/settings/` shows after an `OAuth2`
 /// connect attempt redirects back here: never persisted, so it does not reappear on the next plain
 /// navigation once these query parameters are gone. Returns `(notice, error)`, at most one of
 /// which is ever `Some` (`?oauth_connected=` and `?oauth_error=` are mutually exclusive outcomes
@@ -343,7 +343,7 @@ pub(crate) fn settings_banner(query: &SettingsQuery) -> (Option<String>, Option<
 // Pasted-secret extraction and credential garbage collection
 // ---------------------------------------------------------------------
 
-/// Strips a pasted secret value from a `PATCH /settings/` `auth` object, if present, before it
+/// Strips a pasted secret value from a `PATCH /server/settings/` `auth` object, if present, before it
 /// ever reaches [`crate::config_writer::WebConfigDocument`]'s JSON-to-TOML bridge (which has no
 /// schema notion of a request-only `credential_value`/`client_secret_value` field at all):
 /// `credential_value` pairs with `mode = "bearer"`'s own `credential_ref`, `client_secret_value`

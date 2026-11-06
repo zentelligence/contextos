@@ -30,6 +30,8 @@ pub(crate) struct JobCard {
     pub(crate) last_run: String,
     /// The star toggle's own rendered markup, or nothing for a job that has no favourites.
     pub(crate) favourite_toggle_html: String,
+    /// The workflow the job is under, on a list of jobs from several.
+    pub(crate) workflow: Option<String>,
     pub(crate) accent: u8,
 }
 
@@ -74,6 +76,7 @@ impl From<CardParts<'_>> for JobCard {
                 .latest
                 .map_or_else(|| "Never run".to_owned(), |run| run.started.clone()),
             favourite_toggle_html: parts.favourite_toggle_html,
+            workflow: None,
             accent: parts.slug.bytes().fold(0u8, |sum, byte| (sum + byte % 6) % 6) + 1,
         }
     }
@@ -204,6 +207,7 @@ pub(crate) enum Scope<'a> {
     VaultWorkflows(&'a str),
     VaultLibraries(&'a str),
     SharedWorkflows,
+    SharedJobs,
     SharedLibraries,
 }
 
@@ -222,7 +226,7 @@ impl Scope<'_> {
         let shared = |active| {
             tab(
                 "Shared Workflows".to_owned(),
-                crate::urls::SHARED_WORKFLOWS.to_owned(),
+                crate::urls::SERVER_WORKFLOWS.to_owned(),
                 active,
             )
         };
@@ -240,7 +244,7 @@ impl Scope<'_> {
                     libraries(urls.packages(), matches!(self, Self::VaultLibraries(_))),
                 ]
             }
-            Self::SharedWorkflows | Self::SharedLibraries => {
+            Self::SharedWorkflows | Self::SharedJobs | Self::SharedLibraries => {
                 let mut tabs: Vec<ScopeTab> = vaults
                     .iter()
                     .map(|vault| {
@@ -252,8 +256,13 @@ impl Scope<'_> {
                     })
                     .collect();
                 tabs.push(shared(matches!(self, Self::SharedWorkflows)));
+                tabs.push(tab(
+                    "Shared Jobs".to_owned(),
+                    crate::urls::SERVER_JOBS.to_owned(),
+                    matches!(self, Self::SharedJobs),
+                ));
                 tabs.push(libraries(
-                    crate::urls::SHARED_PACKAGES.to_owned(),
+                    crate::urls::SERVER_PACKAGES.to_owned(),
                     matches!(self, Self::SharedLibraries),
                 ));
                 tabs
@@ -278,6 +287,16 @@ pub(crate) struct WorkflowsList {
     pub(crate) workflows: Vec<WorkflowEntry>,
     /// What the page says about the vault before its workflows, such as a team that cannot be used.
     pub(crate) notices: Vec<String>,
+}
+
+/// Every job of the server, whichever workflow it is under.
+#[derive(Template)]
+#[template(path = "server_jobs.html")]
+pub(crate) struct JobsList {
+    pub(crate) scope: Vec<ScopeTab>,
+    pub(crate) filter_value: &'static str,
+    pub(crate) tiles: Vec<StateTile>,
+    pub(crate) jobs: Vec<JobCard>,
 }
 
 #[derive(Template)]
@@ -316,6 +335,12 @@ pub(crate) fn render_job(view: &JobDetail) -> String {
 pub(crate) fn render_list(view: &WorkflowsList) -> String {
     view.render()
         .unwrap_or_else(|_| "<p>The workflows could not be rendered.</p>".to_owned())
+}
+
+/// The server's jobs as a fragment, or a sentence saying they could not be drawn.
+pub(crate) fn render_jobs(view: &JobsList) -> String {
+    view.render()
+        .unwrap_or_else(|_| "<p>The jobs could not be rendered.</p>".to_owned())
 }
 
 /// One workflow as a fragment, or a sentence saying it could not be drawn.

@@ -51,7 +51,7 @@
 
       <a class="header-icon-button" href="/contract-fixture/settings/" aria-label="Vault settings" title="Vault settings"><span class="ic ic-database-zap" aria-hidden="true"></span></a>
 
-      <a class="header-icon-button " href="/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
+      <a class="header-icon-button " href="/server/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
 
       <details class="favourites-panel alerts-panel" hx-get="/contract-fixture/alerts" hx-trigger="toggle" hx-target="find .favourites-panel-dropdown" hx-swap="innerHTML">
         <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/contract-fixture/alerts/summary" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></span></summary>
@@ -68,6 +68,7 @@
 
   <div class="shell-body">
     <aside class="shell-sidebar">
+
 
 
 
@@ -88,6 +89,7 @@
         <li><a class="nav-link " href="/contract-fixture/notes/"><span class="ic ic-file-text" aria-hidden="true"></span><span class="nav-link-label">Notes</span></a></li>
 
     </ul>
+
 
 
 
@@ -113,6 +115,7 @@
 
 
 
+
     <details class="nav-group" open>
       <summary class="nav-group-summary">
 
@@ -124,6 +127,7 @@
 
       </ul>
     </details>
+
 
 
 
@@ -141,6 +145,7 @@
 
 
 
+
     <details class="nav-group" open>
       <summary class="nav-group-summary">
 
@@ -153,6 +158,29 @@
         <li><a class="nav-link active" href="/contract-fixture/wiki/"><span class="ic ic-book" aria-hidden="true"></span><span class="nav-link-label">Wiki</span></a></li>
 
         <li><a class="nav-link " href="/contract-fixture/insights/"><span class="ic ic-sparkles" aria-hidden="true"></span><span class="nav-link-label">Insights</span></a></li>
+
+      </ul>
+    </details>
+
+
+
+    <p class="nav-section"><span class="nav-section-label">Server</span></p>
+
+
+    <details class="nav-group" open>
+      <summary class="nav-group-summary">
+
+        <span class="nav-group-heading-link"><span class="ic ic-jobs" aria-hidden="true"></span><span class="nav-group-label-text">Workflows</span></span>
+
+        <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+      </summary>
+      <ul class="nav-links">
+
+        <li><a class="nav-link " href="/server/workflows"><span class="ic ic-jobs" aria-hidden="true"></span><span class="nav-link-label">Workflows</span></a></li>
+
+        <li><a class="nav-link " href="/server/jobs"><span class="ic ic-clock" aria-hidden="true"></span><span class="nav-link-label">Jobs</span></a></li>
+
+        <li><a class="nav-link " href="/server/packages"><span class="ic ic-library" aria-hidden="true"></span><span class="nav-link-label">Libraries</span></a></li>
 
       </ul>
     </details>

@@ -132,6 +132,7 @@ fn sidebar_group_with_icon(
     icon: &'static str,
 ) -> SidebarGroup {
     SidebarGroup {
+        section: None,
         label,
         heading_href: href.map(str::to_owned),
         icon,
@@ -168,6 +169,7 @@ fn the_general_sections_links_render_with_their_own_icon_and_optional_meta() {
     let nav = NavData {
         current_vault: Some("vault".to_owned()),
         sidebar_groups: vec![SidebarGroup {
+            section: None,
             label: None,
             heading_href: None,
             icon: "",
@@ -215,6 +217,7 @@ fn a_sidebar_link_carrying_a_target_renders_it_on_the_anchor() {
     let nav = NavData {
         current_vault: Some("vault".to_owned()),
         sidebar_groups: vec![SidebarGroup {
+            section: None,
             label: Some("Apps"),
             heading_href: Some("/vault/apps/".to_owned()),
             icon: "apps",
@@ -263,7 +266,7 @@ fn header_controls_with_no_vault_target_render_disabled_not_as_dead_links() {
     let html = render_page(&empty_nav(), "Settings", "<p>Body.</p>");
     assert!(html.contains("<span class=\"header-icon-button disabled\""));
     // Settings always stays reachable regardless of vault context.
-    assert!(html.contains("href=\"/settings/\" aria-label=\"Settings\""));
+    assert!(html.contains("href=\"/server/settings/\" aria-label=\"Settings\""));
 }
 
 #[test]

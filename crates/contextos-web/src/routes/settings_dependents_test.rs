@@ -66,7 +66,7 @@ async fn delete_extra_with(vault: FakeVault) -> Result<(StatusCode, Value, Strin
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri("/settings/mcp-servers/extra")
+                .uri("/server/settings/mcp-servers/extra")
                 .body(Body::empty())?,
         )
         .await?;

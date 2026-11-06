@@ -35,7 +35,7 @@ use crate::workflow_releases_stores::VaultReleases;
 
 /// Shared state a workflow or job route needs: the MCP sessions (whose primary server every vault operation is issued
 /// against, and whose configured names a manifest's own `mcp_servers` allow-list is validated against, both read per
-/// request so a server added or removed in `/settings/` counts at once), the clock a change is stamped with, and
+/// request so a server added or removed in `/server/settings/` counts at once), the clock a change is stamped with, and
 /// `web.toml`'s own path (read fresh per request for the nav shell's appearance).
 #[derive(Clone)]
 pub struct WorkflowRoutesState {

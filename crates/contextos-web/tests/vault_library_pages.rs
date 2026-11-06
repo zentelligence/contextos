@@ -101,7 +101,7 @@ async fn the_packages_page_is_a_full_page_for_a_full_navigation_and_the_workflow
     assert!(list.contains(&format!("href=\"/{VAULT_NAME}/packages\"")), "{list}");
     assert!(list.contains(">Library Releases</a>"), "{list}");
     assert!(!list.contains("Installed packages"), "{list}");
-    assert!(list.contains("href=\"/shared/workflows\""), "{list}");
+    assert!(list.contains("href=\"/server/workflows\""), "{list}");
     Ok(())
 }
 

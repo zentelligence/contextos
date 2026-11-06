@@ -176,7 +176,7 @@ async fn the_vault_list_counts_its_jobs_by_state_and_leads_to_the_shared_workflo
         for expected in [
             "aria-label=\"All: 1\"",
             "aria-label=\"draft: 1\"",
-            "href=\"/shared/workflows\"",
+            "href=\"/server/workflows\"",
         ] {
             assert!(page.body.contains(expected), "{path} lacks {expected}: {}", page.body);
         }
@@ -201,7 +201,7 @@ async fn the_list_shows_each_workflow_with_its_jobs_and_a_tile_per_state() -> Re
         assert!(page.body.contains(tile), "{tile}");
     }
     assert!(
-        page.body.contains("href=\"/shared/workflows\""),
+        page.body.contains("href=\"/server/workflows\""),
         "the shared workflows are one link away:\n{}",
         page.body
     );

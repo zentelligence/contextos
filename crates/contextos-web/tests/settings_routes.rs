@@ -1,4 +1,4 @@
-//! `/settings/` contract tests: real
+//! `/server/settings/` contract tests: real
 //! `contextos-mcp` sessions against real temporary vault fixtures,
 //! exercising the one gate item that genuinely needs a live MCP session
 //! rather than a unit test double: the registered-app-dependency check
@@ -82,7 +82,7 @@ fn write_app_depending_on_extra(vault_dir: &Path) -> std::io::Result<()> {
     write(vault_dir, "registry/apps/needs-extra/index.html", "<html></html>")
 }
 
-/// `DELETE /settings/mcp-servers/{name}`: `name` travels as the URL path
+/// `DELETE /server/settings/mcp-servers/{name}`: `name` travels as the URL path
 /// segment itself, matching what a real `hx-delete` button sends
 /// (`docs/http-routing-response-contract.md`'s sub-entity form) rather than
 /// a JSON body field htmx's own `methodsThatUseUrlParams` default never
@@ -93,7 +93,7 @@ async fn delete(router: &Router, name: &str) -> Result<(StatusCode, String), Box
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/settings/mcp-servers/{name}"))
+                .uri(format!("/server/settings/mcp-servers/{name}"))
                 .body(Body::empty())?,
         )
         .await?;
@@ -108,7 +108,7 @@ async fn put(router: &Router, body: &str) -> Result<(StatusCode, String), BoxErr
         .oneshot(
             Request::builder()
                 .method(Method::PUT)
-                .uri("/settings/")
+                .uri("/server/settings/")
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_owned()))?,
         )
@@ -124,7 +124,7 @@ async fn patch(router: &Router, body: &str) -> Result<(StatusCode, String), BoxE
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri("/settings/")
+                .uri("/server/settings/")
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_owned()))?,
         )
@@ -145,7 +145,7 @@ async fn get(router: &Router, path: &str) -> Result<(StatusCode, String), BoxErr
 }
 
 /// A single real, connectable `contextos-mcp` stdio session named
-/// `"contextos"`, for tests that only need `/settings/` and a vault content
+/// `"contextos"`, for tests that only need `/server/settings/` and a vault content
 /// route, not the two-server dependency-check scenario.
 async fn router_with_one_server(vault_dir: &Path, dir: &Path) -> Result<(Router, std::path::PathBuf), BoxError> {
     let config_path = support::write_vault_config(dir, vault_dir)?;
@@ -295,7 +295,7 @@ async fn put_renaming_an_entry_a_registered_app_depends_on_is_rejected() -> Resu
     Ok(())
 }
 
-/// End-to-end proof that saving an appearance value through `/settings/`
+/// End-to-end proof that saving an appearance value through `/server/settings/`
 /// actually changes what a subsequent page render looks like, not just
 /// what `web.toml` holds: a `PATCH ... target: "ui"` setting `theme` is
 /// reflected in `<html data-theme="...">` on the *next* full-page render of
@@ -332,8 +332,8 @@ async fn settings_renders_the_same_with_or_without_a_trailing_slash() -> Result<
     write(vault_dir.path(), "index.md", "# Root\n")?;
     let (router, _web_config_path) = router_with_one_server(vault_dir.path(), dir.path()).await?;
 
-    let (status_slash, body_slash) = get(&router, "/settings/").await?;
-    let (status_bare, body_bare) = get(&router, "/settings").await?;
+    let (status_slash, body_slash) = get(&router, "/server/settings/").await?;
+    let (status_bare, body_bare) = get(&router, "/server/settings").await?;
     assert_eq!(status_slash, StatusCode::OK);
     assert_eq!(status_bare, StatusCode::OK);
     assert_eq!(body_slash, body_bare);
@@ -347,14 +347,14 @@ async fn settings_keeps_a_way_back_to_the_fallback_vault_clickable() -> Result<(
     write(vault_dir.path(), "index.md", "# Root\n")?;
     let (router, _web_config_path) = router_with_one_server(vault_dir.path(), dir.path()).await?;
 
-    let (status, body) = get(&router, "/settings/").await?;
+    let (status, body) = get(&router, "/server/settings/").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains(&format!("<a class=\"wordmark\" href=\"/{VAULT_NAME}/\"")));
     Ok(())
 }
 
 /// Slices the `<li data-name="{name}">...</li>` fragment for one MCP server
-/// row out of a rendered `/settings/` body, so an assertion about that row's
+/// row out of a rendered `/server/settings/` body, so an assertion about that row's
 /// own status icon cannot be satisfied by a different row's markup. Used
 /// only by the killed-session test below, which is itself `#[cfg(unix)]`
 /// (the `kill` command it shells out to has no Windows equivalent here).
@@ -391,7 +391,7 @@ async fn the_mcp_server_status_icon_reflects_a_killed_session() -> Result<(), Bo
     let clients = Arc::new(clients);
     let router = contextos_web::build_router(Arc::clone(&clients), Some(dir.path()), &web_config_path);
 
-    let (status, body) = get(&router, "/settings/").await?;
+    let (status, body) = get(&router, "/server/settings/").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(mcp_server_row(&body, "extra")?.contains("conn-dot conn-ok"));
     assert!(mcp_server_row(&body, "contextos")?.contains("conn-dot conn-ok"));
@@ -407,7 +407,7 @@ async fn the_mcp_server_status_icon_reflects_a_killed_session() -> Result<(), Bo
     // deterministic.
     let poll = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let (status, body) = get(&router, "/settings/").await?;
+            let (status, body) = get(&router, "/server/settings/").await?;
             assert_eq!(status, StatusCode::OK, "{body}");
             if mcp_server_row(&body, "extra")?.contains("conn-dot conn-down") {
                 return Ok::<String, BoxError>(body);
@@ -452,7 +452,7 @@ async fn settings_displays_the_configured_log_rotation_and_retention() -> Result
     let clients = Arc::new(McpClientSet::connect(&[entry]).await?);
     let router = contextos_web::build_router(clients, Some(dir.path()), &web_config_path);
 
-    let (status, body) = get(&router, "/settings/").await?;
+    let (status, body) = get(&router, "/server/settings/").await?;
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains(&log_path.display().to_string()), "{body}");

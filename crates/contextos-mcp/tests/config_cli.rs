@@ -340,3 +340,50 @@ fn config_mcp_register_records_the_launcher_that_started_this_program() -> Resul
     assert_eq!(std::path::Path::new(command), launcher);
     Ok(())
 }
+
+#[test]
+fn config_vault_add_refuses_a_name_the_web_interface_uses_and_creates_no_file() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = tempdir()?;
+    let vault = fixture.path().join("vault");
+    fs::create_dir(&vault)?;
+    let config = fixture.path().join("config.toml");
+
+    let output = contextos(
+        &config,
+        &[
+            "config",
+            "vault",
+            "add",
+            "server",
+            vault.to_str().ok_or("non-UTF-8 vault")?,
+        ],
+    )?;
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8(output.stderr)?.contains("reserved"));
+    assert!(!config.exists());
+    Ok(())
+}
+
+#[test]
+fn the_server_will_not_start_with_a_vault_the_web_interface_would_hide() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempdir()?;
+    let vault = fixture.path().join("server");
+    fs::create_dir(&vault)?;
+    let config = fixture.path().join("config.toml");
+    fs::write(
+        &config,
+        format!("[[vault]]\npath = {:?}\n", vault.to_str().ok_or("non-UTF-8 vault")?),
+    )?;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_contextos"))
+        .args(["--config", config.to_str().ok_or("non-UTF-8 config")?])
+        .stdin(std::process::Stdio::null())
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("reserved"), "{stderr}");
+    Ok(())
+}

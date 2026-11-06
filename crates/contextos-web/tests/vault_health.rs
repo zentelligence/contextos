@@ -362,7 +362,7 @@ async fn on_a_page_outside_any_vault_the_indicators_follow_the_vault_the_header_
     // The vault-independent page reads `web.toml`, so it must exist for this page to render at all.
     std::fs::write(config.path().join("web.toml"), "")?;
 
-    let page = send(&router, Method::GET, "/settings/", false).await?;
+    let page = send(&router, Method::GET, "/server/settings/", false).await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(

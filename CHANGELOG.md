@@ -13,7 +13,7 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 ### Fixed
 
 - The shared workflows and library pages have a title and tabs that lead back to each vault. They had no way back.
-- The shared and settings pages show the sidebar of the vault you were last in, with a band saying which view is showing and which vault the links open. Their sidebars were empty, and the vault switcher named a vault they were not in.
+- The shared and settings pages show the sidebar of the vault you were last in, with a band saying which view is showing and which vault the menu belongs to. Their sidebars were empty, and the vault switcher named a vault they were not in.
 - The alerts bell's count shows. Its request never ran, because the badge inherited a target from the panel around it.
 - The footer status bar wraps on narrow screens rather than running off the side of every page.
 - Wiki, Insights, and entity pages appear under Recently accessed. Recording the last-visited page replaced that cookie on the same response.
@@ -23,7 +23,10 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 ### Changed
 
 - Release jobs and the CI test jobs have time limits, so a hung job fails long before GitHub's six-hour default.
-- The shared workflows list moves from `/shared` to `/shared/workflows`, in line with the pages beneath it. Nothing answers at `/shared` any more.
+- Everything the server holds for all its vaults now lives under `/server`, leaving `shared` and `settings` free as vault names. Shared workflows move from `/shared` to `/server/workflows`, library releases to `/server/packages`, settings from `/settings/` to `/server/settings/`, and the host API from `/api/v1/shared` to `/api/v1/server`. The old addresses do not redirect.
+- Every page's sidebar has a permanent Server section below Knowledge, with links to the shared Workflows, Jobs, and Libraries, and a new `/server/jobs` page lists every shared job.
+- The OAuth callback moves to `/server/settings/oauth/{server}/callback`. A provider where you registered the old callback by hand needs the new address before you next sign in to it.
+- `contextos` refuses to start with a vault named `api`, `mcp`, `server`, `shell`, or `static`, and `contextos config` refuses to add one, because the web interface uses those addresses itself. A vault with no name of its own takes its folder's name, so a folder with one of these names needs a `name` in the configuration.
 - The workflows lists show a strip of job counts by state, which also filters the list, in place of plain links.
 - The workflow, job, and library screens now follow the rest of the interface, with tidier job cards, an actions row, and styled forms and tables.
 

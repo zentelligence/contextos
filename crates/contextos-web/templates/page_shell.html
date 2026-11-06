@@ -81,7 +81,7 @@
 {% else %}
       <span class="header-icon-button disabled" aria-hidden="true"><span class="ic ic-database-zap"></span></span>
 {% endif %}
-      <a class="header-icon-button {% if nav.active_settings_screen %}active{% endif %}" href="/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
+      <a class="header-icon-button {% if nav.active_settings_screen %}active{% endif %}" href="/server/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
 {% if let Some(alerts_vault) = nav.nav_target_vault %}
       <details class="favourites-panel alerts-panel" hx-get="/{{ alerts_vault }}/alerts" hx-trigger="toggle" hx-target="find .favourites-panel-dropdown" hx-swap="innerHTML">
         <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/{{ alerts_vault }}/alerts/summary" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></span></summary>
@@ -106,6 +106,9 @@
     <div class="sidebar-scope" title="{{ view.label }}"><span class="ic ic-{{ view.icon }}" aria-hidden="true"></span><span class="sidebar-scope-text"><strong>{{ view.label }}</strong>{% if let Some(detail) = view.detail %}<span class="hint">{{ detail }}</span>{% endif %}</span></div>
 {% endif %}
 {% for group in nav.sidebar_groups %}
+{% if let Some(section) = group.section %}
+    <p class="nav-section"><span class="nav-section-label">{{ section }}</span></p>
+{% endif %}
 {% if let Some(label) = group.label %}
     <details class="nav-group" open>
       <summary class="nav-group-summary">

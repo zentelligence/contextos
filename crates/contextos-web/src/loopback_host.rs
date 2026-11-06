@@ -1,7 +1,7 @@
 //! Refuses a request that names any host but a loopback one, `contextos-web`'s defence against DNS rebinding.
 //!
 //! `contextos-web` binds only to loopback and has no authentication, so a page on another site that makes its own
-//! name resolve to `127.0.0.1` would otherwise reach every route as same-origin: read `/settings/`, reveal a stored
+//! name resolve to `127.0.0.1` would otherwise reach every route as same-origin: read `/server/settings/`, reveal a stored
 //! token, or rewrite an `[[mcp_server]]` command. The browser still sends that site's name in `Host`, so naming a
 //! loopback host (`localhost`, a `127.0.0.0/8` address, or `[::1]`, with any port) is required. A request with no
 //! `Host` at all is let through: every browser sends one, so only a local non-browser client can omit it.

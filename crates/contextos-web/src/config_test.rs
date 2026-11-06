@@ -689,7 +689,7 @@ fn serialising_an_http_entry_with_no_token_env_omits_the_key_rather_than_emittin
     // `headers` fields both document exactly why they need it (this type round-trips through
     // `routes::settings::json_object`, which rejects a literal TOML `null`). A `bearer`/`oauth2`
     // entry with no `token_env` bearer source at all is the normal case, so submitting one
-    // through `/settings/` unconditionally failed before this fix.
+    // through `/server/settings/` unconditionally failed before this fix.
     let entry = http_entry(Some(McpServerAuth::Bearer {
         token_env: None,
         credential_ref: Some("bearer-server-token".to_owned()),

@@ -260,7 +260,7 @@ fn a_vaults_tabs_lead_to_its_workflows_the_shared_workflows_and_its_libraries() 
         shown,
         [
             ("Workflows", "/alpha/workflows", false),
-            ("Shared Workflows", "/shared/workflows", false),
+            ("Shared Workflows", "/server/workflows", false),
             ("Library Releases", "/alpha/packages", true),
         ]
     );
@@ -281,8 +281,9 @@ fn the_shared_tabs_lead_back_to_every_vault() {
         [
             ("alpha workflows", "/alpha/workflows", false),
             ("beta workflows", "/beta/workflows", false),
-            ("Shared Workflows", "/shared/workflows", true),
-            ("Library Releases", "/shared/packages", false),
+            ("Shared Workflows", "/server/workflows", true),
+            ("Shared Jobs", "/server/jobs", false),
+            ("Library Releases", "/server/packages", false),
         ]
     );
 }
@@ -292,7 +293,7 @@ fn with_no_vault_the_shared_tabs_are_the_shared_screens_alone() {
     let tabs = Scope::SharedLibraries.tabs(&[]);
 
     let labels: Vec<&str> = tabs.iter().map(|tab| tab.label.as_str()).collect();
-    assert_eq!(labels, ["Shared Workflows", "Library Releases"]);
+    assert_eq!(labels, ["Shared Workflows", "Shared Jobs", "Library Releases"]);
 }
 
 #[test]

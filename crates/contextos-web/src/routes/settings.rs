@@ -1,12 +1,12 @@
-//! `/settings/`: a `web.toml`-scoped configuration
+//! `/server/settings/`: a `web.toml`-scoped configuration
 //! UI. `GET` renders the current effective configuration; `POST` adds an
 //! `[[mcp_server]]` entry; `PATCH` partially updates an entry or
 //! `[server.ui]`; `PUT` fully replaces an entry; `DELETE
-//! /settings/mcp-servers/{name}` removes one, the `[[mcp_server]]` name
+//! /server/settings/mcp-servers/{name}` removes one, the `[[mcp_server]]` name
 //! carried as the URL path segment `docs/http-routing-response-contract.md`
 //! requires for an identified sub-entity, rather than a JSON body field (a
 //! body htmx's own `methodsThatUseUrlParams` default never actually sends
-//! for a `DELETE`, which made the previous single-`/settings/`-endpoint
+//! for a `DELETE`, which made the previous single-`/server/settings/`-endpoint
 //! `DELETE` a silent no-op from the real browser UI: the request left with
 //! an empty body, `web.toml` untouched).
 //! Every writing method validates the resulting document
@@ -220,7 +220,7 @@ fn read_failure(source: &std::io::Error) -> Response {
 }
 
 // ---------------------------------------------------------------------
-// GET /settings/
+// GET /server/settings/
 // ---------------------------------------------------------------------
 
 /// One `[[mcp_server]]` entry as the settings page renders it: `detail` is
@@ -233,7 +233,7 @@ struct McpServerRow {
     name: String,
     /// [`crate::inbox_outbox::encode_query_value`]'s percent-encoding of
     /// `name`, for safe embedding as the `{name}` path segment of this
-    /// row's own `DELETE /settings/mcp-servers/{name}` link.
+    /// row's own `DELETE /server/settings/mcp-servers/{name}` link.
     name_encoded: String,
     transport: &'static str,
     detail: String,
@@ -320,7 +320,7 @@ fn appearance_options(
 }
 
 /// A human-readable summary of `server`'s rotation triggers, for the
-/// `/settings/` "Server & bind" pane: `"Never"` when neither
+/// `/server/settings/` "Server & bind" pane: `"Never"` when neither
 /// `log_max_size_mb` nor `log_rotate_daily` is set, otherwise whichever of
 /// "every N MB" and "daily" apply, joined with "and" when both do.
 fn log_rotation_display(server: &WebServerConfig) -> String {
@@ -339,7 +339,7 @@ fn log_rotation_display(server: &WebServerConfig) -> String {
 }
 
 /// A human-readable summary of `server`'s retention bounds, for the
-/// `/settings/` "Server & bind" pane: `"Kept indefinitely"` when neither
+/// `/server/settings/` "Server & bind" pane: `"Kept indefinitely"` when neither
 /// `log_retention_days` nor `log_retention_files` is set, otherwise
 /// whichever of "N days" and "N files" apply, joined with ", " when both
 /// do.
@@ -554,7 +554,7 @@ fn touches_shell_chrome(edit: &Edit) -> bool {
     }
 }
 
-/// `GET /settings/`: renders the current effective `web.toml`. Follows
+/// `GET /server/settings/`: renders the current effective `web.toml`. Follows
 /// `docs/http-routing-response-contract.md`'s `HX-Request`
 /// convention: a plain browser navigation (no
 /// `HX-Request` header) gets the full page, chrome and all; an
@@ -631,7 +631,7 @@ pub(crate) async fn read_current_blocking(path: Arc<PathBuf>) -> Result<WebConfi
     }
 }
 
-/// Builds the nav shell's data for `/settings/`: vault-independent, with the sidebar of the active vault, degrading to an
+/// Builds the nav shell's data for `/server/settings/`: vault-independent, with the sidebar of the active vault, degrading to an
 /// empty vault switcher and sidebar rather than failing the whole page when the primary MCP session is unavailable,
 /// since neither is something the settings page itself depends on.
 async fn settings_nav(state: &SettingsRoutesState, headers: &HeaderMap) -> page::NavData {
@@ -660,7 +660,7 @@ async fn settings_nav(state: &SettingsRoutesState, headers: &HeaderMap) -> page:
             current_entity_accent: None,
             entity_base_path: None,
             appearance: crate::config::Appearance::default(),
-            sidebar_groups: Vec::new(),
+            sidebar_groups: vec![shell::server_group(None)],
             host_view: None,
             sidebar_wide: true,
             mcp_status: page::McpStatus::default(),
@@ -682,7 +682,7 @@ fn read_current(path: &Path) -> Result<WebConfig, Box<Response>> {
 }
 
 // ---------------------------------------------------------------------
-// POST / PATCH / PUT / DELETE /settings/
+// POST / PATCH / PUT / DELETE /server/settings/
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -781,7 +781,7 @@ fn apply_edit(document: &mut WebConfigDocument, edit: &Edit) -> ApplyOutcome {
     }
 }
 
-/// `POST`/`PATCH`/`PUT /settings/`.
+/// `POST`/`PATCH`/`PUT /server/settings/`.
 pub async fn mutate(State(state): State<SettingsRoutesState>, method: Method, body: axum::body::Bytes) -> Response {
     let now = SystemClock.now().format(&Rfc3339).unwrap_or_default();
     let (edit, pending_secret_writes) = match parse_edit(&method, &body, &now) {
@@ -791,7 +791,7 @@ pub async fn mutate(State(state): State<SettingsRoutesState>, method: Method, bo
     apply_edit_and_persist(&state, edit, pending_secret_writes).await
 }
 
-/// `DELETE /settings/mcp-servers/{name}`: `name` is the URL path segment
+/// `DELETE /server/settings/mcp-servers/{name}`: `name` is the URL path segment
 /// itself (`docs/http-routing-response-contract.md`'s sub-entity form),
 /// never a request body field. htmx's own default
 /// `methodsThatUseUrlParams` list includes `delete`, so any `hx-vals` on a

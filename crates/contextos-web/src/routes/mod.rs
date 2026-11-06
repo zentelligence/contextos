@@ -1,6 +1,6 @@
 //! HTTP route handlers grouped by concern:
 //! `vault` (vault content rendering), `apps` (registered app serving), and
-//! `settings` (the `/settings/` configuration UI).
+//! `settings` (the `/server/settings/` configuration UI).
 
 use std::path::PathBuf;
 use std::sync::Arc;

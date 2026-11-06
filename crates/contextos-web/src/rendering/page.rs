@@ -86,6 +86,8 @@ pub struct SidebarLink {
 /// second piece of cookie- or script-driven state alongside the sidebar's
 /// own wide/narrow toggle.
 pub struct SidebarGroup {
+    /// The heading of the part of the sidebar this group starts, for a group that is not the vault's own.
+    pub section: Option<&'static str>,
     pub label: Option<&'static str>,
     pub heading_href: Option<String>,
     pub icon: &'static str,
@@ -149,14 +151,14 @@ pub struct BreadcrumbSegment {
 #[allow(clippy::struct_excessive_bools)]
 pub struct NavData {
     pub vaults: Vec<NavVault>,
-    /// `None` for a vault-independent page (`/settings/`); the vault
+    /// `None` for a vault-independent page (`/server/settings/`); the vault
     /// switcher still lists every configured vault.
     pub current_vault: Option<String>,
     /// The vault the header's own wordmark link targets when there is no
     /// current vault: `current_vault` itself when there is one, otherwise
     /// the active vault or, failing that, the first configured vault
     /// ([`crate::rendering::shell::build_host_nav`]), so a vault-independent page like
-    /// `/settings/` still offers a way back rather than degrading to inert
+    /// `/server/settings/` still offers a way back rather than degrading to inert
     /// text merely because the current page has no vault of its own.
     /// `None` only when no vault is configured at all (or none could be
     /// listed), the one case that link has nothing to point at.
@@ -174,7 +176,7 @@ pub struct NavData {
     /// The current vault's own `--entity-N` accent (see [`NavEntityOption::accent`]
     /// for the six-hue wrapping rule), so the header's vault switcher can be
     /// tinted with it. `None` on a vault-independent
-    /// page (`/settings/`).
+    /// page (`/server/settings/`).
     pub current_vault_entity: Option<u8>,
     /// The current vault's configured entities (`.contextos/entities.toml`):
     /// empty when the vault has none configured, or there is no current
@@ -191,11 +193,11 @@ pub struct NavData {
     pub current_entity_accent: Option<u8>,
     /// The current page's own path, carrying no `?entity=` query parameter,
     /// so the entity switcher can compose each option's own href by
-    /// appending one; `None` on a vault-independent page (`/settings/`),
+    /// appending one; `None` on a vault-independent page (`/server/settings/`),
     /// where no entity switcher renders regardless of `entities`.
     pub entity_base_path: Option<String>,
     /// `web.toml`'s `[server.ui]` theme/font/size/`system_name` (the
-    /// `/settings/` Appearance pane): `theme`/`font`/`size` are applied as
+    /// `/server/settings/` Appearance pane): `theme`/`font`/`size` are applied as
     /// `<html data-theme="..." data-font="..." data-size="...">` so
     /// `contextos-web.css`'s corresponding attribute selectors take effect
     /// on the very next page render after a save; `system_name` is the
@@ -230,7 +232,7 @@ pub struct NavData {
     pub profile_href: Option<String>,
     /// The header's "Vault Settings" control target: the current vault's
     /// own vault-scoped settings screen (`/{{vault_name}}/settings/`,
-    /// distinct from the vault-independent `/settings/`); `None` when
+    /// distinct from the vault-independent `/server/settings/`); `None` when
     /// there is no current vault, where the control renders disabled
     /// instead.
     pub vault_settings_href: Option<String>,

@@ -29,8 +29,8 @@ fn a_vaults_address_names_it_and_a_hosts_does_not() {
     assert_eq!(vault_of("/my%20vault/tasks").as_deref(), Some("my vault"));
     for host in [
         "/",
-        "/settings/",
-        "/shared/workflows",
+        "/server/settings/",
+        "/server/workflows",
         "/shell/status",
         "/static/x.css",
         "/api/v1/x",
@@ -47,4 +47,11 @@ fn a_name_that_needs_encoding_survives_the_round_trip() {
     assert!(text.ends_with("; Path=/; SameSite=Lax"), "{text}");
     let pair = text.split(';').next().unwrap_or_default();
     assert_eq!(read_from_headers(&with_cookie(pair)).as_deref(), Some("my vault"));
+}
+
+#[test]
+fn a_vault_named_as_an_old_host_address_is_a_vault() {
+    assert_eq!(vault_of("/shared/workflows").as_deref(), Some("shared"));
+    assert_eq!(vault_of("/settings/").as_deref(), Some("settings"));
+    assert_eq!(vault_of("/server/settings/"), None);
 }

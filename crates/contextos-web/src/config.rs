@@ -303,7 +303,7 @@ pub enum McpServerConfig {
         name: String,
         endpoint: String,
         /// `skip_serializing_if` for the identical reason `auth`'s own doc comment below gives:
-        /// this type round-trips through `/settings/`'s JSON-to-TOML bridge, which rejects a
+        /// this type round-trips through `/server/settings/`'s JSON-to-TOML bridge, which rejects a
         /// literal `null` value. Missed when that precedent was first established (`auth` and
         /// `headers` both got it, this field did not), the gap meant a `PUT`/`POST` submitting an
         /// HTTP entry with `auth` but no `token_env` at all (every `bearer`/`oauth2`-mode entry
@@ -315,7 +315,7 @@ pub enum McpServerConfig {
         /// The entry's `[mcp_server.auth]` table. `None`, combined with a bare `token_env` above, continues to mean
         /// exactly what it meant before this field existed: an optional bearer token sourced from that environment
         /// variable, or no authentication when both are absent. `skip_serializing_if` matters beyond tidiness here:
-        /// this type also round-trips through `/settings/`'s JSON-to-TOML bridge (`routes::settings::json_object`),
+        /// this type also round-trips through `/server/settings/`'s JSON-to-TOML bridge (`routes::settings::json_object`),
         /// which rejects a literal `null` value rather than treating it as "field absent", so an unconditionally
         /// emitted `auth: null` would turn every write to an HTTP entry with no `auth` table into a hard failure.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -419,7 +419,7 @@ pub enum McpServerAuth {
     /// fallback of the other; [`McpServerConfig::validate_auth`] rejects both set and neither set.
     ///
     /// Both fields carry `skip_serializing_if` for the same reason [`McpServerConfig::Http::auth`]'s own doc
-    /// comment gives: this type round-trips through `/settings/`'s JSON-to-TOML bridge, which rejects a literal
+    /// comment gives: this type round-trips through `/server/settings/`'s JSON-to-TOML bridge, which rejects a literal
     /// `null` value. Exactly one of these two is always unset by this variant's own contract, so without this
     /// attribute every `bearer`-mode submission would unconditionally fail on its unset half.
     Bearer {
@@ -510,11 +510,11 @@ pub const DEFAULT_SYSTEM_NAME: &str = "Command Centre";
 /// (`static/logo.png`), so the header always has a mark to show even
 /// before an operator overrides it. Overriding means adding a differently
 /// named file to the configured `static_dir` and setting `logo` to that
-/// filename in `/settings/`, the same "add a file, point `[server.ui]` at
+/// filename in `/server/settings/`, the same "add a file, point `[server.ui]` at
 /// it" pattern every other static-folder override already follows.
 pub const DEFAULT_LOGO_FILENAME: &str = "logo.png";
 
-/// The five `[server.ui]` keys `/settings/`'s Appearance pane,
+/// The five `[server.ui]` keys `/server/settings/`'s Appearance pane,
 /// `contextos-web.css`, and `page_shell.html`'s header give real,
 /// operator-visible effect (colour theme, font, base text size, the
 /// header's own title, and the header's own logo mark); every other
@@ -554,7 +554,7 @@ impl Default for Appearance {
 }
 
 /// Reads [`Appearance`] from `[server.ui]` fresh on every call (no
-/// caching): a `/settings/` appearance save takes effect on the very next
+/// caching): a `/server/settings/` appearance save takes effect on the very next
 /// page render. Never propagates a load failure to the caller (a
 /// nav-shell-only concern, per
 /// [`shell::build_nav`](crate::rendering::shell::build_nav)'s own "degrade

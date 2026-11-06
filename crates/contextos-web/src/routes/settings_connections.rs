@@ -1,8 +1,8 @@
-//! Each configured `[[mcp_server]]`'s connection panel on `/settings/`: its readiness, why it is not connected, what
+//! Each configured `[[mcp_server]]`'s connection panel on `/server/settings/`: its readiness, why it is not connected, what
 //! recovers it, and a Reconnect action that connects it again without restarting `contextos-web`.
 //!
-//! `POST /settings/mcp-servers/{name}/reconnect` starts a new connection attempt and answers with the panel, which
-//! reads as connecting and polls `GET /settings/mcp-servers/{name}/connection` until the attempt ends.
+//! `POST /server/settings/mcp-servers/{name}/reconnect` starts a new connection attempt and answers with the panel, which
+//! reads as connecting and polls `GET /server/settings/mcp-servers/{name}/connection` until the attempt ends.
 
 use askama::Template;
 use axum::extract::{Path as AxumPath, State};
@@ -189,7 +189,7 @@ fn not_configured() -> Response {
     crate::routes::vault::error_response(StatusCode::NOT_FOUND, "settings/unknown-mcp-server")
 }
 
-/// `GET /settings/mcp-servers/{name}/connection`: the server's connection panel as it is now.
+/// `GET /server/settings/mcp-servers/{name}/connection`: the server's connection panel as it is now.
 pub async fn connection(State(state): State<SettingsRoutesState>, AxumPath(name): AxumPath<String>) -> Response {
     match state.clients().readiness_of(&name).await {
         Some(server) => connection_panel(&server),
@@ -197,7 +197,7 @@ pub async fn connection(State(state): State<SettingsRoutesState>, AxumPath(name)
     }
 }
 
-/// `POST /settings/mcp-servers/{name}/reconnect`: connects the server again from its current `web.toml` entry, and
+/// `POST /server/settings/mcp-servers/{name}/reconnect`: connects the server again from its current `web.toml` entry, and
 /// answers with its panel, which reads as connecting until the attempt ends. `web.toml` is read first, so an entry
 /// edited or added by hand is connected as it now reads.
 ///
@@ -215,7 +215,7 @@ pub async fn reconnect(
     if !connecting.contains(&name) && state.clients().request_reconnect(&name).is_err() {
         return not_configured();
     }
-    tracing::info!(server = %name, "reconnect requested from /settings/");
+    tracing::info!(server = %name, "reconnect requested from /server/settings/");
     connection(State(state), AxumPath(name)).await
 }
 

@@ -45,7 +45,7 @@ use crate::view_favourites;
 pub struct AppRoutesState {
     clients: Arc<McpClientSet>,
     /// Each vault's discovered apps, with the configured server names they were validated against: a list validated
-    /// against different names is discovered again, so adding or removing a server in `/settings/` counts at once.
+    /// against different names is discovered again, so adding or removing a server in `/server/settings/` counts at once.
     registry: Arc<RwLock<HashMap<String, DiscoveredApps>>>,
     web_config_path: Arc<PathBuf>,
 }

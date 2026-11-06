@@ -106,11 +106,11 @@ fn a_job_is_a_card_under_its_shared_workflow_with_a_shared_url_and_no_favourite_
 
     let workflow = find(&all, "acme", "sync")?;
     assert_eq!(workflow.entry.name, "acme / sync");
-    assert_eq!(workflow.entry.href, "/shared/workflows/acme/sync");
+    assert_eq!(workflow.entry.href, "/server/workflows/acme/sync");
     assert!(workflow.entry.problem.is_none());
     let card = &workflow.entry.jobs[0];
     assert_eq!(card.name, "Nightly");
-    assert_eq!(card.href, "/shared/workflows/acme/sync/jobs/nightly");
+    assert_eq!(card.href, "/server/workflows/acme/sync/jobs/nightly");
     assert_eq!(card.lifecycle_label, "draft");
     assert!(card.attention && card.registers);
     assert!(

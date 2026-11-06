@@ -4,7 +4,7 @@
 //! fall back to an `initialize` handshake for a server without protocol revision 2026-07-28) and resolves once each
 //! attempt has ended, so the long-running server never serves a page against a session that is still opening. A
 //! server that cannot be connected is kept with its cause rather than stopping start-up, and is connected again from
-//! `/settings/`. [`connect`] is the stricter form a one-shot command uses: a stdio server that cannot start ends it.
+//! `/server/settings/`. [`connect`] is the stricter form a one-shot command uses: a stdio server that cannot start ends it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -74,7 +74,7 @@ pub async fn connect(config: &WebConfig, web_config_path: &Path) -> Result<Arc<M
 }
 
 /// Connects every `[[mcp_server]]` entry for the long-running server, which serves whatever the outcome: an entry that
-/// cannot be connected, stdio or HTTP, is kept with its cause for `/settings/` to show and connect again
+/// cannot be connected, stdio or HTTP, is kept with its cause for `/server/settings/` to show and connect again
 /// ([`McpClientSet::start_until_shutdown`]). The credential store is located as [`connect`] locates it.
 ///
 /// # Errors
@@ -109,17 +109,17 @@ pub async fn connect_until_shutdown(
 
 /// Builds the full HTTP router: the MCP proxy route, `/static/`, the vault
 /// content routes, the app registry routes, and
-/// `/settings/`.
+/// `/server/settings/`.
 ///
 /// Vault content, app registry, and settings routes issue every tool call
 /// against the primary server (`web.toml`'s first configured `[[mcp_server]]`
 /// entry, always the local `contextos-mcp` instance), read from `clients` per
-/// request so a primary added or changed in `/settings/` is used at once, distinct
+/// request so a primary added or changed in `/server/settings/` is used at once, distinct
 /// from the MCP proxy route, which is addressed by whatever `server_name` the caller
 /// names in the URL itself. A registered app's own `manifest.toml`
 /// `mcp_servers` allow-list is validated against every configured
 /// `[[mcp_server]]` name, connected or not (`clients.names()`, so
-/// an app may depend on a non-primary server too); `/settings/`'s own
+/// an app may depend on a non-primary server too); `/server/settings/`'s own
 /// registered-app-dependency check reuses the identical app-discovery path
 /// for the same reason.
 ///
@@ -128,15 +128,15 @@ pub async fn connect_until_shutdown(
 /// this mirrors the vault content routes' own established pattern of
 /// resolving a vault's identity per request through an MCP tool call
 /// rather than this crate maintaining a second, locally pre-loaded vault
-/// registry. `/settings/`'s dependency check runs its own, uncached
+/// registry. `/server/settings/`'s dependency check runs its own, uncached
 /// discovery pass per write instead (`routes::settings`), since a stale
 /// cache could let a removal through that a fresh scan would have blocked.
 ///
 /// `web_config_path` is `web.toml`'s own path on disk, read and
-/// validate-then-written by `/settings/`; it is unrelated to `static_dir`
+/// validate-then-written by `/server/settings/`; it is unrelated to `static_dir`
 /// even though both are configured under `web.toml`'s own `[server]` table.
 ///
-/// `/api/v1/shared/packages` (the host's package store's own route
+/// `/api/v1/server/packages` (the host's package store's own route
 /// group) resolves its own store root independently
 /// (`package_store::default_store_root`) rather than taking one as a
 /// parameter here: no vault, no MCP client, not even `web.toml` itself is
@@ -412,7 +412,7 @@ fn mount_host_routes(
 ) -> Router {
     let Some(roots) = roots else {
         tracing::error!(
-            "package store app-data directory unavailable; /api/v1/shared/packages and the shared workflow pages will not be mounted"
+            "package store app-data directory unavailable; /api/v1/server/packages and the shared workflow pages will not be mounted"
         );
         return router;
     };

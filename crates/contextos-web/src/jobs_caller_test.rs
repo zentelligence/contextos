@@ -100,7 +100,7 @@ async fn a_run_never_calls_with_a_token_that_has_expired_and_cannot_be_refreshed
     };
     assert_eq!(failure.kind, WorkflowFailureKind::ServerUnavailable);
     assert!(
-        failure.message.contains("/settings/oauth/provider/connect"),
+        failure.message.contains("/server/settings/oauth/provider/connect"),
         "{}",
         failure.message
     );

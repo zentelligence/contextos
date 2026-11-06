@@ -1,7 +1,7 @@
-//! The obscured secret controls on `/settings/`, and the route that reveals one on request.
+//! The obscured secret controls on `/server/settings/`, and the route that reveals one on request.
 //!
 //! A configured secret renders as a fixed mask with a Show control, never its value. Show asks
-//! `GET /settings/mcp-servers/{name}/secrets/{field}`, which answers with the value and a Hide control;
+//! `GET /server/settings/mcp-servers/{name}/secrets/{field}`, which answers with the value and a Hide control;
 //! Hide asks the same route with `?view=obscured`, which answers with the mask again and reads nothing. A stored
 //! value comes from the credential store; a variable's value is the one `contextos-web` itself sees now.
 
@@ -74,7 +74,7 @@ impl SecretControl {
     pub(crate) fn obscured(server: &str, field: SecretField) -> Self {
         Self {
             url: format!(
-                "/settings/mcp-servers/{}/secrets/{}",
+                "/server/settings/mcp-servers/{}/secrets/{}",
                 ServerSegment::from(server),
                 field.segment()
             ),
@@ -171,7 +171,7 @@ fn refused(status: StatusCode, code: &'static str) -> Response {
     crate::routes::vault::error_response(status, code)
 }
 
-/// `GET /settings/mcp-servers/{name}/secrets/{field}`: the secret's value with a Hide control, or, with
+/// `GET /server/settings/mcp-servers/{name}/secrets/{field}`: the secret's value with a Hide control, or, with
 /// `?view=obscured`, the mask with a Show control.
 ///
 /// Only the page's own HTMX request is accepted (`HX-Request`), as for Reconnect, and the answer is never cached.
@@ -226,7 +226,7 @@ pub async fn secret(
             }
         }
     };
-    tracing::info!(server = %name, field = field.segment(), "secret revealed on /settings/");
+    tracing::info!(server = %name, field = field.segment(), "secret revealed on /server/settings/");
     control.revealed = Some(revealed);
     secret_response(&control)
 }

@@ -1,4 +1,4 @@
-//! `/settings/oauth/{server_name}/connect`, `.../callback`, and `.../disconnect`
+//! `/server/settings/oauth/{server_name}/connect`, `.../callback`, and `.../disconnect`
 //!: the PKCE authorisation-code flow for an `oauth2`-mode
 //! `[[mcp_server]]` entry, kept structurally separate from `routes::settings`'s own CRUD verbs
 //! because a redirect-driven flow is not a form submission.
@@ -98,10 +98,10 @@ fn callback_redirect_uri(bind: &str, server_name: &str) -> String {
 
 /// Redirects (always a genuine `303`, never `HX-Redirect`: every caller of this helper is either
 /// `callback` itself, a real top-level browser navigation from the provider, or `connect`'s
-/// non-htmx branch) to `/settings/?oauth_error={reason}&server={server_name}`.
+/// non-htmx branch) to `/server/settings/?oauth_error={reason}&server={server_name}`.
 fn oauth_error_redirect(server_name: &str, reason: &str) -> Response {
     let target = format!(
-        "/settings/?oauth_error={}&server={}",
+        "/server/settings/?oauth_error={}&server={}",
         encode_query_value(reason),
         encode_query_value(server_name)
     );
@@ -119,7 +119,7 @@ fn consume_if_present(state: &SettingsRoutesState, state_value: Option<&str>, no
 }
 
 // ---------------------------------------------------------------------
-// POST /settings/oauth/{server_name}/connect
+// POST /server/settings/oauth/{server_name}/connect
 // ---------------------------------------------------------------------
 
 /// Begins the PKCE authorisation-code flow: generates the verifier/challenge/`state` triple,
@@ -144,7 +144,7 @@ pub async fn connect(
 
     // Validated before anything is recorded in `pending_oauth`: an entry whose
     // `authorization_endpoint` cannot even parse (only reachable via a hand-edited `web.toml`
-    // bypassing `/settings/`'s own writer, which does not itself validate URL syntax) must fail
+    // bypassing `/server/settings/`'s own writer, which does not itself validate URL syntax) must fail
     // without leaking an orphaned, never-consumable pending connection on every attempt.
     let Ok(mut authorization_url) = reqwest::Url::parse(&entry.authorization_endpoint) else {
         return error_response(StatusCode::UNPROCESSABLE_ENTITY, "settings/invalid-configuration");
@@ -185,7 +185,7 @@ pub async fn connect(
 }
 
 // ---------------------------------------------------------------------
-// POST /settings/oauth/{server_name}/detect
+// POST /server/settings/oauth/{server_name}/detect
 // ---------------------------------------------------------------------
 
 /// A short, operator-facing sentence for one [`DiscoveryOutcome`], rendered exactly like the
@@ -287,7 +287,7 @@ pub async fn detect(
 }
 
 // ---------------------------------------------------------------------
-// GET /settings/oauth/{server_name}/callback
+// GET /server/settings/oauth/{server_name}/callback
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -414,14 +414,14 @@ pub async fn callback(
     reconnect_after_credential_change(&state, &server_name).await;
 
     Redirect::to(&format!(
-        "/settings/?oauth_connected={}",
+        "/server/settings/?oauth_connected={}",
         encode_query_value(&server_name)
     ))
     .into_response()
 }
 
 // ---------------------------------------------------------------------
-// DELETE /settings/oauth/{server_name}/connect
+// DELETE /server/settings/oauth/{server_name}/connect
 // ---------------------------------------------------------------------
 
 /// Clears `server_name`'s stored token only; its own endpoints/`client_id`/`client_secret_ref`

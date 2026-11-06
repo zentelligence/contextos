@@ -1,5 +1,5 @@
-//! The host's shared workflows and the jobs under them: `GET /shared/workflows` lists every workflow of every installed package with
-//! its jobs, filterable by state, and `GET /shared/workflows/{{package}}/{{workflow}}` shows one. A job, and what an operator
+//! The host's shared workflows and the jobs under them: `GET /server/workflows` lists every workflow of every installed package with
+//! its jobs, filterable by state, and `GET /server/workflows/{{package}}/{{workflow}}` shows one. A job, and what an operator
 //! does to it, is in [`crate::routes::shared_workflow_jobs`].
 //!
 //! A shared workflow belongs to a package, not to a vault, so these pages take no vault and read the host's package store,
@@ -26,8 +26,8 @@ use crate::rendering::page::{self, BreadcrumbSegment, PageTitle};
 use crate::rendering::shell::{self, HostScreen};
 use crate::routes::vault::{error_response, html_response, not_found, unreachable};
 use crate::routes::workflow_views::{
-    CardParts, Fact, JobCard, Link, Problem, Scope, StateCounts, StateFilter, WorkflowDetail, WorkflowEntry,
-    WorkflowsList, render_detail, render_list, state_tiles,
+    CardParts, Fact, JobCard, JobsList, Link, Problem, Scope, StateCounts, StateFilter, WorkflowDetail, WorkflowEntry,
+    WorkflowsList, render_detail, render_jobs, render_list, state_tiles,
 };
 use crate::run_control_shared::{SharedRunControl, SharedRunHost};
 use crate::scheduler::{RunKind, run_allowed};
@@ -138,7 +138,7 @@ impl SharedRoutesState {
     }
 }
 
-/// The primary server and every configured server's name, read together for one request, since `/settings/` can change
+/// The primary server and every configured server's name, read together for one request, since `/server/settings/` can change
 /// them while the process runs.
 pub(crate) struct CurrentServers {
     primary: String,
@@ -154,7 +154,7 @@ pub(crate) enum PageError {
 }
 
 pub(crate) fn workflow_href(package: &str, workflow: &str) -> String {
-    format!("/shared/workflows/{package}/{workflow}")
+    format!("/server/workflows/{package}/{workflow}")
 }
 
 pub(crate) fn job_href(key: &SharedJobKey) -> String {
@@ -266,6 +266,7 @@ pub(crate) fn entries(roots: &SharedRoots) -> Result<Vec<SharedEntry>, PageError
 pub(crate) async fn shell_nav(
     state: &SharedRoutesState,
     client: &McpClient,
+    screen: HostScreen,
     breadcrumb: Vec<BreadcrumbSegment>,
     headers: &HeaderMap,
 ) -> page::NavData {
@@ -275,7 +276,7 @@ pub(crate) async fn shell_nav(
     let (mut nav, appearance, mcp_status) = tokio::join!(
         Box::pin(shell::build_host_nav(
             client,
-            HostScreen::Shared,
+            screen,
             active_vault.as_deref(),
             &server_names,
         )),
@@ -323,16 +324,18 @@ pub(crate) fn crumb(label: &str, href: Option<String>) -> BreadcrumbSegment {
 pub(crate) async fn respond(
     state: &SharedRoutesState,
     headers: &HeaderMap,
+    screen: HostScreen,
     breadcrumb: Vec<BreadcrumbSegment>,
     fragment: String,
 ) -> Response {
-    respond_titled(state, headers, breadcrumb, fragment, None).await
+    respond_titled(state, headers, screen, breadcrumb, fragment, None).await
 }
 
 /// [`respond`], with the title bar of a screen that has one.
 pub(crate) async fn respond_titled(
     state: &SharedRoutesState,
     headers: &HeaderMap,
+    screen: HostScreen,
     breadcrumb: Vec<BreadcrumbSegment>,
     fragment: String,
     title: Option<PageTitle>,
@@ -344,7 +347,7 @@ pub(crate) async fn respond_titled(
         Ok(client) => client,
         Err(response) => return *response,
     };
-    let mut nav = shell_nav(state, &client, breadcrumb, headers).await;
+    let mut nav = shell_nav(state, &client, screen, breadcrumb, headers).await;
     nav.page_title = title;
     html_response(page::render_page(&nav, "Workflows", &fragment))
 }
@@ -360,6 +363,25 @@ pub struct SharedQuery {
     state: Option<String>,
 }
 
+/// Every shared workflow with its jobs, read on a blocking thread.
+async fn gathered_entries(state: &SharedRoutesState) -> Result<Vec<SharedEntry>, Box<Response>> {
+    let roots = Arc::clone(&state.roots);
+    match tokio::task::spawn_blocking(move || entries(&roots)).await {
+        Ok(Ok(all)) => Ok(all),
+        Ok(Err(error)) => Err(Box::new(page_failure(&error))),
+        Err(error) => {
+            tracing::warn!(%error, "the shared workflows could not be gathered");
+            Err(Box::new(unreachable()))
+        }
+    }
+}
+
+fn counts_of(all: &[SharedEntry]) -> StateCounts {
+    all.iter()
+        .flat_map(|shared| shared.entry.jobs.iter().map(|job| job.lifecycle))
+        .collect()
+}
+
 /// `all`, with only the jobs `filter` admits.
 fn admitted(all: Vec<SharedEntry>, filter: StateFilter) -> Vec<SharedEntry> {
     all.into_iter()
@@ -372,7 +394,7 @@ fn admitted(all: Vec<SharedEntry>, filter: StateFilter) -> Vec<SharedEntry> {
         .collect()
 }
 
-/// `GET /shared/workflows`: lists every shared workflow with its jobs, or only the jobs in the state `?state=` names.
+/// `GET /server/workflows`: lists every shared workflow with its jobs, or only the jobs in the state `?state=` names.
 pub async fn list(
     State(state): State<SharedRoutesState>,
     Query(query): Query<SharedQuery>,
@@ -381,31 +403,23 @@ pub async fn list(
     let Ok(filter) = StateFilter::try_from(query.state.as_deref()) else {
         return error_response(StatusCode::BAD_REQUEST, "workflows/unknown-state-filter");
     };
-    let roots = Arc::clone(&state.roots);
-    let gathered = tokio::task::spawn_blocking(move || entries(&roots)).await;
-    let all = match gathered {
-        Ok(Ok(all)) => all,
-        Ok(Err(error)) => return page_failure(&error),
-        Err(error) => {
-            tracing::warn!(%error, "the shared workflows could not be gathered");
-            return unreachable();
-        }
+    let all = match gathered_entries(&state).await {
+        Ok(all) => all,
+        Err(response) => return *response,
     };
-    let counts: StateCounts = all
-        .iter()
-        .flat_map(|shared| shared.entry.jobs.iter().map(|job| job.lifecycle))
-        .collect();
+    let counts = counts_of(&all);
     let workflows: Vec<WorkflowEntry> = admitted(all, filter).into_iter().map(|shared| shared.entry).collect();
     let fragment = render_list(&WorkflowsList {
         scope: Scope::SharedWorkflows.tabs(&vault_names(&state).await),
         filter_value: filter.value(),
-        tiles: state_tiles(crate::urls::SHARED_WORKFLOWS, filter, &counts),
+        tiles: state_tiles(crate::urls::SERVER_WORKFLOWS, filter, &counts),
         workflows,
         notices: Vec::new(),
     });
     respond_titled(
         &state,
         &headers,
+        HostScreen::Workflows,
         vec![crumb("Shared Workflows", None)],
         fragment,
         Some(screen_title("Shared Workflows", WORKFLOWS.icon)),
@@ -413,7 +427,48 @@ pub async fn list(
     .await
 }
 
-/// `GET /shared/workflows/{{package}}/{{workflow}}`: one shared workflow, the release it comes from, and its jobs.
+/// `GET /server/jobs`: every shared job, whichever workflow it is under, or only those in the state `?state=` names.
+pub async fn jobs(
+    State(state): State<SharedRoutesState>,
+    Query(query): Query<SharedQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let Ok(filter) = StateFilter::try_from(query.state.as_deref()) else {
+        return error_response(StatusCode::BAD_REQUEST, "workflows/unknown-state-filter");
+    };
+    let all = match gathered_entries(&state).await {
+        Ok(all) => all,
+        Err(response) => return *response,
+    };
+    let counts = counts_of(&all);
+    let jobs = admitted(all, filter)
+        .into_iter()
+        .flat_map(|shared| {
+            let workflow = shared.entry.name;
+            shared.entry.jobs.into_iter().map(move |mut job| {
+                job.workflow = Some(workflow.clone());
+                job
+            })
+        })
+        .collect();
+    let fragment = render_jobs(&JobsList {
+        scope: Scope::SharedJobs.tabs(&vault_names(&state).await),
+        filter_value: filter.value(),
+        tiles: state_tiles(crate::urls::SERVER_JOBS, filter, &counts),
+        jobs,
+    });
+    respond_titled(
+        &state,
+        &headers,
+        HostScreen::Jobs,
+        vec![crumb("Shared Jobs", None)],
+        fragment,
+        Some(screen_title("Shared Jobs", "clock")),
+    )
+    .await
+}
+
+/// `GET /server/workflows/{{package}}/{{workflow}}`: one shared workflow, the release it comes from, and its jobs.
 pub async fn workflow(
     State(state): State<SharedRoutesState>,
     Path((package, workflow)): Path<(String, String)>,
@@ -462,7 +517,7 @@ pub async fn workflow(
     };
     let fragment = render_detail(&WorkflowDetail {
         back: Link {
-            href: crate::urls::SHARED_WORKFLOWS.to_owned(),
+            href: crate::urls::SERVER_WORKFLOWS.to_owned(),
             label: "All shared workflows",
         },
         workflow: found.entry,
@@ -471,8 +526,9 @@ pub async fn workflow(
     respond(
         &state,
         &headers,
+        HostScreen::Workflows,
         vec![
-            crumb("Shared Workflows", Some(crate::urls::SHARED_WORKFLOWS.to_owned())),
+            crumb("Shared Workflows", Some(crate::urls::SERVER_WORKFLOWS.to_owned())),
             crumb(&package, None),
             crumb(&workflow, None),
         ],

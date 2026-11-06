@@ -1,0 +1,8 @@
+<div class="jobs-screen" id="workflows-screen">
+{% include "workflow_scope.html" %}{% include "job_state_strip.html" %}{% if jobs.is_empty() %}
+  <section class="panel"><p class="hint">{% if filter_value == "all" %}No jobs are registered yet.{% else %}No job matches this filter.{% endif %}</p></section>
+{% else %}
+  <div class="jobs-grid">
+{% for job in jobs %}{% include "job_card.html" %}{% endfor %}  </div>
+{% endif %}
+</div>

@@ -92,7 +92,7 @@ pub(crate) fn breadcrumb_segments(vault_name: &str, path: &str) -> Vec<Breadcrum
     segments
 }
 
-/// The vault-independent breadcrumb (`/settings/`): a single unlinked
+/// The vault-independent breadcrumb (`/server/settings/`): a single unlinked
 /// `"settings"` segment, matching every other page's own final,
 /// current-location segment carrying no link.
 fn settings_breadcrumb() -> Vec<BreadcrumbSegment> {
@@ -271,7 +271,7 @@ fn is_under_knowledge(current_path: Option<&str>, entities: &[NavEntityOption]) 
 }
 
 /// Builds every [`SidebarGroup`] the sidebar renders for a vault-scoped
-/// page: `None` for a vault-independent page (`/settings/`), which shows
+/// page: `None` for a vault-independent page (`/server/settings/`), which shows
 /// no groups at all, matching [`NavData::entities`]'s identical "hidden
 /// on a vault-independent page" convention.
 fn sidebar_groups(
@@ -287,6 +287,7 @@ fn sidebar_groups(
     };
     vec![
         SidebarGroup {
+            section: None,
             label: None,
             heading_href: None,
             icon: "",
@@ -294,6 +295,7 @@ fn sidebar_groups(
             links: general_links(vault_name, breadcrumb_suffix, counts),
         },
         SidebarGroup {
+            section: None,
             label: Some("Agents"),
             heading_href: Some(VaultUrls::from(vault_name).agents()),
             icon: "agents",
@@ -301,6 +303,7 @@ fn sidebar_groups(
             links: agent_group_links(vault_name, counts),
         },
         SidebarGroup {
+            section: None,
             label: Some("Apps"),
             heading_href: Some(VaultUrls::from(vault_name).apps()),
             icon: "apps",
@@ -308,6 +311,7 @@ fn sidebar_groups(
             links: favourited_apps,
         },
         SidebarGroup {
+            section: None,
             label: Some("Workflows"),
             heading_href: Some(VaultUrls::from(vault_name).workflows()),
             icon: "jobs",
@@ -315,6 +319,7 @@ fn sidebar_groups(
             links: Vec::new(),
         },
         SidebarGroup {
+            section: None,
             label: Some("Knowledge"),
             heading_href: Some(VaultUrls::from(vault_name).wiki("")),
             icon: "book",
@@ -501,7 +506,7 @@ fn events_stream_href(vault_name: &str, current_entity: Option<&str>) -> String 
 
 /// Assembles [`NavData`] for one page render.
 ///
-/// `vault_name` is `None` for a vault-independent page (`/settings/`).
+/// `vault_name` is `None` for a vault-independent page (`/server/settings/`).
 /// `breadcrumb_suffix` is the caller-formatted path segment(s) shown after
 /// the vault name in the breadcrumb (a file's own full path, or a fixed
 /// label like `"apps"`), and doubles as the current path
@@ -569,11 +574,12 @@ pub async fn build_nav(
     } else {
         (None, None)
     };
+    sidebar_groups.push(server_group(None));
     // The header's "New note" and "Profile" controls target the vault a
     // reader would land in from a vault-independent page too (the same
     // `nav_target_vault` the header's own wordmark link already falls back
     // to), so they stay reachable rather than merely disabled from
-    // `/settings/`.
+    // `/server/settings/`.
     let nav_target_urls = nav_target_vault.as_deref().map(VaultUrls::from);
     let nav_target_vault_notes = nav_target_urls.as_ref().map(|urls| urls.notes(""));
     let nav_target_vault_profile = nav_target_urls.as_ref().map(VaultUrls::profile);
@@ -622,14 +628,16 @@ pub async fn build_nav(
 /// A page with no vault in its address.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostScreen {
-    Shared,
+    Workflows,
+    Jobs,
+    Libraries,
     Settings,
 }
 
 impl HostScreen {
     fn view(self, vault: Option<&str>) -> HostView {
         let (icon, label) = match self {
-            Self::Shared => ("jobs", "Shared View"),
+            Self::Workflows | Self::Jobs | Self::Libraries => ("jobs", "Server View"),
             Self::Settings => ("settings", "Server Settings"),
         };
         HostView {
@@ -637,6 +645,41 @@ impl HostScreen {
             label,
             detail: vault.map(|vault| format!("Vault Menu: {vault}")),
         }
+    }
+}
+
+/// The sidebar's Server section, on every page: what the server holds for all its vaults. `screen` marks the current one.
+pub(crate) fn server_group(screen: Option<HostScreen>) -> SidebarGroup {
+    let link = |label: &str, href: &str, icon: &'static str, shows: HostScreen| SidebarLink {
+        attention: None,
+        label: label.to_owned(),
+        href: href.to_owned(),
+        icon,
+        active: screen == Some(shows),
+        meta: None,
+        target: None,
+    };
+    SidebarGroup {
+        section: Some("Server"),
+        label: Some("Workflows"),
+        heading_href: None,
+        icon: "jobs",
+        active: false,
+        links: vec![
+            link(
+                "Workflows",
+                crate::urls::SERVER_WORKFLOWS,
+                "jobs",
+                HostScreen::Workflows,
+            ),
+            link("Jobs", crate::urls::SERVER_JOBS, "clock", HostScreen::Jobs),
+            link(
+                "Libraries",
+                crate::urls::SERVER_PACKAGES,
+                "library",
+                HostScreen::Libraries,
+            ),
+        ],
     }
 }
 
@@ -650,7 +693,7 @@ pub(crate) async fn build_host_nav(
     known_mcp_servers: &[String],
 ) -> NavData {
     let active = match screen {
-        HostScreen::Shared => ActiveScreen::Jobs,
+        HostScreen::Workflows | HostScreen::Jobs | HostScreen::Libraries => ActiveScreen::Jobs,
         HostScreen::Settings => ActiveScreen::Settings,
     };
     let mut nav = Box::pin(build_nav(client, active, None, None, None, None, known_mcp_servers)).await;
@@ -674,21 +717,8 @@ pub(crate) async fn build_host_nav(
         nav.vault_settings_href = vault_nav.vault_settings_href;
         nav.nav_target_vault = target.clone();
     }
-    if screen == HostScreen::Shared
-        && let Some(workflows) = nav
-            .sidebar_groups
-            .iter_mut()
-            .find(|group| group.label == Some("Workflows"))
-    {
-        workflows.links.push(SidebarLink {
-            attention: None,
-            label: "Shared Workflows".to_owned(),
-            href: crate::urls::SHARED_WORKFLOWS.to_owned(),
-            icon: "jobs",
-            active: true,
-            meta: None,
-            target: None,
-        });
+    if let Some(server) = nav.sidebar_groups.last_mut() {
+        *server = server_group(Some(screen));
     }
     nav.host_view = Some(screen.view(target.as_deref()));
     nav

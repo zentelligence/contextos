@@ -36,6 +36,8 @@ Only used when `"http"` is in `transports`, or when `--http` is given (as `conte
 
 One entry per vault. `path` is the vault root; `name` addresses it as `name://relative-path` on every path-accepting tool parameter and defaults to the root directory's basename (it must be unique and a valid URI scheme token). `managed` controls whether the server runs its services for the vault: an unmanaged vault is filesystem-only, so the tools still read and write its files, but there is no `index.md` maintenance, operation log, Git recovery, or search. `hidden` and `resources_list_include` control what the enumeration and resource-listing surfaces show, and a file `hidden` hides is also no part of the link graph, so no link reaches it; `state_directory` overrides where derived state (indexes, embeddings) is stored.
 
+A vault cannot be named `api`, `mcp`, `server`, `shell`, or `static`: the web interface uses those addresses itself, and a vault's pages are at `/{name}/`. `contextos` refuses to start with one (`path/reserved-vault-name`), and `contextos config` refuses to add one. A vault with no `name` takes its folder's, so a folder called `server` needs a `name` of its own.
+
 ### `[vault.limits]`
 
 `max_read_mb` and `max_batch_files` bound single-call resource use.

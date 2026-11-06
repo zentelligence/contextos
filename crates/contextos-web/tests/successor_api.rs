@@ -166,7 +166,7 @@ async fn a_shared_successor_uses_shared_in_place_of_the_vault() -> Result<(), Bo
     let (status, body) = site
         .send(
             "PUT",
-            "/api/v1/shared/workflows/acme/sync/jobs/nightly/execute/successor",
+            "/api/v1/server/workflows/acme/sync/jobs/nightly/execute/successor",
             r#"{"new_job":"nightly-next","to":"1.1.0"}"#,
         )
         .await?;
@@ -177,7 +177,7 @@ async fn a_shared_successor_uses_shared_in_place_of_the_vault() -> Result<(), Bo
     let (again, refused) = site
         .send(
             "POST",
-            "/api/v1/shared/workflows/acme/sync/jobs/execute/successor",
+            "/api/v1/server/workflows/acme/sync/jobs/execute/successor",
             "{}",
         )
         .await?;
@@ -192,7 +192,7 @@ async fn a_post_on_the_hosts_workflow_makes_a_successor_for_every_shared_job() -
     let (status, body) = site
         .send(
             "POST",
-            "/api/v1/shared/workflows/acme/sync/jobs/execute/successor",
+            "/api/v1/server/workflows/acme/sync/jobs/execute/successor",
             "{}",
         )
         .await?;

@@ -123,7 +123,7 @@ async fn visiting_a_vault_makes_it_the_active_vault() -> Result<(), BoxError> {
 #[tokio::test]
 async fn a_page_with_no_vault_does_not_change_the_active_vault() -> Result<(), BoxError> {
     let site = site().await?;
-    for path in ["/shared/workflows", "/shared/packages", "/settings/"] {
+    for path in ["/server/workflows", "/server/packages", "/server/settings/"] {
         let page = site.get(path, Some("cc_active_vault=beta")).await?;
         assert_eq!(page.status, StatusCode::OK, "{path}");
         assert_eq!(page.active_vault_cookie(), None, "{path}");
@@ -143,7 +143,7 @@ async fn a_missing_page_does_not_change_the_active_vault() -> Result<(), BoxErro
 #[tokio::test]
 async fn the_shared_and_settings_sidebars_follow_the_active_vault() -> Result<(), BoxError> {
     let site = site().await?;
-    for path in ["/shared/workflows", "/shared/packages", "/settings/"] {
+    for path in ["/server/workflows", "/server/packages", "/server/settings/"] {
         let page = site.get(path, Some("cc_active_vault=beta")).await?;
         assert!(page.body.contains("href=\"/beta/tasks"), "{path}: {}", page.body);
         assert!(!page.body.contains("href=\"/alpha/tasks"), "{path}: {}", page.body);
@@ -162,8 +162,8 @@ async fn the_settings_sidebar_is_the_same_as_the_shared_one() -> Result<(), BoxE
             .and_then(|rest| rest.split("</aside>").next())
             .map(|sidebar| sidebar.contains("href=\"/beta/workflows/ops/sync/jobs/nightly"))
     };
-    let shared = site.get("/shared/workflows", Some("cc_active_vault=beta")).await?;
-    let settings = site.get("/settings/", Some("cc_active_vault=beta")).await?;
+    let shared = site.get("/server/workflows", Some("cc_active_vault=beta")).await?;
+    let settings = site.get("/server/settings/", Some("cc_active_vault=beta")).await?;
     assert_eq!(sidebar(&shared.body), Some(true), "{}", shared.body);
     assert_eq!(sidebar(&settings.body), Some(true), "{}", settings.body);
     Ok(())
@@ -172,7 +172,7 @@ async fn the_settings_sidebar_is_the_same_as_the_shared_one() -> Result<(), BoxE
 #[tokio::test]
 async fn with_no_active_vault_the_first_configured_vault_stands_in() -> Result<(), BoxError> {
     let site = site().await?;
-    let page = site.get("/shared/workflows", None).await?;
+    let page = site.get("/server/workflows", None).await?;
     assert!(page.body.contains("href=\"/alpha/tasks"), "{}", page.body);
     Ok(())
 }
@@ -182,7 +182,7 @@ async fn with_no_active_vault_the_first_configured_vault_stands_in() -> Result<(
 async fn an_active_vault_that_is_not_configured_is_ignored() -> Result<(), BoxError> {
     let site = site().await?;
     for cookie in ["cc_active_vault=gone", "cc_active_vault=%22%3E%3Cscript%3E"] {
-        let page = site.get("/shared/workflows", Some(cookie)).await?;
+        let page = site.get("/server/workflows", Some(cookie)).await?;
         assert_eq!(page.status, StatusCode::OK, "{cookie}");
         assert!(page.body.contains("href=\"/alpha/tasks"), "{cookie}: {}", page.body);
         assert!(
@@ -196,12 +196,12 @@ async fn an_active_vault_that_is_not_configured_is_ignored() -> Result<(), BoxEr
 #[tokio::test]
 async fn the_sidebar_names_the_view_showing_and_the_vault_its_menu_belongs_to() -> Result<(), BoxError> {
     let site = site().await?;
-    let shared = site.get("/shared/workflows", Some("cc_active_vault=beta")).await?;
+    let shared = site.get("/server/workflows", Some("cc_active_vault=beta")).await?;
     assert!(shared.body.contains("class=\"sidebar-scope\""), "{}", shared.body);
-    assert!(shared.body.contains(">Shared View<"), "{}", shared.body);
+    assert!(shared.body.contains(">Server View<"), "{}", shared.body);
     assert!(shared.body.contains("Vault Menu: beta"), "{}", shared.body);
 
-    let settings = site.get("/settings/", Some("cc_active_vault=beta")).await?;
+    let settings = site.get("/server/settings/", Some("cc_active_vault=beta")).await?;
     assert!(settings.body.contains("class=\"sidebar-scope\""), "{}", settings.body);
     assert!(settings.body.contains(">Server Settings<"), "{}", settings.body);
 
@@ -213,9 +213,9 @@ async fn the_sidebar_names_the_view_showing_and_the_vault_its_menu_belongs_to() 
 #[tokio::test]
 async fn the_shared_view_is_marked_in_the_sidebar_and_the_vaults_workflows_are_not() -> Result<(), BoxError> {
     let site = site().await?;
-    let page = site.get("/shared/workflows", Some("cc_active_vault=beta")).await?;
+    let page = site.get("/server/workflows", Some("cc_active_vault=beta")).await?;
     let sidebar = page.body.split("shell-sidebar").nth(1).unwrap_or_default();
-    assert!(sidebar.contains("href=\"/shared/workflows\""), "{sidebar}");
+    assert!(sidebar.contains("href=\"/server/workflows\""), "{sidebar}");
     assert!(!sidebar.contains("nav-group-heading-link active"), "{sidebar}");
     Ok(())
 }
@@ -224,7 +224,10 @@ async fn the_shared_view_is_marked_in_the_sidebar_and_the_vaults_workflows_are_n
 #[tokio::test]
 async fn the_vault_switcher_does_not_claim_a_vault_on_a_page_with_none() -> Result<(), BoxError> {
     let site = site().await?;
-    for (path, label) in [("/shared/workflows", "Shared View"), ("/settings/", "Server Settings")] {
+    for (path, label) in [
+        ("/server/workflows", "Server View"),
+        ("/server/settings/", "Server Settings"),
+    ] {
         let page = site.get(path, Some("cc_active_vault=beta")).await?;
         let switcher = page.body.split("id=\"vault-select\"").nth(1).unwrap_or_default();
         let switcher = switcher.split("</select>").next().unwrap_or_default();
@@ -235,5 +238,59 @@ async fn the_vault_switcher_does_not_claim_a_vault_on_a_page_with_none() -> Resu
     }
     let vault = site.get("/beta/workflows", None).await?;
     assert!(!vault.body.contains("selected disabled"), "{}", vault.body);
+    Ok(())
+}
+
+fn sidebar_link<'a>(page: &'a str, href: &str) -> Option<&'a str> {
+    let link = page.find(&format!("href=\"{href}\""))?;
+    let start = page[..link].rfind("<a ")?;
+    Some(&page[start..link])
+}
+
+#[tokio::test]
+async fn every_page_ends_its_sidebar_with_the_server_section() -> Result<(), BoxError> {
+    let site = site().await?;
+    for path in ["/beta/workflows", "/server/workflows", "/server/settings/"] {
+        let page = site.get(path, None).await?;
+        let knowledge = page.body.find(">Knowledge<").ok_or("no Knowledge group")?;
+        let server = page.body.find(">Server<").ok_or("no Server section")?;
+        assert!(server > knowledge, "{path}");
+        let below = &page.body[server..];
+        for (href, label) in [
+            ("/server/workflows", ">Workflows<"),
+            ("/server/jobs", ">Jobs<"),
+            ("/server/packages", ">Libraries<"),
+        ] {
+            assert!(below.contains(&format!("href=\"{href}\"")), "{path}: {href}");
+            assert!(below.contains(label), "{path}: {label}");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_server_section_marks_the_screen_showing_and_only_that_one() -> Result<(), BoxError> {
+    let site = site().await?;
+    let all = ["/server/workflows", "/server/jobs", "/server/packages"];
+    for current in all {
+        let page = site.get(current, None).await?;
+        for href in all {
+            let link = sidebar_link(&page.body, href).ok_or("no link")?;
+            assert_eq!(link.contains("active"), href == current, "{current}: {link}");
+        }
+    }
+    let vault = site.get("/beta/workflows", None).await?;
+    for href in all {
+        assert!(!sidebar_link(&vault.body, href).ok_or("no link")?.contains("active"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_old_addresses_are_free_for_vaults_of_those_names() -> Result<(), BoxError> {
+    let site = site().await?;
+    for path in ["/settings/", "/shared/workflows", "/shared/packages"] {
+        assert_eq!(site.get(path, None).await?.status, StatusCode::NOT_FOUND, "{path}");
+    }
     Ok(())
 }

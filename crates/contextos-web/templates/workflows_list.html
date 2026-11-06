@@ -1,10 +1,7 @@
 <div class="jobs-screen" id="workflows-screen">
 {% for notice in notices %}  <p class="job-message" role="alert">{{ notice }}</p>
 {% endfor %}{% include "workflow_scope.html" %}
-  <nav class="task-stage-strip" aria-label="Filter jobs by state">
-{% for tile in tiles %}    <a class="task-stage-tile{% if tile.active %} active{% endif %}{% if tile.attention && tile.count > 0 %} job-tile-attention{% endif %}" href="{{ tile.href }}" hx-get="{{ tile.href }}" hx-target="#workflows-screen" hx-swap="outerHTML" hx-push-url="true" aria-label="{{ tile.label }}: {{ tile.count }}"{% if tile.active %} aria-current="true"{% endif %}><span class="task-stage-count">{{ tile.count }}</span><span class="task-stage-label">{{ tile.label }}</span></a>
-{% endfor %}  </nav>
-{% if workflows.is_empty() %}
+{% include "job_state_strip.html" %}{% if workflows.is_empty() %}
   <section class="panel"><p class="hint">{% if filter_value == "all" %}No workflows are registered yet.{% else %}No job matches this filter.{% endif %}</p></section>
 {% else %}
 {% for workflow in workflows %}

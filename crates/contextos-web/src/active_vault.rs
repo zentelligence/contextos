@@ -11,13 +11,11 @@ use axum::extract::Request;
 use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::middleware::Next;
 use axum::response::Response;
+use contextos_core::RESERVED_VAULT_NAMES;
 
 use crate::inbox_outbox::{decode_percent_encoded, encode_query_value};
 
 pub const ACTIVE_VAULT_COOKIE: &str = "cc_active_vault";
-
-/// The first segments of the addresses that belong to the host rather than to a vault.
-const HOST_SEGMENTS: [&str; 6] = ["api", "mcp", "settings", "shared", "shell", "static"];
 
 /// The active vault this request's cookie names, if it names one.
 #[must_use]
@@ -38,7 +36,7 @@ pub fn read_from_headers(headers: &HeaderMap) -> Option<String> {
 /// The vault `path` (a request's raw, percent-encoded path) is in, by its shape alone, or `None` for a host address.
 fn vault_of(path: &str) -> Option<String> {
     let first = path.trim_start_matches('/').split('/').next()?;
-    if first.is_empty() || HOST_SEGMENTS.contains(&first) {
+    if first.is_empty() || RESERVED_VAULT_NAMES.contains(&first) {
         return None;
     }
     decode_percent_encoded(first)

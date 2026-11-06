@@ -92,7 +92,7 @@ impl Site {
     }
 }
 
-const JOB_URL: &str = "/shared/workflows/acme/sync/jobs/nightly";
+const JOB_URL: &str = "/server/workflows/acme/sync/jobs/nightly";
 
 fn job_url(tail: &str) -> String {
     format!("{JOB_URL}/{tail}")
@@ -102,7 +102,7 @@ fn job_url(tail: &str) -> String {
 async fn a_shared_workflow_page_lists_its_releases_with_the_jobs_on_each() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let page = site.get("/shared/workflows/acme/sync").await?;
+    let page = site.get("/server/workflows/acme/sync").await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("id=\"workflow-releases\""), "{}", page.body);
@@ -113,7 +113,7 @@ async fn a_shared_workflow_page_lists_its_releases_with_the_jobs_on_each() -> Re
     );
     assert!(
         page.body
-            .contains("<dt>draft</dt><dd><a href=\"/shared/workflows/acme/sync/jobs/nightly\">Nightly</a>"),
+            .contains("<dt>draft</dt><dd><a href=\"/server/workflows/acme/sync/jobs/nightly\">Nightly</a>"),
         "{}",
         page.body
     );
@@ -126,12 +126,12 @@ async fn a_shared_workflow_page_lists_its_releases_with_the_jobs_on_each() -> Re
 // ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_list_is_at_shared_workflows_and_nothing_answers_at_shared() -> Result<(), BoxError> {
+async fn the_list_is_at_server_workflows_and_nothing_answers_at_server() -> Result<(), BoxError> {
     let site = site(JOB).await?;
-    assert_eq!(site.get("/shared/workflows").await?.status, StatusCode::OK);
-    assert_eq!(site.get("/shared/workflows/").await?.status, StatusCode::OK);
-    assert_eq!(site.get("/shared").await?.status, StatusCode::NOT_FOUND);
-    assert_eq!(site.get("/shared/").await?.status, StatusCode::NOT_FOUND);
+    assert_eq!(site.get("/server/workflows").await?.status, StatusCode::OK);
+    assert_eq!(site.get("/server/workflows/").await?.status, StatusCode::OK);
+    assert_eq!(site.get("/server").await?.status, StatusCode::NOT_FOUND);
+    assert_eq!(site.get("/server/").await?.status, StatusCode::NOT_FOUND);
     Ok(())
 }
 
@@ -139,7 +139,7 @@ async fn the_list_is_at_shared_workflows_and_nothing_answers_at_shared() -> Resu
 #[tokio::test]
 async fn the_state_strip_counts_every_job_whichever_filter_is_in_use() -> Result<(), BoxError> {
     let site = site(JOB).await?;
-    for path in ["/shared/workflows", "/shared/workflows?state=enabled"] {
+    for path in ["/server/workflows", "/server/workflows?state=enabled"] {
         let page = site.get(path).await?;
         for count in [
             "aria-label=\"All: 1\"",
@@ -155,7 +155,7 @@ async fn the_state_strip_counts_every_job_whichever_filter_is_in_use() -> Result
 #[tokio::test]
 async fn the_shared_list_is_titled_and_leads_back_to_each_vaults_workflows() -> Result<(), BoxError> {
     let site = site(JOB).await?;
-    let page = site.get("/shared/workflows").await?;
+    let page = site.get("/server/workflows").await?;
     assert!(page.body.contains("class=\"page-title\""), "{}", page.body);
     assert!(page.body.contains("Shared Workflows"), "{}", page.body);
     assert!(
@@ -163,7 +163,7 @@ async fn the_shared_list_is_titled_and_leads_back_to_each_vaults_workflows() -> 
         "{}",
         page.body
     );
-    assert!(page.body.contains("href=\"/shared/packages\""), "{}", page.body);
+    assert!(page.body.contains("href=\"/server/packages\""), "{}", page.body);
     Ok(())
 }
 
@@ -171,7 +171,7 @@ async fn the_shared_list_is_titled_and_leads_back_to_each_vaults_workflows() -> 
 #[tokio::test]
 async fn a_filtered_fragment_keeps_the_way_back_to_the_vault() -> Result<(), BoxError> {
     let site = site(JOB).await?;
-    let fragment = site.send("GET", "/shared/workflows?state=draft", true, None).await?;
+    let fragment = site.send("GET", "/server/workflows?state=draft", true, None).await?;
     assert!(
         fragment.body.contains("href=\"/contract-fixture/workflows\""),
         "{}",
@@ -183,7 +183,7 @@ async fn a_filtered_fragment_keeps_the_way_back_to_the_vault() -> Result<(), Box
 #[tokio::test]
 async fn the_shared_pages_keep_the_sidebar_of_the_vault_the_header_leads_to() -> Result<(), BoxError> {
     let site = site(JOB).await?;
-    let page = site.get("/shared/workflows").await?;
+    let page = site.get("/server/workflows").await?;
     assert!(page.body.contains("href=\"/contract-fixture/tasks"), "{}", page.body);
     Ok(())
 }
@@ -193,9 +193,9 @@ async fn the_shared_pages_keep_the_sidebar_of_the_vault_the_header_leads_to() ->
 async fn with_no_vault_the_shared_list_still_shows_and_names_none() -> Result<(), BoxError> {
     let fixture = SharedFixture::zero_vaults(JOB).await?;
     let site = site_over(fixture);
-    let page = site.get("/shared/workflows").await?;
+    let page = site.get("/server/workflows").await?;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.body.contains(">Shared View<"), "{}", page.body);
+    assert!(page.body.contains(">Server View<"), "{}", page.body);
     assert!(!page.body.contains("Vault Menu"), "{}", page.body);
     assert!(page.body.contains("Nightly"), "{}", page.body);
     Ok(())
@@ -204,8 +204,8 @@ async fn with_no_vault_the_shared_list_still_shows_and_names_none() -> Result<()
 #[tokio::test]
 async fn the_library_page_leads_back_to_the_shared_workflows_and_each_vault() -> Result<(), BoxError> {
     let site = site(JOB).await?;
-    let page = site.get("/shared/packages").await?;
-    assert!(page.body.contains("href=\"/shared/workflows\""), "{}", page.body);
+    let page = site.get("/server/packages").await?;
+    assert!(page.body.contains("href=\"/server/workflows\""), "{}", page.body);
     assert!(
         page.body.contains("href=\"/contract-fixture/workflows\""),
         "{}",
@@ -218,7 +218,7 @@ async fn the_library_page_leads_back_to_the_shared_workflows_and_each_vault() ->
 async fn the_list_shows_each_shared_workflow_with_its_jobs_and_a_tile_per_state() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let page = site.get("/shared/workflows").await?;
+    let page = site.get("/server/workflows").await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(
@@ -242,11 +242,35 @@ async fn the_list_shows_each_shared_workflow_with_its_jobs_and_a_tile_per_state(
 async fn the_state_filter_shows_only_the_jobs_in_that_state() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let drafts = site.get("/shared/workflows?state=draft").await?;
-    let enabled = site.get("/shared/workflows?state=enabled").await?;
-    let unknown = site.get("/shared/workflows?state=sleeping").await?;
+    let drafts = site.get("/server/workflows?state=draft").await?;
+    let enabled = site.get("/server/workflows?state=enabled").await?;
+    let unknown = site.get("/server/workflows?state=sleeping").await?;
 
     assert!(drafts.body.contains("Nightly"));
+    assert!(
+        !enabled.body.contains("Nightly") && enabled.body.contains("No job matches this filter"),
+        "{}",
+        enabled.body
+    );
+    assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_jobs_page_lists_every_job_under_its_workflow_name_and_filters_by_state() -> Result<(), BoxError> {
+    let site = site(JOB).await?;
+
+    let all = site.get("/server/jobs").await?;
+    let drafts = site.get("/server/jobs/?state=draft").await?;
+    let enabled = site.get("/server/jobs?state=enabled").await?;
+    let unknown = site.get("/server/jobs?state=sleeping").await?;
+
+    assert_eq!(all.status, StatusCode::OK);
+    assert!(all.body.contains(">Shared Jobs<"), "{}", all.body);
+    assert!(all.body.contains("Nightly"), "{}", all.body);
+    assert!(all.body.contains("<p class=\"hint\">"), "{}", all.body);
+    assert!(all.body.contains("href=\"/server/jobs?state=draft\""), "{}", all.body);
+    assert!(drafts.body.contains("Nightly"), "{}", drafts.body);
     assert!(
         !enabled.body.contains("Nightly") && enabled.body.contains("No job matches this filter"),
         "{}",
@@ -260,7 +284,7 @@ async fn the_state_filter_shows_only_the_jobs_in_that_state() -> Result<(), BoxE
 async fn an_htmx_request_for_the_list_gets_the_fragment() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let fragment = site.send("GET", "/shared/workflows?state=draft", true, None).await?;
+    let fragment = site.send("GET", "/server/workflows?state=draft", true, None).await?;
 
     assert!(
         fragment.body.contains("id=\"workflows-screen\"") && !fragment.body.contains("<html"),
@@ -274,7 +298,7 @@ async fn an_htmx_request_for_the_list_gets_the_fragment() -> Result<(), BoxError
 async fn a_shared_workflow_page_shows_its_package_release_and_jobs() -> Result<(), BoxError> {
     let site = site(JOB).await?;
 
-    let page = site.get("/shared/workflows/acme/sync").await?;
+    let page = site.get("/server/workflows/acme/sync").await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(
@@ -283,11 +307,11 @@ async fn a_shared_workflow_page_shows_its_package_release_and_jobs() -> Result<(
         page.body
     );
     assert_eq!(
-        site.get("/shared/workflows/acme/nothing").await?.status,
+        site.get("/server/workflows/acme/nothing").await?.status,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        site.get("/shared/../workflows/sync").await?.status,
+        site.get("/server/../workflows/sync").await?.status,
         StatusCode::NOT_FOUND
     );
     Ok(())
@@ -353,13 +377,13 @@ async fn a_shared_job_page_shows_its_release_and_the_runs_of_its_whole_chain_mar
         )?;
     }
 
-    let page = site.get("/shared/workflows/acme/sync/jobs/nightly-v2").await?;
+    let page = site.get("/server/workflows/acme/sync/jobs/nightly-v2").await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("id=\"job-release\""), "{}", page.body);
     assert!(
         page.body
-            .contains("<dt>Succeeds</dt><dd><a href=\"/shared/workflows/acme/sync/jobs/nightly\">nightly</a>"),
+            .contains("<dt>Succeeds</dt><dd><a href=\"/server/workflows/acme/sync/jobs/nightly\">nightly</a>"),
         "{}",
         page.body
     );
@@ -409,9 +433,9 @@ async fn a_job_file_that_does_not_load_is_listed_as_needing_attention_and_can_be
         "name = \"Broken\"\ntimeout_secs = 30\nversion = \"1.0.0\"\nowner = \"nobody\"\n",
     )?;
 
-    let attention = site.get("/shared/workflows?state=attention").await?;
+    let attention = site.get("/server/workflows?state=attention").await?;
     let validated = site
-        .put("/shared/workflows/acme/sync/jobs/broken/execute/validate", None)
+        .put("/server/workflows/acme/sync/jobs/broken/execute/validate", None)
         .await?;
 
     assert!(
@@ -487,7 +511,7 @@ async fn a_shared_job_goes_through_schedule_suspend_resume_retire_reactivate_and
     assert_eq!(deleted.status, StatusCode::OK);
     assert_eq!(
         deleted.headers.get("hx-redirect").and_then(|value| value.to_str().ok()),
-        Some("/shared/workflows/acme/sync")
+        Some("/server/workflows/acme/sync")
     );
     assert!(site.fixture.read()?.job("acme", "sync", "nightly").is_none());
     Ok(())
@@ -506,7 +530,7 @@ async fn deleting_a_retired_shared_job_from_its_page_removes_its_file_too() -> R
     assert_eq!(deleted.status, StatusCode::OK);
     assert!(!site.fixture.job_path().exists(), "the job file goes with its state");
     assert!(site.fixture.read()?.job("acme", "sync", "nightly").is_none());
-    let relisted = site.get("/shared/workflows").await?;
+    let relisted = site.get("/server/workflows").await?;
     assert!(
         !relisted.body.contains("nightly"),
         "the deleted job is not listed again: {}",
@@ -590,13 +614,13 @@ async fn a_command_or_a_job_that_does_not_exist_is_not_found() -> Result<(), Box
 
     let command = site.put(&job_url("execute/explode"), None).await?;
     let job = site
-        .put("/shared/workflows/acme/sync/jobs/nothing/execute/validate", None)
+        .put("/server/workflows/acme/sync/jobs/nothing/execute/validate", None)
         .await?;
     let escaping = site
-        .put("/shared/workflows/acme/sync/jobs/..%2F/execute/validate", None)
+        .put("/server/workflows/acme/sync/jobs/..%2F/execute/validate", None)
         .await?;
     let delete = site
-        .send("DELETE", "/shared/workflows/acme/sync/jobs/nothing", true, None)
+        .send("DELETE", "/server/workflows/acme/sync/jobs/nothing", true, None)
         .await?;
 
     assert_eq!(command.status, StatusCode::NOT_FOUND);
@@ -612,10 +636,10 @@ async fn the_shared_delete_confirmation_is_for_a_job_that_exists_and_a_name_that
 
     let real = site.get(&job_url("confirm-delete")).await?;
     let none = site
-        .get("/shared/workflows/acme/sync/jobs/nothing/confirm-delete")
+        .get("/server/workflows/acme/sync/jobs/nothing/confirm-delete")
         .await?;
     let odd = site
-        .get("/shared/workflows/acme/sync/jobs/Night%3Fly/confirm-delete")
+        .get("/server/workflows/acme/sync/jobs/Night%3Fly/confirm-delete")
         .await?;
 
     assert_eq!(real.status, StatusCode::OK);
@@ -652,7 +676,7 @@ async fn the_packages_page_shows_each_releases_exports_and_the_installed_package
     std::fs::create_dir_all(&broken)?;
     std::fs::write(broken.join("manifest.toml"), "this is not a manifest")?;
 
-    let page = site.get("/shared/packages").await?;
+    let page = site.get("/server/packages").await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("<html"), "a full page for a full navigation");
@@ -666,14 +690,14 @@ async fn the_packages_page_shows_each_releases_exports_and_the_installed_package
     ] {
         assert!(page.body.contains(expected), "{expected}: {}", page.body);
     }
-    let fragment = site.send("GET", "/shared/packages", true, None).await?;
+    let fragment = site.send("GET", "/server/packages", true, None).await?;
     assert!(
         !fragment.body.contains("<script"),
         "the page adds no client-side script"
     );
-    let list = site.get("/shared/workflows").await?;
+    let list = site.get("/server/workflows").await?;
     assert!(
-        list.body.contains("/shared/packages"),
+        list.body.contains("/server/packages"),
         "the workflows list links to the packages page"
     );
     Ok(())
@@ -716,14 +740,14 @@ async fn the_packages_page_lists_each_library_release_with_the_workflow_releases
         ),
     )?;
 
-    let page = site.get("/shared/packages").await?;
+    let page = site.get("/server/packages").await?;
 
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("id=\"library-releases\""), "{}", page.body);
     assert!(page.body.contains("<strong>acme-text 1.0.0</strong>"), "{}", page.body);
     assert!(
         page.body
-            .contains("<a href=\"/shared/workflows/ops/sync\">ops sync, current</a>"),
+            .contains("<a href=\"/server/workflows/ops/sync\">ops sync, current</a>"),
         "{}",
         page.body
     );
@@ -745,7 +769,7 @@ async fn an_htmx_request_for_the_packages_page_gets_the_fragment_and_an_empty_st
     let site = site(JOB).await?;
     std::fs::remove_dir_all(site.fixture.store_root())?;
 
-    let fragment = site.send("GET", "/shared/packages", true, None).await?;
+    let fragment = site.send("GET", "/server/packages", true, None).await?;
 
     assert_eq!(fragment.status, StatusCode::OK);
     assert!(!fragment.body.contains("<html"), "{}", fragment.body);

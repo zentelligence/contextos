@@ -140,7 +140,7 @@ pub async fn status(State(state): State<OverviewRoutesState>, Path(vault_name): 
         health_summary_href: urls.health_summary("footer"),
         health_href: urls.settings_health(),
         signals_href: urls.signals(),
-        settings_href: "/settings/".to_owned(),
+        settings_href: crate::urls::SERVER_SETTINGS.to_owned(),
     })
 }
 

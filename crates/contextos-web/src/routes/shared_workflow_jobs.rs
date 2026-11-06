@@ -1,4 +1,4 @@
-//! One shared job and what an operator does to it: `GET /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}` (its status,
+//! One shared job and what an operator does to it: `GET /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}` (its status,
 //! actions, and run log), `PATCH` (a schedule), `DELETE` (a retired job's state) with `GET .../confirm-delete`, and
 //! `PUT .../execute/{{command}}`, `POST .../runs` (a run by hand, live or dry), and
 //! `PUT .../runs/{{run}}/execute/cancel`.
@@ -23,6 +23,7 @@ use crate::job_runs_view::{JobRunsInput, JobRunsView};
 use crate::job_status::{JobStatusInput, JobStatusView};
 use crate::page_job::PageJob;
 use crate::rendering::page::BreadcrumbSegment;
+use crate::rendering::shell::HostScreen;
 use crate::routes::shared_workflows::{
     PageError, SharedRoots, SharedRoutesState, card, job_href, key_of, page_failure, respond, workflow_href,
 };
@@ -124,7 +125,7 @@ fn crumbs(key: &SharedJobKey) -> Vec<BreadcrumbSegment> {
     vec![
         BreadcrumbSegment {
             label: "Shared Workflows".to_owned(),
-            href: Some(crate::urls::SHARED_WORKFLOWS.to_owned()),
+            href: Some(crate::urls::SERVER_WORKFLOWS.to_owned()),
         },
         BreadcrumbSegment {
             label: key.package.clone(),
@@ -181,7 +182,7 @@ async fn release_section(
     }
 }
 
-/// `GET /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}`: the job's status and actions and its most recent runs.
+/// `GET /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}`: the job's status and actions and its most recent runs.
 pub async fn detail(
     State(state): State<SharedRoutesState>,
     Path((package, workflow, job)): Path<(String, String, String)>,
@@ -241,10 +242,10 @@ pub async fn detail(
         runs_html,
         notices: Vec::new(),
     });
-    respond(&state, &headers, crumbs(&key), fragment).await
+    respond(&state, &headers, HostScreen::Jobs, crumbs(&key), fragment).await
 }
 
-/// `PATCH /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}`: sets the job's schedule, or clears it when empty. A shared
+/// `PATCH /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}`: sets the job's schedule, or clears it when empty. A shared
 /// job has no favourites.
 pub async fn update(
     State(state): State<SharedRoutesState>,
@@ -280,7 +281,7 @@ pub async fn update(
     }
 }
 
-/// `PUT /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}/execute/{{command}}`: validates, suspends, resumes, retires,
+/// `PUT /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}/execute/{{command}}`: validates, suspends, resumes, retires,
 /// or re-activates the job, and answers with its refreshed status.
 pub async fn execute(
     State(state): State<SharedRoutesState>,
@@ -332,7 +333,7 @@ pub async fn confirm_delete(
     job_pages::confirm_delete(&job, &job_href(&key)).await
 }
 
-/// `DELETE /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}`: deletes a retired job's stored state and sends the
+/// `DELETE /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}`: deletes a retired job's stored state and sends the
 /// browser to its workflow.
 pub async fn delete(
     State(state): State<SharedRoutesState>,
@@ -364,7 +365,7 @@ pub async fn delete(
     .await
 }
 
-/// `POST /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}/runs`: starts a run outside the job's own schedule, live or,
+/// `POST /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}/runs`: starts a run outside the job's own schedule, live or,
 /// when the body asks for it, a dry run. A live run is refused while another run of the job is active, in any process, and a
 /// dry run never is.
 pub async fn start_run(
@@ -407,7 +408,7 @@ pub async fn start_run(
     }
 }
 
-/// `PUT /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}/runs/{{run}}/execute/cancel`: asks the active run to stop,
+/// `PUT /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}/runs/{{run}}/execute/cancel`: asks the active run to stop,
 /// whichever process started it. It stops at its next step.
 pub async fn cancel_run(
     State(state): State<SharedRoutesState>,
@@ -433,7 +434,7 @@ pub async fn cancel_run(
     job_pages::cancel_run(&job, &job_href(&key), &run).await
 }
 
-/// `GET /shared/workflows/{{package}}/{{workflow}}/jobs/{{job}}/runs`: the job's runs region as it is now, which the region asks
+/// `GET /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}/runs`: the job's runs region as it is now, which the region asks
 /// for again while a run is active. It is a fragment, so a browser that navigates to it is sent to the job's page.
 pub async fn list_runs(
     State(state): State<SharedRoutesState>,

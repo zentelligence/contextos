@@ -47,7 +47,7 @@ async fn settings_status(host: Option<&str>) -> Result<(StatusCode, String), Box
     )?;
     let clients = Arc::new(McpClientSet::connect(&[]).await?);
     let router = build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
-    let mut request = Request::builder().uri("/settings/");
+    let mut request = Request::builder().uri("/server/settings/");
     if let Some(host) = host {
         request = request.header("host", host);
     }

@@ -51,6 +51,12 @@ impl TryFrom<PathBuf> for VaultRoot {
     }
 }
 
+/// Names a vault cannot have, because the web interface addresses itself by them.
+///
+/// A vault's pages live at `/{vault}/`, so a vault with one of these names would be hidden behind the interface's own
+/// addresses. This is the only list: the web interface reads it to tell its own addresses from a vault's.
+pub const RESERVED_VAULT_NAMES: [&str; 5] = ["api", "mcp", "server", "shell", "static"];
+
 /// Trusted construction input for an allowed vault root.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VaultRootInput {
@@ -93,6 +99,12 @@ impl TryFrom<VaultRootInput> for VaultRoot {
         };
         if !is_valid_scheme_token(&name) {
             return Err(PathError::InvalidName {
+                path: value.path.clone(),
+                name,
+            });
+        }
+        if RESERVED_VAULT_NAMES.contains(&name.as_str()) {
+            return Err(PathError::ReservedName {
                 path: value.path.clone(),
                 name,
             });
@@ -678,6 +690,8 @@ pub enum PathError {
     DuplicateRoot { path: PathBuf },
     #[error("vault name is not a valid URI scheme token: {name:?} (root {path})")]
     InvalidName { path: PathBuf, name: String },
+    #[error("vault name {name:?} is reserved for the web interface's own addresses (root {path})")]
+    ReservedName { path: PathBuf, name: String },
     #[error("vault name is configured more than once: {name}")]
     DuplicateName { name: String },
     #[error("vault root could not be resolved: {path}")]
@@ -745,6 +759,7 @@ impl PathError {
             | Self::NotOneComponent { .. } => None,
             Self::DuplicateRoot { path }
             | Self::InvalidName { path, .. }
+            | Self::ReservedName { path, .. }
             | Self::RootResolution { path, .. }
             | Self::RootNotDirectory { path }
             | Self::NonUtf8 { path }
@@ -772,6 +787,7 @@ impl PathError {
             Self::UnknownVaultName { .. } => "path/unknown-vault-name",
             Self::EmptyNamedPrefixRemainder { .. } => "path/empty-named-prefix",
             Self::InvalidName { .. } => "path/invalid-vault-name",
+            Self::ReservedName { .. } => "path/reserved-vault-name",
             Self::DuplicateName { .. } => "path/duplicate-vault-name",
             Self::WindowsVerbatim { .. } | Self::AlternateDataStream { .. } | Self::UnsupportedWindowsPath { .. } => {
                 "path/invalid-windows-path"
@@ -816,6 +832,10 @@ impl PathError {
                 "Configure a vault name starting with a letter, containing only letters, \
                  digits, '+', '-', or '.', or remove the override to use the default folder \
                  name if it does not qualify."
+            }
+            Self::ReservedName { .. } => {
+                "Give this vault a different name in the configuration. A vault with no name of its own takes its \
+                 folder's name, so a folder with a reserved name needs one."
             }
             Self::DuplicateName { .. } => {
                 "Configure a unique name for each vault, or remove an explicit override so \
