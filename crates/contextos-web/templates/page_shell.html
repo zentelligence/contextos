@@ -31,7 +31,8 @@
     <span class="header-sep" aria-hidden="true">/</span>
     <div class="vault-switcher topbar-switcher">
       <select id="vault-select"{% if let Some(entity) = nav.current_vault_entity %} style="--entity: var(--entity-{{ entity }})"{% endif %} aria-label="Vault" onchange="if(this.value) location.href='/'+this.value+'/';">
-{% for vault in nav.vaults %}
+{% if let Some(view) = nav.host_view %}        <option value="" selected disabled>{{ view.label }}</option>
+{% endif %}{% for vault in nav.vaults %}
         <option value="{{ vault.name }}"{% if vault.is_current %} selected{% endif %}>{{ vault.name }}</option>
 {% endfor %}
       </select>
@@ -83,7 +84,7 @@
       <a class="header-icon-button {% if nav.active_settings_screen %}active{% endif %}" href="/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
 {% if let Some(alerts_vault) = nav.nav_target_vault %}
       <details class="favourites-panel alerts-panel" hx-get="/{{ alerts_vault }}/alerts" hx-trigger="toggle" hx-target="find .favourites-panel-dropdown" hx-swap="innerHTML">
-        <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/{{ alerts_vault }}/alerts/summary" hx-trigger="load" hx-swap="outerHTML"></span></summary>
+        <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/{{ alerts_vault }}/alerts/summary" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></span></summary>
         <div class="favourites-panel-dropdown alerts-dropdown">
           <p class="hint">Loading&hellip;</p>
         </div>
@@ -101,6 +102,9 @@
 
   <div class="shell-body">
     <aside class="shell-sidebar">
+{% if let Some(view) = nav.host_view %}
+    <div class="sidebar-scope" title="{{ view.label }}"><span class="ic ic-{{ view.icon }}" aria-hidden="true"></span><span class="sidebar-scope-text"><strong>{{ view.label }}</strong>{% if let Some(detail) = view.detail %}<span class="hint">{{ detail }}</span>{% endif %}</span></div>
+{% endif %}
 {% for group in nav.sidebar_groups %}
 {% if let Some(label) = group.label %}
     <details class="nav-group" open>

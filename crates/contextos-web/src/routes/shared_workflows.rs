@@ -23,7 +23,7 @@ use crate::mcp_client::{McpClient, McpClientSet};
 use crate::page_runs::PageRuns;
 use crate::release_views::{ReleasesInput, ReleasesSection};
 use crate::rendering::page::{self, BreadcrumbSegment, PageTitle};
-use crate::rendering::shell::{self, ActiveScreen};
+use crate::rendering::shell::{self, HostScreen};
 use crate::routes::vault::{error_response, html_response, not_found, unreachable};
 use crate::routes::workflow_views::{
     CardParts, Fact, JobCard, Link, Problem, Scope, StateCounts, StateFilter, WorkflowDetail, WorkflowEntry,
@@ -262,23 +262,21 @@ pub(crate) fn entries(roots: &SharedRoots) -> Result<Vec<SharedEntry>, PageError
         .collect())
 }
 
-/// What a shared page's shell is: the vault-independent navigation with this page's own breadcrumb.
+/// What a shared page's shell is: the sidebar of the active vault, with this page's own breadcrumb.
 pub(crate) async fn shell_nav(
     state: &SharedRoutesState,
     client: &McpClient,
     breadcrumb: Vec<BreadcrumbSegment>,
-    sidebar_wide: bool,
+    headers: &HeaderMap,
 ) -> page::NavData {
     let web_config_path = Arc::clone(&state.web_config_path);
     let server_names = state.clients.names();
+    let active_vault = crate::active_vault::read_from_headers(headers);
     let (mut nav, appearance, mcp_status) = tokio::join!(
-        Box::pin(shell::build_nav(
+        Box::pin(shell::build_host_nav(
             client,
-            ActiveScreen::Jobs,
-            None,
-            None,
-            None,
-            None,
+            HostScreen::Shared,
+            active_vault.as_deref(),
             &server_names,
         )),
         async move {
@@ -288,24 +286,9 @@ pub(crate) async fn shell_nav(
         },
         shell::mcp_status(&state.clients),
     );
-    // The shared screens sit among a vault's workflows, so they keep the sidebar of the vault the header already leads
-    // to rather than leaving someone with no navigation at all. Only the sidebar: the page itself still has no vault.
-    if let Some(target) = nav.nav_target_vault.clone() {
-        let vault_nav = Box::pin(shell::build_nav(
-            client,
-            ActiveScreen::Jobs,
-            Some(&target),
-            Some("Workflows"),
-            None,
-            None,
-            &server_names,
-        ))
-        .await;
-        nav.sidebar_groups = vault_nav.sidebar_groups;
-    }
     nav.breadcrumb = breadcrumb;
     nav.appearance = appearance;
-    nav.sidebar_wide = sidebar_wide;
+    nav.sidebar_wide = crate::routes::sidebar_wide_from_headers(headers);
     nav.mcp_status = mcp_status;
     nav
 }
@@ -361,13 +344,7 @@ pub(crate) async fn respond_titled(
         Ok(client) => client,
         Err(response) => return *response,
     };
-    let mut nav = shell_nav(
-        state,
-        &client,
-        breadcrumb,
-        crate::routes::sidebar_wide_from_headers(headers),
-    )
-    .await;
+    let mut nav = shell_nav(state, &client, breadcrumb, headers).await;
     nav.page_title = title;
     html_response(page::render_page(&nav, "Workflows", &fragment))
 }

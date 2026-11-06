@@ -49,7 +49,7 @@ use crate::mcp_client::{McpCallError, McpClient, McpClientSet};
 use crate::mcp_readiness::ServerReadiness;
 use crate::oauth::PendingOauthConnections;
 use crate::rendering::page;
-use crate::rendering::shell::{self, ActiveScreen};
+use crate::rendering::shell::{self, HostScreen};
 use crate::routes::settings_connections::{ConnectionView, ServerSegment};
 use crate::routes::settings_credentials::{
     DetectedAuth, McpServerAuthView, SettingsQuery, credential_references_in, credential_snapshot,
@@ -593,7 +593,7 @@ pub async fn get(
     let appearance_path = Arc::clone(&state.web_config_path);
     let (config, mut nav, appearance, readiness, mcp_status) = tokio::join!(
         read_current_blocking(Arc::clone(&state.web_config_path)),
-        Box::pin(settings_nav(&state)),
+        Box::pin(settings_nav(&state, &headers)),
         async move {
             tokio::task::spawn_blocking(move || current_appearance(&appearance_path))
                 .await
@@ -631,14 +631,16 @@ pub(crate) async fn read_current_blocking(path: Arc<PathBuf>) -> Result<WebConfi
     }
 }
 
-/// Builds the nav shell's data for `/settings/`: vault-independent
-/// (`shell::build_nav`'s `vault_name: None` path), degrading to an empty
-/// vault switcher rather than failing the whole page when the primary MCP
-/// session is unavailable, since the switcher is a convenience the settings
-/// page itself does not depend on.
-async fn settings_nav(state: &SettingsRoutesState) -> page::NavData {
+/// Builds the nav shell's data for `/settings/`: vault-independent, with the sidebar of the active vault, degrading to an
+/// empty vault switcher and sidebar rather than failing the whole page when the primary MCP session is unavailable,
+/// since neither is something the settings page itself depends on.
+async fn settings_nav(state: &SettingsRoutesState, headers: &HeaderMap) -> page::NavData {
     match state.client() {
-        Some(client) => shell::build_nav(&client, ActiveScreen::Settings, None, None, None, None, &[]).await,
+        Some(client) => {
+            let active_vault = crate::active_vault::read_from_headers(headers);
+            let server_names = state.clients.names();
+            shell::build_host_nav(&client, HostScreen::Settings, active_vault.as_deref(), &server_names).await
+        }
         None => page::NavData {
             vaults: Vec::new(),
             current_vault: None,
@@ -659,6 +661,7 @@ async fn settings_nav(state: &SettingsRoutesState) -> page::NavData {
             entity_base_path: None,
             appearance: crate::config::Appearance::default(),
             sidebar_groups: Vec::new(),
+            host_view: None,
             sidebar_wide: true,
             mcp_status: page::McpStatus::default(),
             note_href: None,

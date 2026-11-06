@@ -2,6 +2,7 @@
 // Standard output carries a run command's summary alone, written by the binary; the library only logs.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod active_vault;
 pub mod activity_log;
 pub mod agents_liveness;
 pub mod agents_load;

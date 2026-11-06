@@ -54,7 +54,7 @@
       <a class="header-icon-button " href="/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
 
       <details class="favourites-panel alerts-panel" hx-get="/contract-fixture/alerts" hx-trigger="toggle" hx-target="find .favourites-panel-dropdown" hx-swap="innerHTML">
-        <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/contract-fixture/alerts/summary" hx-trigger="load" hx-swap="outerHTML"></span></summary>
+        <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/contract-fixture/alerts/summary" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></span></summary>
         <div class="favourites-panel-dropdown alerts-dropdown">
           <p class="hint">Loading&hellip;</p>
         </div>
@@ -68,6 +68,7 @@
 
   <div class="shell-body">
     <aside class="shell-sidebar">
+
 
 
     <ul class="nav-links nav-links-general">

@@ -84,9 +84,11 @@ async fn get_with_cookie_as_hx_request(
 /// the first `;` is `Set-Cookie`-only attribute syntax a `Cookie` header must not repeat).
 fn last_visited_cookie(headers: &HeaderMap) -> Result<String, BoxError> {
     let raw = headers
-        .get(header::SET_COOKIE)
-        .ok_or("expected a Set-Cookie header")?
-        .to_str()?;
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.starts_with("cc_last_visited="))
+        .ok_or("expected a cc_last_visited Set-Cookie header")?;
     let value_only = raw.split(';').next().ok_or("cookie header had no value")?;
     Ok(value_only.to_owned())
 }
@@ -94,6 +96,28 @@ fn last_visited_cookie(headers: &HeaderMap) -> Result<String, BoxError> {
 // ---------------------------------------------------------------------
 // Wiki
 // ---------------------------------------------------------------------
+
+// Two layers record this one visit, each in its own cookie, so neither may replace the other's header.
+#[tokio::test]
+async fn visiting_a_wiki_page_records_it_as_last_visited_and_recently_accessed() -> Result<(), BoxError> {
+    let vault_dir = tempfile::tempdir()?;
+    let config_dir = tempfile::tempdir()?;
+    write(vault_dir.path(), "index.md", "# Root\n")?;
+    write(vault_dir.path(), "memory/wiki/business/finance/tax.md", "# Tax\n")?;
+    let router = router_over(vault_dir.path(), config_dir.path()).await?;
+
+    let (_, _, headers) = get(&router, &format!("/{VAULT_NAME}/wiki/business/finance/tax.md")).await?;
+
+    let names: Vec<&str> = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split('=').next())
+        .collect();
+    assert!(names.contains(&"cc_last_visited"), "{names:?}");
+    assert!(names.contains(&"cc_recent"), "{names:?}");
+    Ok(())
+}
 
 #[tokio::test]
 async fn visiting_a_wiki_page_then_returning_to_the_wiki_root_resumes_it() -> Result<(), BoxError> {

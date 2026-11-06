@@ -12,7 +12,11 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ### Fixed
 
-- The shared workflows and library pages have a title, the sidebar, and tabs that lead back to each vault. They had no way back.
+- The shared workflows and library pages have a title and tabs that lead back to each vault. They had no way back.
+- The shared and settings pages show the sidebar of the vault you were last in, with a band saying which view is showing and which vault the links open. Their sidebars were empty, and the vault switcher named a vault they were not in.
+- The alerts bell's count shows. Its request never ran, because the badge inherited a target from the panel around it.
+- The footer status bar wraps on narrow screens rather than running off the side of every page.
+- Wiki, Insights, and entity pages appear under Recently accessed. Recording the last-visited page replaced that cookie on the same response.
 - A job's Status panel lays out its heading, fields, and actions in order, rather than in one row.
 - A launcher saved under another name, such as a browser's `contextos-launcher (1)`, still installs and updates. It used to report that ContextOS was not installed.
 

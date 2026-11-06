@@ -6,7 +6,9 @@
 //! One live MCP call per full page: `vault_info`, feeding the vault
 //! switcher's own list and per-vault entity accents.
 
-use super::page::{BreadcrumbSegment, NavData, NavEntityOption, NavVault, PageTitle, SidebarGroup, SidebarLink};
+use super::page::{
+    BreadcrumbSegment, HostView, NavData, NavEntityOption, NavVault, PageTitle, SidebarGroup, SidebarLink,
+};
 use crate::entities;
 use crate::mcp_client::{McpCallError, McpClient, McpClientSet};
 use crate::nav_counts::{self, NavCounts};
@@ -598,6 +600,7 @@ pub async fn build_nav(
         // (it is an MCP-only assembler, `shell.rs`'s own module doc).
         appearance: super::page::Appearance::default(),
         sidebar_groups,
+        host_view: None,
         // Every caller overwrites this with the toggle cookie's own value
         // immediately after, the same "assembled here, finished by the
         // caller" pattern `appearance` already follows: `build_nav` reads
@@ -614,6 +617,81 @@ pub async fn build_nav(
         events_stream_href: vault_name.map(|name| events_stream_href(name, current_entity)),
         favourites,
     }
+}
+
+/// A page with no vault in its address.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HostScreen {
+    Shared,
+    Settings,
+}
+
+impl HostScreen {
+    fn view(self, vault: Option<&str>) -> HostView {
+        let (icon, label) = match self {
+            Self::Shared => ("jobs", "Shared view"),
+            Self::Settings => ("settings", "Server settings"),
+        };
+        HostView {
+            icon,
+            label,
+            detail: vault.map(|vault| format!("Links open {vault}")),
+        }
+    }
+}
+
+/// [`build_nav`] for a page with no vault in its address. Someone reaches it from a vault and goes back to one, so it has
+/// that vault's sidebar: `active_vault` when that is still configured, otherwise the first vault the header would lead to.
+/// The page itself stays out of every vault, and says so through [`NavData::host_view`].
+pub(crate) async fn build_host_nav(
+    client: &McpClient,
+    screen: HostScreen,
+    active_vault: Option<&str>,
+    known_mcp_servers: &[String],
+) -> NavData {
+    let active = match screen {
+        HostScreen::Shared => ActiveScreen::Jobs,
+        HostScreen::Settings => ActiveScreen::Settings,
+    };
+    let mut nav = Box::pin(build_nav(client, active, None, None, None, None, known_mcp_servers)).await;
+    let configured = active_vault.filter(|vault| nav.vaults.iter().any(|entry| entry.name == *vault));
+    let target = configured.map(str::to_owned).or_else(|| nav.nav_target_vault.clone());
+    if let Some(vault) = target.as_deref() {
+        // `Settings` marks no sidebar entry as current, which is right: none of them is this page.
+        let vault_nav = Box::pin(build_nav(
+            client,
+            ActiveScreen::Settings,
+            Some(vault),
+            None,
+            None,
+            None,
+            known_mcp_servers,
+        ))
+        .await;
+        nav.sidebar_groups = vault_nav.sidebar_groups;
+        nav.note_href = vault_nav.note_href;
+        nav.profile_href = vault_nav.profile_href;
+        nav.vault_settings_href = vault_nav.vault_settings_href;
+        nav.nav_target_vault = target.clone();
+    }
+    if screen == HostScreen::Shared
+        && let Some(workflows) = nav
+            .sidebar_groups
+            .iter_mut()
+            .find(|group| group.label == Some("Workflows"))
+    {
+        workflows.links.push(SidebarLink {
+            attention: None,
+            label: "Shared workflows".to_owned(),
+            href: crate::urls::SHARED_WORKFLOWS.to_owned(),
+            icon: "jobs",
+            active: true,
+            meta: None,
+            target: None,
+        });
+    }
+    nav.host_view = Some(screen.view(target.as_deref()));
+    nav
 }
 
 #[cfg(test)]

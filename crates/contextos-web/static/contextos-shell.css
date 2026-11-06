@@ -182,6 +182,12 @@ a.header-icon-button:hover{background:var(--bg-panel-raised);color:var(--fg);tex
   border-top:1px solid var(--border);background:var(--bg-panel);
 }
 .status-bar-divider{width:1px;height:14px;background:var(--border);flex:0 0 auto;}
+.sidebar-scope{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--border-glow);border-radius:var(--radius-control);background:var(--tint-primary);color:var(--accent-primary);}
+.sidebar-scope-text{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere;}
+.sidebar-scope-text strong{font-weight:var(--fw-medium);font-size:calc(12.5rem / 14);}
+.sidebar-scope-text .hint{color:var(--fg-muted);}
+.shell.sidebar-narrow .sidebar-scope{justify-content:center;padding:8px;}
+.shell.sidebar-narrow .sidebar-scope-text{display:none;}
 .status-dot{width:6px;height:6px;border-radius:var(--radius-pill);flex:0 0 auto;background:var(--status-ok);
   box-shadow:0 0 6px -1px var(--status-ok);animation:cc-dot var(--dur-pulse) var(--ease-in-out) infinite;}
 .status-dot.attention{background:var(--status-attention);box-shadow:0 0 6px -1px var(--status-attention);animation:none;}
@@ -470,6 +476,10 @@ mark{background:var(--tint-warning);color:var(--fg);border-radius:2px;padding:0 
   .topbar-actions{width:100%;justify-content:flex-end;}
   .search-box{flex:1;width:auto;min-width:0;}
   .content{padding:var(--space-4);}
+  .status-bar{flex-wrap:wrap;height:auto;min-height:32px;padding:var(--space-2) var(--space-3);gap:4px var(--space-3);}
+  .status-bar-divider{display:none;}
+  .status-bar-item{white-space:nowrap;}
+  .status-bar-about{margin-left:0;}
   .task-focus-panels{grid-template-columns:1fr;}
   .search-columns{grid-template-columns:1fr;}
   .search-columns>.search-column-wide{order:1;}

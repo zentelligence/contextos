@@ -31,7 +31,10 @@ struct Site {
 }
 
 async fn site(job: &str) -> Result<Site, BoxError> {
-    let fixture = SharedFixture::new(job).await?;
+    Ok(site_over(SharedFixture::new(job).await?))
+}
+
+fn site_over(fixture: SharedFixture) -> Site {
     let state = SharedRoutesState::new(
         SharedRoots {
             store_root: fixture.store_root(),
@@ -43,10 +46,10 @@ async fn site(job: &str) -> Result<Site, BoxError> {
         Arc::clone(&fixture.clients),
         Arc::new(fixture.root.path().join("web.toml")),
     );
-    Ok(Site {
+    Site {
         router: shared_router(state),
         fixture,
-    })
+    }
 }
 
 impl Site {
@@ -182,6 +185,19 @@ async fn the_shared_pages_keep_the_sidebar_of_the_vault_the_header_leads_to() ->
     let site = site(JOB).await?;
     let page = site.get("/shared/workflows").await?;
     assert!(page.body.contains("href=\"/contract-fixture/tasks"), "{}", page.body);
+    Ok(())
+}
+
+// A host's shared workflows need no vault, so a server with none still shows them, naming no vault to go back to.
+#[tokio::test]
+async fn with_no_vault_the_shared_list_still_shows_and_names_none() -> Result<(), BoxError> {
+    let fixture = SharedFixture::zero_vaults(JOB).await?;
+    let site = site_over(fixture);
+    let page = site.get("/shared/workflows").await?;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains(">Shared view<"), "{}", page.body);
+    assert!(!page.body.contains("Links open"), "{}", page.body);
+    assert!(page.body.contains("Nightly"), "{}", page.body);
     Ok(())
 }
 

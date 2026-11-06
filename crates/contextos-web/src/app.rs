@@ -286,9 +286,11 @@ fn build_router_closing(
         .layer(axum::middleware::from_fn(recently_accessed::track))
         // Whole-router, same placement: records a real Wiki/Insights/entity-folder file visit as
         // that screen's own "resume where I left off" cookie entry (`last_visited::track`'s own doc
-        // comment) - a distinct cookie from `recently_accessed`'s, so layer order between the
+        // comment) - a distinct cookie from `recently_accessed`'s, each appended, so layer order between the
         // two does not matter.
         .layer(axum::middleware::from_fn(last_visited::track))
+        // Which vault a shared or settings page's sidebar should show (`active_vault`'s module doc).
+        .layer(axum::middleware::from_fn(crate::active_vault::track))
         // Outermost of all: a request naming another site's host is refused before any route or tracker runs.
         .layer(axum::middleware::from_fn(crate::loopback_host::refuse_other_hosts))
 }

@@ -126,7 +126,7 @@ pub async fn track(request: Request, next: Next) -> Response {
             },
         );
         if let Some(cookie) = set_cookie_header(&updated) {
-            response.headers_mut().insert(header::SET_COOKIE, cookie);
+            response.headers_mut().append(header::SET_COOKIE, cookie);
         }
     }
     response
