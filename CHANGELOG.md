@@ -19,6 +19,7 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 - Installing, updating, and rolling back move from `contextos` to `contextos-launcher`, so no one program owns the suite. `contextos-launcher install` needs no version, and sets up the commands and `PATH` itself, so installing is one command.
 - `contextos-launcher update` also replaces the launcher copies, so fixes to the updater reach existing installations.
 - `contextos --version` and `contextos-web --version` print `ContextOS 0.23.7` and `ContextOS Web 0.23.7`, in place of the lowercase names and a `v` before the version.
+- Release tags no longer start with a `v`, as in `0.23.7`. Earlier releases keep their tags.
 - A release now starts as a prerelease that no client can reach. It becomes the latest release only after a real install from it passes on Linux, Windows, and macOS.
 - Release archives carry a README for people running the programs: installing them, setting up, connecting an assistant, and updating.
 - The repository README and installation guide cover the web interface, apps, workflows, the launcher, release downloads, and the ContextOS plugin.
