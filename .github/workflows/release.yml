@@ -67,6 +67,7 @@ jobs:
             target: aarch64-apple-darwin
             archive: tar.gz
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -173,6 +174,7 @@ jobs:
     needs: build
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -266,6 +268,7 @@ jobs:
     needs: manifest
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -307,6 +310,7 @@ jobs:
             archive: tar.gz
             suffix: ""
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - name: Install the published release set and run it through the launcher
         shell: bash
@@ -377,6 +381,7 @@ jobs:
     needs: verify-install
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Make the verified release the one clients receive
         env:

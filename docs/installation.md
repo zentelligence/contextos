@@ -14,7 +14,7 @@ On Windows, run `bin\contextos-launcher.exe install`. Then open a new terminal.
 
 `install` downloads and verifies the channel's current release set, keeps it in `~/.local/share/contextos` on Linux and macOS or `%LOCALAPPDATA%\contextos` on Windows, and sets up the commands. `CONTEXTOS_INSTALL_ROOT` chooses another folder for the release sets. `--version` installs an exact release, for CI and automation, and must name the channel's current release.
 
-The commands are copies of the launcher named `contextos`, `contextos-web`, and `contextos-launcher`, in `~/.local/bin` on Linux and macOS and `%LOCALAPPDATA%\contextos\bin` on Windows. The launcher behaves according to its file name: as `contextos-launcher` it manages the installation, and under a program's name it passes every argument to that program.
+The commands are copies of the launcher named `contextos`, `contextos-web`, and `contextos-launcher`, in `~/.local/bin` on Linux and macOS and `%LOCALAPPDATA%\contextos\bin` on Windows. The launcher behaves according to its file name: under a program's name it passes every argument to that program, and under any other name it manages the installation, so a downloaded copy saved as `contextos-launcher (1)` still works.
 
 If the folder is not on your `PATH`, `install` adds it: in `~/.zshrc` for zsh, in `~/.bashrc` and `~/.bash_profile` or `~/.profile` for bash, and in the user `Path` on Windows. For any other shell it tells you to add the folder yourself. Everything placed outside the installation folder is recorded in `launchers.json` there. A file with a command's name that was not placed by an install is left alone and reported. Running `install` again repeats this without reinstalling.
 

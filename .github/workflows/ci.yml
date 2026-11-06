@@ -26,6 +26,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     # No debug info or symbol table in CI: over 400 test binaries each link much of the search stack, and the symbol
     # tables alone took them from 24GB to 37GB, which filled the Ubuntu runner's disk mid-link. A failed assertion
     # still reports its file and line; a backtrace no longer names its functions, so reproduce one locally.

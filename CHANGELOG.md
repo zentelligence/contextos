@@ -8,6 +8,14 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ## [Unreleased]
 
+### Fixed
+
+- A launcher saved under another name, such as a browser's `contextos-launcher (1)`, still installs and updates. It used to report that ContextOS was not installed.
+
+### Changed
+
+- Release and CI jobs have time limits, so a hung job fails within about an hour instead of six.
+
 ## [0.23.7] - 2026-11-06
 
 ### Added

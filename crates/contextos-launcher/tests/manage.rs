@@ -34,6 +34,30 @@ fn the_version_flag_prints_the_launchers_name_and_the_bare_version() -> Result<(
 }
 
 // People installing ContextOS should not have to find and type a version number.
+// A browser saves a second download as `contextos-launcher (1)`, and someone may rename the file for themselves. Only
+// the programs' names forward, so such a copy still installs rather than looking for a program of its own name.
+#[test]
+fn a_renamed_launcher_still_manages_the_installation() -> Result<(), BoxError> {
+    #[cfg(unix)]
+    let _exclusive = exclusive();
+    let directory = tempdir()?;
+    for name in ["contextos-launcher (1)", "contextos-launcher-linux", "launcher"] {
+        let renamed = directory.path().join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+        std::fs::copy(env!("CARGO_BIN_EXE_contextos-launcher"), &renamed)?;
+
+        let output = Command::new(&renamed)
+            .arg("--version")
+            .env("HOME", directory.path())
+            .env("CONTEXTOS_INSTALL_ROOT", directory.path().join("root"))
+            .output()?;
+
+        assert!(output.status.success(), "{name}: {}", String::from_utf8_lossy(&output.stderr));
+        let expected = format!("ContextOS Launcher {}\n", env!("CARGO_PKG_VERSION"));
+        assert_eq!(String::from_utf8(output.stdout)?, expected, "{name}");
+    }
+    Ok(())
+}
+
 #[test]
 fn install_needs_no_version() -> Result<(), BoxError> {
     let directory = tempdir()?;
