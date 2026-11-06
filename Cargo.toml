@@ -188,9 +188,9 @@ trash = { version = "5.2.6", default-features = false }
 # updater alongside this workspace, override these in an untracked
 # `[patch."https://github.com/zentelligence/auto-updater.git"]` table rather
 # than editing them here.
-updater-core = { git = "https://github.com/zentelligence/auto-updater.git", rev = "ecd9e8e844d341d8be20c1ca429a1c0087dd79ba" }
-updater-engine = { git = "https://github.com/zentelligence/auto-updater.git", rev = "ecd9e8e844d341d8be20c1ca429a1c0087dd79ba" }
-updater-launcher = { git = "https://github.com/zentelligence/auto-updater.git", rev = "ecd9e8e844d341d8be20c1ca429a1c0087dd79ba" }
+updater-core = { git = "https://github.com/zentelligence/auto-updater.git", rev = "d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b" }
+updater-engine = { git = "https://github.com/zentelligence/auto-updater.git", rev = "d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b" }
+updater-launcher = { git = "https://github.com/zentelligence/auto-updater.git", rev = "d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b" }
 walkdir = "2.5"
 yaml_serde = "0.10.4"
 

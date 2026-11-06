@@ -6017,7 +6017,7 @@ checksum = "e497bb1f828cc9fb236722c2eaa100dcf201563f38f4da6252357a59037adf31"
 [[package]]
 name = "updater-core"
 version = "0.1.0"
-source = "git+https://github.com/zentelligence/auto-updater.git?rev=ecd9e8e844d341d8be20c1ca429a1c0087dd79ba#ecd9e8e844d341d8be20c1ca429a1c0087dd79ba"
+source = "git+https://github.com/zentelligence/auto-updater.git?rev=d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b#d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b"
 dependencies = [
  "semver",
  "serde",
@@ -6028,7 +6028,7 @@ dependencies = [
 [[package]]
 name = "updater-engine"
 version = "0.1.0"
-source = "git+https://github.com/zentelligence/auto-updater.git?rev=ecd9e8e844d341d8be20c1ca429a1c0087dd79ba#ecd9e8e844d341d8be20c1ca429a1c0087dd79ba"
+source = "git+https://github.com/zentelligence/auto-updater.git?rev=d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b#d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b"
 dependencies = [
  "ed25519-dalek",
  "flate2",
@@ -6046,7 +6046,7 @@ dependencies = [
 [[package]]
 name = "updater-launcher"
 version = "0.1.0"
-source = "git+https://github.com/zentelligence/auto-updater.git?rev=ecd9e8e844d341d8be20c1ca429a1c0087dd79ba#ecd9e8e844d341d8be20c1ca429a1c0087dd79ba"
+source = "git+https://github.com/zentelligence/auto-updater.git?rev=d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b#d01d5a1e944e60f9fdf3660dbc9ac03c823fa54b"
 dependencies = [
  "thiserror",
  "updater-core",
