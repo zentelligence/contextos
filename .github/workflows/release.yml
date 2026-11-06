@@ -1,7 +1,7 @@
 name: Release
 
 # Packaging and release under the versioned release-set model: pushing a version tag
-# (vMAJOR.MINOR.PATCH, matching workspace.package's `version`) builds
+# (MAJOR.MINOR.PATCH, matching workspace.package's `version`) builds
 # `contextos`, `contextos-web`, and `contextos-launcher` natively on
 # Linux, Windows, and Apple Silicon macOS; assembles each platform's
 # `bin/{contextos,contextos-web,contextos-launcher}` plus a `release.json`
@@ -41,7 +41,7 @@ name: Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch: {}
 
 permissions:
@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#v}"
+          tag_version="${GITHUB_REF_NAME}"
           cargo_version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
           if [ "${tag_version}" != "${cargo_version}" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} does not match workspace version ${cargo_version} in Cargo.toml"
@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${GITHUB_REF_NAME}"
           staging="contextos-${version}-${{ matrix.target }}"
           mkdir -p "${staging}/bin"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
@@ -142,7 +142,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          staging="contextos-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
+          staging="contextos-${GITHUB_REF_NAME}-${{ matrix.target }}"
           # The updater reads `release.json` from the top of the archive, so the archive holds the folder's contents,
           # not the folder. COPYFILE_DISABLE keeps macOS metadata files out.
           (cd "${staging}" && COPYFILE_DISABLE=1 tar -czf "../${staging}.tar.gz" *)
@@ -152,7 +152,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $version = "${{ github.ref_name }}"
           $staging = "contextos-$version-${{ matrix.target }}"
           Compress-Archive -Path "$staging/*" -DestinationPath "$staging.zip"
           $hash = (Get-FileHash "$staging.zip" -Algorithm SHA256).Hash.ToLower()
@@ -198,7 +198,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${GITHUB_REF_NAME}"
           released_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           base_url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
 
@@ -317,7 +317,7 @@ jobs:
           CONTEXTOS_INSTALL_ROOT: ${{ runner.temp }}/install-root
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${GITHUB_REF_NAME}"
           suffix="${{ matrix.suffix }}"
           work="${RUNNER_TEMP}/verify"
           mkdir -p "${work}/unpacked"
