@@ -4,9 +4,9 @@ ContextOS operates ContextOS knowledge vaults: Obsidian-flavoured Markdown vault
 
 | Program | Role |
 | --- | --- |
-| `contextos` | The MCP server: a vault-aware execution layer that AI hosts connect to, over stdio or authenticated streamable HTTP. It also holds the setup, health check, and update commands. |
+| `contextos` | The MCP server: a vault-aware execution layer that AI hosts connect to, over stdio or authenticated streamable HTTP. It also holds the setup and health check commands. |
 | `contextos-web` | ContextOS Web: a local web interface that shows vaults, serves custom apps, and runs scheduled workflows, using `contextos` for every vault operation. |
-| `contextos-launcher` | The stable launcher, installed on `PATH` as both commands. It starts the active release set, so updates apply without changing anything that calls them. |
+| `contextos-launcher` | Installs, updates, and removes the suite. Copies of it on `PATH` under each program's name start the active release set, so updates apply without changing anything that calls them. |
 
 The [ContextOS plugin](https://github.com/zentelligence/marketplace/tree/main/plugins/context-os), in the `zentelligence/marketplace` repository, gives Claude Code, Codex, and ChatGPT desktop the vault, app, workflow, and job skills and the vault scaffold. See [Plugin](#plugin).
 
@@ -129,7 +129,7 @@ Hexagonal Cargo workspace; every dependency edge points towards `contextos-core`
 | `contextos-mcp` | MCP tool registry, configuration, stdio, and HTTP transports (the `contextos` binary) |
 | `contextos-workflows` | Rhai workflow execution, saved-job scheduling rules, and run-record helpers |
 | `contextos-web` | Web interface, saved-job discovery and scheduling, and the workflow engine's MCP caller (the `contextos-web` binary) |
-| `contextos-launcher` | The stable launcher that resolves and runs the active release set (the `contextos-launcher` binary) |
+| `contextos-launcher` | Starts the active release set, and installs, updates, and removes the suite (the `contextos-launcher` binary) |
 
 Every mutation passes through one write pipeline: validate, check for conflicts, write atomically (temp file, fsync, rename), then route the resulting event to the index, operation log, Git, and search substrates. A downstream substrate failure becomes a typed warning; it never rolls back a completed write.
 

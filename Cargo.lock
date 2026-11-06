@@ -796,8 +796,14 @@ dependencies = [
 name = "contextos-launcher"
 version = "0.23.7"
 dependencies = [
+ "clap",
  "contextos-host",
+ "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
+ "updater-core",
+ "updater-engine",
  "updater-launcher",
 ]
 
@@ -868,9 +874,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "updater-core",
  "updater-engine",
- "updater-launcher",
 ]
 
 [[package]]

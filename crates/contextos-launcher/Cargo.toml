@@ -1,6 +1,6 @@
 [package]
 name = "contextos-launcher"
-description = "Stable launcher: resolves and runs the active contextos/contextos-web release"
+description = "Stable launcher: runs the active contextos/contextos-web release, and installs, updates, and removes them"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,8 +13,17 @@ name = "contextos-launcher"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
 contextos-host = { path = "../contextos-host" }
+serde.workspace = true
+serde_json.workspace = true
+updater-core = { workspace = true }
+updater-engine = { workspace = true }
 updater-launcher = { workspace = true }
 
 [dev-dependencies]
+sha2.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

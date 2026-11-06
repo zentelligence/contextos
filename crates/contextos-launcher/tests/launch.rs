@@ -11,6 +11,14 @@ use tempfile::{TempDir, tempdir};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// Serialises these tests. They write programs and then run them, and a process started by another test at that moment
+/// inherits the open file, which makes the kernel refuse to run it with "Text file busy".
+static EXECUTABLES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn exclusive() -> std::sync::MutexGuard<'static, ()> {
+    EXECUTABLES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 const RELEASE: &str = r#"{
   "schema_version": 1,
   "product": "contextos",
@@ -51,6 +59,7 @@ fn launch(root: &Path, launcher: &Path) -> Result<(u32, Output), BoxError> {
 // A service or MCP host registration records this path, so it follows every later update.
 #[test]
 fn the_started_program_is_told_where_its_launcher_is() -> Result<(), BoxError> {
+    let _exclusive = exclusive();
     let (directory, launcher) = installed(r#"printf '%s' "$CONTEXTOS_LAUNCHER""#)?;
 
     let (_, output) = launch(directory.path(), &launcher)?;
@@ -64,6 +73,7 @@ fn the_started_program_is_told_where_its_launcher_is() -> Result<(), BoxError> {
 // server, the launcher would die at once and the server would be killed with no chance to shut down cleanly.
 #[test]
 fn the_started_program_takes_over_the_launchers_process() -> Result<(), BoxError> {
+    let _exclusive = exclusive();
     let (directory, launcher) = installed(r#"printf '%s' "$$""#)?;
 
     let (id, output) = launch(directory.path(), &launcher)?;
@@ -75,6 +85,7 @@ fn the_started_program_takes_over_the_launchers_process() -> Result<(), BoxError
 
 #[test]
 fn the_started_programs_exit_status_is_the_launchers() -> Result<(), BoxError> {
+    let _exclusive = exclusive();
     let (directory, launcher) = installed("exit 7")?;
 
     let (_, output) = launch(directory.path(), &launcher)?;

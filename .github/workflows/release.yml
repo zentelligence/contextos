@@ -48,7 +48,7 @@ permissions:
   contents: write
 
 env:
-  MINIMUM_LAUNCHER_VERSION: "0.22.1"
+  MINIMUM_LAUNCHER_VERSION: "0.23.7"
 
 jobs:
   build:
@@ -331,13 +331,13 @@ jobs:
           fi
 
           # Twice, because installing again must succeed and change nothing.
-          "${work}/unpacked/bin/contextos${suffix}" install
-          "${work}/unpacked/bin/contextos${suffix}" install
-          "${work}/unpacked/bin/contextos${suffix}" update check
+          "${work}/unpacked/bin/contextos-launcher${suffix}" install
+          "${work}/unpacked/bin/contextos-launcher${suffix}" install
+          "${work}/unpacked/bin/contextos-launcher${suffix}" update check
 
           if [[ -n "${suffix}" ]]; then
-            commands="${LOCALAPPDATA}/Programs/ContextOS"
-            powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')" | grep -q 'Programs.ContextOS' || {
+            commands="${CONTEXTOS_INSTALL_ROOT}/bin"
+            powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User')" | grep -q 'install-root.bin' || {
               echo "::error::the commands' folder was not added to the user's Path"
               exit 1
             }
@@ -354,15 +354,23 @@ jobs:
           }
           expect "${commands}/contextos${suffix}" "ContextOS ${version}"
           expect "${commands}/contextos-web${suffix}" "ContextOS Web ${version}"
+          expect "${commands}/contextos-launcher${suffix}" "ContextOS Launcher ${version}"
 
           # A registration made through the launcher must record the launcher, so it survives later updates.
           "${commands}/contextos${suffix}" --config "${work}/config.toml" config mcp register \
             --host claude-desktop --config-path "${work}/host.json" --force
-          grep -Eq '(\.local[/\\]+bin|Programs[/\\]+ContextOS)[/\\]+contextos' "${work}/host.json" || {
+          grep -Eq '(\.local|install-root)[/\\]+bin[/\\]+contextos' "${work}/host.json" || {
             echo "::error::the registration did not record the launcher"
             cat "${work}/host.json"
             exit 1
           }
+
+          # Removing it again must leave nothing behind, and report success.
+          "${commands}/contextos-launcher${suffix}" uninstall --yes
+          if [ -e "${CONTEXTOS_INSTALL_ROOT}" ] || [ -e "${commands}/contextos${suffix}" ]; then
+            echo "::error::uninstall left files behind"
+            exit 1
+          fi
 
   promote:
     name: promote to latest

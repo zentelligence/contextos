@@ -55,9 +55,6 @@ sha2.workspace = true
 sysinfo.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-updater-core = { workspace = true }
-updater-engine = { workspace = true }
-updater-launcher = { workspace = true }
 # `formatting`/`parsing` beyond the workspace default (`macros`, `serde`):
 # the ephemeris tools report instants as genuine RFC 3339
 # strings (`time::format_description::well_known::Rfc3339`), unlike
@@ -79,6 +76,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+updater-engine = { workspace = true }
 dunce.workspace = true
 git2.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }

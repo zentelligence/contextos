@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-mod command_setup;
 mod commit_schedule;
 mod config;
 mod config_io;
@@ -44,7 +43,6 @@ mod state_dir;
 mod tool_effect;
 mod tool_error;
 mod tools;
-mod update_cli;
 mod vault_events;
 mod vault_events_scope;
 mod write_coordinator;
@@ -97,4 +95,3 @@ pub use tools::doctor::{
     DoctorResolveCliError, DoctorResolveCliReport, DoctorResolveOutcome, SearchSkipped, preview_resolution_for_cli,
     resolve_for_cli,
 };
-pub use update_cli::{run_check, run_cleanup, run_diagnostics, run_install, run_rollback, run_update};

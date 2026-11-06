@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use super::*;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 #[test]
 fn a_launcher_is_copied_where_nothing_is_there() -> TestResult {
@@ -13,7 +13,7 @@ fn a_launcher_is_copied_where_nothing_is_there() -> TestResult {
     fs::write(&launcher, b"launcher")?;
     let target = folder.path().join("contextos");
 
-    assert_eq!(place_launcher(&launcher, &target)?, Placement::Placed);
+    assert_eq!(place_launcher(&launcher, &target, None)?, Placement::Placed);
 
     assert_eq!(fs::read(target)?, b"launcher");
     Ok(())
@@ -30,7 +30,7 @@ fn a_copied_launcher_can_still_be_run() -> TestResult {
     fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
     let target = folder.path().join("contextos");
 
-    place_launcher(&launcher, &target)?;
+    place_launcher(&launcher, &target, None)?;
 
     assert_eq!(fs::metadata(target)?.permissions().mode() & 0o111, 0o111);
     Ok(())
@@ -44,7 +44,7 @@ fn installing_again_finds_the_launcher_already_in_place() -> TestResult {
     let target = folder.path().join("contextos");
     fs::write(&target, b"launcher")?;
 
-    assert_eq!(place_launcher(&launcher, &target)?, Placement::AlreadyInPlace);
+    assert_eq!(place_launcher(&launcher, &target, None)?, Placement::AlreadyInPlace);
     Ok(())
 }
 
@@ -57,7 +57,7 @@ fn a_different_file_is_left_alone() -> TestResult {
     let target = folder.path().join("contextos");
     fs::write(&target, b"something of the operator's")?;
 
-    assert_eq!(place_launcher(&launcher, &target)?, Placement::SomethingElseThere);
+    assert_eq!(place_launcher(&launcher, &target, None)?, Placement::SomethingElseThere);
 
     assert_eq!(fs::read(target)?, b"something of the operator's");
     Ok(())
@@ -68,7 +68,7 @@ fn a_failed_copy_leaves_nothing_behind() -> TestResult {
     let folder = tempdir()?;
     let target = folder.path().join("contextos");
 
-    assert!(place_launcher(&folder.path().join("missing"), &target).is_err());
+    assert!(place_launcher(&folder.path().join("missing"), &target, None).is_err());
 
     assert_eq!(fs::read_dir(folder.path())?.count(), 0);
     Ok(())
@@ -176,9 +176,122 @@ fn commands_go_in_a_folder_the_operator_owns() -> TestResult {
         user_profile: None,
         home: Some(home.path().as_os_str().to_owned()),
     })?;
+    let root = home.path().join("root");
 
-    let folder = command_folder(&folders);
+    let folder = command_folder(&root, &folders);
 
     assert!(folder.starts_with(home.path()), "{}", folder.display());
+    Ok(())
+}
+
+// This is how a fix to the updater itself reaches an installation.
+#[test]
+fn a_launcher_placed_earlier_is_replaced() -> TestResult {
+    let folder = tempdir()?;
+    let launcher = folder.path().join("contextos-launcher");
+    fs::write(&launcher, b"new launcher")?;
+    let target = folder.path().join("contextos");
+    fs::write(&target, b"old launcher")?;
+    let recorded = digest(&target)?;
+
+    assert_eq!(place_launcher(&launcher, &target, Some(&recorded))?, Placement::Placed);
+
+    assert_eq!(fs::read(target)?, b"new launcher");
+    Ok(())
+}
+
+#[test]
+fn a_file_changed_since_it_was_placed_is_left_alone() -> TestResult {
+    let folder = tempdir()?;
+    let launcher = folder.path().join("contextos-launcher");
+    fs::write(&launcher, b"new launcher")?;
+    let target = folder.path().join("contextos");
+    fs::write(&target, b"old launcher")?;
+    let recorded = digest(&target)?;
+    fs::write(&target, b"something of the operator's")?;
+
+    assert_eq!(
+        place_launcher(&launcher, &target, Some(&recorded))?,
+        Placement::SomethingElseThere
+    );
+
+    assert_eq!(fs::read(target)?, b"something of the operator's");
+    Ok(())
+}
+
+#[test]
+fn a_ledger_survives_being_saved_and_loaded() -> TestResult {
+    let root = tempdir()?;
+    let mut ledger = Ledger::default();
+    ledger.record(PathBuf::from("/commands/contextos"), "abc".to_owned());
+    ledger.record(PathBuf::from("/commands/contextos"), "def".to_owned());
+    ledger.profiles.push(PathBuf::from("/home/someone/.zshrc"));
+
+    ledger.save(root.path())?;
+
+    let loaded = Ledger::load(root.path())?;
+    assert_eq!(loaded, ledger);
+    assert_eq!(loaded.launchers.len(), 1);
+    assert_eq!(loaded.recorded_digest(Path::new("/commands/contextos")), Some("def"));
+    Ok(())
+}
+
+#[test]
+fn no_ledger_reads_as_nothing_placed() -> TestResult {
+    let root = tempdir()?;
+
+    assert_eq!(Ledger::load(root.path())?, Ledger::default());
+    Ok(())
+}
+
+#[test]
+fn a_ledger_from_an_unknown_schema_is_refused() -> TestResult {
+    let root = tempdir()?;
+    fs::write(
+        root.path().join(LEDGER_FILE),
+        r#"{"schema_version":2,"launchers":[],"profiles":[],"path_folder":null}"#,
+    )?;
+
+    assert!(Ledger::load(root.path()).is_err());
+    Ok(())
+}
+
+#[test]
+fn taking_the_path_line_back_leaves_the_profile_as_it_was() -> TestResult {
+    let home = tempdir()?;
+    let profile = home.path().join(".zshrc");
+    fs::write(&profile, "alias ll='ls -l'\n")?;
+    add_to_profile(&profile)?;
+
+    remove_from_profile(&profile)?;
+
+    assert_eq!(fs::read_to_string(profile)?, "alias ll='ls -l'\n");
+    Ok(())
+}
+
+#[test]
+fn a_profile_that_adding_created_is_removed_again() -> TestResult {
+    let home = tempdir()?;
+    let profile = home.path().join(".zshrc");
+    add_to_profile(&profile)?;
+
+    remove_from_profile(&profile)?;
+
+    assert!(!profile.exists());
+    Ok(())
+}
+
+#[test]
+fn a_profile_edited_by_hand_is_left_alone() -> TestResult {
+    let home = tempdir()?;
+    let profile = home.path().join(".zshrc");
+    fs::write(&profile, "# Added by ContextOS\nexport PATH=\"/mine:$PATH\"\n")?;
+
+    remove_from_profile(&profile)?;
+
+    assert_eq!(
+        fs::read_to_string(profile)?,
+        "# Added by ContextOS\nexport PATH=\"/mine:$PATH\"\n"
+    );
     Ok(())
 }

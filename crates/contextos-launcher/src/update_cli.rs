@@ -1,13 +1,12 @@
-//! `contextos update`/`rollback`/`install` subcommands: the self-update composition
-//! root for this product, using `updater-core`/`updater-launcher`/`updater-engine` directly with
-//! `contextos`-specific defaults baked in (product name, declared commands, default update URL,
-//! and the production trusted signing key).
+//! `contextos-launcher` `install`, `update`, and `rollback`: the self-update composition root for this product, using
+//! `updater-core`/`updater-launcher`/`updater-engine` directly with `contextos`-specific defaults baked in (product
+//! name, declared commands, default update URL, and the production trusted signing key).
 
 use std::collections::HashSet;
 use std::error::Error;
 use std::io::Write;
 
-use crate::command_setup::set_up_commands;
+use crate::commands::{refresh_launchers, set_up_commands};
 use updater_core::{ActivationPort, ActiveVersionReader, ProductVersion};
 use updater_engine::{
     Ed25519ManifestVerifier, FilesystemActivationPort, InstallCollaborators, SpawnVersionProbe, SystemClock,
@@ -16,10 +15,10 @@ use updater_engine::{
 };
 use updater_launcher::{ProcessEnvironment, resolve_installation_root};
 
-type CliResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+pub(crate) type CliResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
-const PRODUCT: &str = "contextos";
-const ENV_PREFIX: &str = "CONTEXTOS";
+pub(crate) const PRODUCT: &str = "contextos";
+pub(crate) const ENV_PREFIX: &str = "CONTEXTOS";
 const DECLARED_COMMANDS: [&str; 2] = ["contextos", "contextos-web"];
 const DEFAULT_UPDATE_URL: &str = "https://github.com/zentelligence/contextos/releases/latest/download/latest.json";
 
@@ -70,13 +69,13 @@ fn display_optional(version: Option<&ProductVersion>) -> String {
     version.map_or_else(|| "none".to_string(), ToString::to_string)
 }
 
-/// `contextos update check`: reports whether a newer, verified release set is available.
+/// `contextos-launcher update check`: reports whether a newer, verified release set is available.
 ///
 /// # Errors
 ///
 /// Returns an error if the installation root cannot be resolved, the manifest cannot be retrieved
 /// or verified, or no asset matches the detected target.
-pub fn run_check() -> CliResult<String> {
+pub(crate) fn run_check() -> CliResult<String> {
     let root = resolve_installation_root(&ProcessEnvironment, ENV_PREFIX, PRODUCT)?;
     let target = detect_target()?;
     let url = manifest_url();
@@ -97,24 +96,24 @@ pub fn run_check() -> CliResult<String> {
     let outcome = check_for_update(&transport, &verifier, &activation, &context)?;
     Ok(match (&outcome.active_version, outcome.update_available) {
         (None, _) => format!(
-            "No release set is installed yet. Run 'contextos install' to install {}.",
+            "No release set is installed yet. Run 'contextos-launcher install' to install {}.",
             outcome.manifest.version
         ),
         (Some(active), true) => format!(
-            "Update available: {}, current release set: {active}.\nRun 'contextos update' to install release set {}.",
+            "Update available: {}, current release set: {active}.\nRun 'contextos-launcher update' to install release set {}.",
             outcome.manifest.version, outcome.manifest.version
         ),
         (Some(active), false) => format!("Release set {active} is already up to date."),
     })
 }
 
-/// `contextos update` / `contextos update --yes`: performs the full install transaction.
+/// `contextos-launcher update` / `contextos-launcher update --yes`: performs the full install transaction.
 ///
 /// # Errors
 ///
 /// Returns an error if the manifest cannot be retrieved or verified, the download or checksum
 /// fails, the release set fails validation, or activation fails.
-pub fn run_update(yes: bool) -> CliResult<String> {
+pub(crate) fn run_update(yes: bool) -> CliResult<String> {
     if !yes && !confirm("Install this update?") {
         return Ok("Update cancelled.".to_string());
     }
@@ -146,12 +145,15 @@ pub fn run_update(yes: bool) -> CliResult<String> {
     };
 
     let installed = install_update(&collaborators, &context, false)?;
-    Ok(format!(
-        "Installed release set {installed}.\nAll new command invocations will now use {installed}."
-    ))
+    let mut lines = vec![
+        format!("Installed release set {installed}."),
+        format!("All new command invocations will now use {installed}."),
+    ];
+    lines.extend(refresh_launchers(root.as_path(), &installed.to_string())?);
+    Ok(lines.join("\n"))
 }
 
-/// `contextos install`: installs the channel's current release set and sets up the `contextos` and `contextos-web`
+/// `contextos-launcher install`: installs the channel's current release set and sets up the `contextos` and `contextos-web`
 /// commands. `--version` pins the release for CI and automation; it is only satisfiable when it matches the channel's
 /// current manifest, since this product publishes one "latest" manifest per channel. Running it again sets the
 /// commands up again without reinstalling.
@@ -160,7 +162,7 @@ pub fn run_update(yes: bool) -> CliResult<String> {
 ///
 /// Returns an error if the requested version is malformed, does not match the channel's current
 /// manifest, the install transaction itself fails, or the commands cannot be set up.
-pub fn run_install(requested_version: Option<String>) -> CliResult<String> {
+pub(crate) fn run_install(requested_version: Option<String>) -> CliResult<String> {
     let requested = requested_version.map(ProductVersion::try_from).transpose()?;
 
     let root = resolve_installation_root(&ProcessEnvironment, ENV_PREFIX, PRODUCT)?;
@@ -212,12 +214,12 @@ pub fn run_install(requested_version: Option<String>) -> CliResult<String> {
     ))
 }
 
-/// `contextos rollback`: switches the whole release set back to the previous one.
+/// `contextos-launcher rollback`: switches the whole release set back to the previous one.
 ///
 /// # Errors
 ///
 /// Returns an error if there is no previous release set, or its release metadata is missing.
-pub fn run_rollback() -> CliResult<String> {
+pub(crate) fn run_rollback() -> CliResult<String> {
     let root = resolve_installation_root(&ProcessEnvironment, ENV_PREFIX, PRODUCT)?;
     let activation = FilesystemActivationPort::new(root.as_path().to_path_buf());
     let versions_dir = root.as_path().join("versions");
@@ -232,12 +234,12 @@ pub fn run_rollback() -> CliResult<String> {
     })
 }
 
-/// `contextos update cleanup`: best-effort deletion of obsolete release sets.
+/// `contextos-launcher update cleanup`: best-effort deletion of obsolete release sets.
 ///
 /// # Errors
 ///
 /// Returns an error if the installation root or its active/previous pointers cannot be read.
-pub fn run_cleanup() -> CliResult<String> {
+pub(crate) fn run_cleanup() -> CliResult<String> {
     let root = resolve_installation_root(&ProcessEnvironment, ENV_PREFIX, PRODUCT)?;
     let activation = FilesystemActivationPort::new(root.as_path().to_path_buf());
     let versions_dir = root.as_path().join("versions");
@@ -262,12 +264,12 @@ pub fn run_cleanup() -> CliResult<String> {
     Ok(lines.join("\n"))
 }
 
-/// `contextos update diagnostics`: a structured, human-readable summary of the installation.
+/// `contextos-launcher update diagnostics`: a structured, human-readable summary of the installation.
 ///
 /// # Errors
 ///
 /// Returns an error if the installation root, its pointers, or `state.json` cannot be read.
-pub fn run_diagnostics() -> CliResult<String> {
+pub(crate) fn run_diagnostics() -> CliResult<String> {
     let root = resolve_installation_root(&ProcessEnvironment, ENV_PREFIX, PRODUCT)?;
     let target = detect_target()?;
     let activation = FilesystemActivationPort::new(root.as_path().to_path_buf());
@@ -311,7 +313,7 @@ pub fn run_diagnostics() -> CliResult<String> {
     Ok(lines.join("\n"))
 }
 
-fn confirm(prompt: &str) -> bool {
+pub(crate) fn confirm(prompt: &str) -> bool {
     print!("{prompt} [y/N]: ");
     let _ = std::io::stdout().flush();
     let mut input = String::new();

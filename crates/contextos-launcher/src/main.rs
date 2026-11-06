@@ -1,20 +1,34 @@
 #![forbid(unsafe_code)]
 
-//! The stable launcher installed on `PATH` as both `contextos` and `contextos-web` (the same
-//! compiled binary, copied under each name at install time). Resolves the active release set and
-//! starts the matching real executable; never activates a release or deletes one.
+//! The stable launcher, installed on `PATH` as `contextos`, `contextos-web`, and `contextos-launcher` (the same
+//! compiled binary, copied under each name). Which it is depends on its own file name:
 //!
-//! The started program is told this launcher's path, so that a service or MCP host registration it
-//! creates records the launcher, not a versioned folder a later update leaves behind.
+//! - Under a program's name it resolves the active release set and becomes that program, passing on every argument.
+//!   The program is told this launcher's path, so that a service or MCP host registration it creates records the
+//!   launcher, not a versioned folder a later update leaves behind.
+//! - As `contextos-launcher` it installs, updates, rolls back, and removes the suite, so that no one program owns that.
+//!   `update` also replaces the launcher copies, which is how fixes to this code reach an installation.
+
+mod commands;
+mod manage;
+mod uninstall;
+mod update_cli;
 
 use std::ffi::OsString;
 use std::process::{Command, ExitCode};
 
 use contextos_host::LAUNCHER_VARIABLE;
-use updater_launcher::{ProcessEnvironment, resolve_command, resolve_installation_root};
+use updater_launcher::{LauncherError, ProcessEnvironment, resolve_command, resolve_installation_root};
+
+/// This binary's own name, under which it manages the installation rather than starting a program.
+const LAUNCHER_NAME: &str = "contextos-launcher";
 
 fn main() -> ExitCode {
     let command_name = requested_command_name();
+    if command_name == LAUNCHER_NAME {
+        return manage::run();
+    }
+
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
 
     let root = match resolve_installation_root(&ProcessEnvironment, "CONTEXTOS", "contextos") {
@@ -27,6 +41,12 @@ fn main() -> ExitCode {
 
     let resolved = match resolve_command(&root, &command_name) {
         Ok(resolved) => resolved,
+        Err(LauncherError::NoActiveRelease { .. }) => {
+            eprintln!(
+                "{command_name}: ContextOS is not installed yet. Run 'contextos-launcher install' to install it."
+            );
+            return ExitCode::FAILURE;
+        }
         Err(error) => {
             eprintln!("{command_name}: {error}");
             return ExitCode::FAILURE;

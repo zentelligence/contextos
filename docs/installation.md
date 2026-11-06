@@ -1,32 +1,42 @@
 # Installation
 
-ContextOS ships as `contextos` (the MCP server), `contextos-web` (the web interface), and `contextos-launcher`, which goes on your `PATH` under both command names and starts the active release set.
+ContextOS ships as `contextos` (the MCP server), `contextos-web` (the web interface), and `contextos-launcher`, which installs, updates, and removes the suite, and goes on your `PATH` under both programs' names to start the active release set.
 
 ## From a release
 
 Download the archive for your platform from [Releases](https://github.com/zentelligence/contextos/releases) and unpack it. From the unpacked folder:
 
 ```sh
-./bin/contextos install
+./bin/contextos-launcher install
 ```
 
-On Windows, run `bin\contextos.exe install`. Then open a new terminal.
+On Windows, run `bin\contextos-launcher.exe install`. Then open a new terminal.
 
-`install` downloads and verifies the channel's current release set, keeps it in `~/.local/share/contextos` on Linux and macOS or `%LOCALAPPDATA%\contextos` on Windows, and sets up the `contextos` and `contextos-web` commands. `CONTEXTOS_INSTALL_ROOT` chooses another folder for the release sets. `--version` installs an exact release, for CI and automation, and must name the channel's current release.
+`install` downloads and verifies the channel's current release set, keeps it in `~/.local/share/contextos` on Linux and macOS or `%LOCALAPPDATA%\contextos` on Windows, and sets up the commands. `CONTEXTOS_INSTALL_ROOT` chooses another folder for the release sets. `--version` installs an exact release, for CI and automation, and must name the channel's current release.
 
-The commands are copies of the launcher, in `~/.local/bin` on Linux and macOS and `%LOCALAPPDATA%\Programs\ContextOS` on Windows. A file already there that is not this launcher is left alone and reported. If the folder is not on your `PATH`, `install` adds it: in `~/.zshrc` for zsh, in `~/.bashrc` and `~/.bash_profile` or `~/.profile` for bash, and in the user `Path` on Windows. For any other shell it tells you to add the folder yourself. Running `install` again repeats this without reinstalling.
+The commands are copies of the launcher named `contextos`, `contextos-web`, and `contextos-launcher`, in `~/.local/bin` on Linux and macOS and `%LOCALAPPDATA%\contextos\bin` on Windows. The launcher behaves according to its file name: as `contextos-launcher` it manages the installation, and under a program's name it passes every argument to that program.
+
+If the folder is not on your `PATH`, `install` adds it: in `~/.zshrc` for zsh, in `~/.bashrc` and `~/.bash_profile` or `~/.profile` for bash, and in the user `Path` on Windows. For any other shell it tells you to add the folder yourself. Everything placed outside the installation folder is recorded in `launchers.json` there. A file with a command's name that was not placed by an install is left alone and reported. Running `install` again repeats this without reinstalling.
 
 ### Updating
 
 ```sh
-contextos update check
-contextos update
-contextos rollback
+contextos-launcher update check
+contextos-launcher update
+contextos-launcher rollback
 ```
 
-`update check` reports whether a newer release set is available, `update` verifies and installs it, and `rollback` returns to the previous one. Every update is checked against a signed manifest before it is installed.
+`update check` reports whether a newer release set is available, `update` verifies and installs it, and `rollback` returns to the previous one. Every update is checked against a signed manifest before it is installed, and it also replaces the launcher copies with the new release's launcher.
 
 A background service or MCP host registration created through the launcher records the launcher, so it follows updates and rollbacks. Anything already running keeps its version until it restarts: use `contextos service restart` or `contextos-web service restart`, and restart any MCP host connected over stdio.
+
+### Uninstalling
+
+```sh
+contextos-launcher uninstall
+```
+
+`uninstall` asks first, or add `--yes`. It removes both background services and the Claude Desktop registration, then the launcher copies, the `PATH` changes, and the installation folder. A launcher copy that has changed since it was placed is left and reported. Vaults and the configuration in `~/.config/contextos` (or your platform's equivalent) are kept.
 
 ## From source
 

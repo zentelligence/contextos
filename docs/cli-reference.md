@@ -1,5 +1,19 @@
 # CLI reference
 
+## `contextos-launcher`
+
+Installs, updates, and removes the suite. `contextos` and `contextos-web` have none of these commands. See [`installation.md`](installation.md).
+
+| Command | What it does |
+| --- | --- |
+| `contextos-launcher install [--version <version>]` | Installs the channel's current release set and sets up the commands and `PATH`. Running it again repeats the setup without reinstalling. |
+| `contextos-launcher update [--yes]` | Installs the newest release set and replaces the launcher copies. |
+| `contextos-launcher update check` | Reports whether a newer release set is available, without installing it. |
+| `contextos-launcher update cleanup` | Deletes obsolete release sets, best-effort. |
+| `contextos-launcher update diagnostics` | Prints a summary of the installation. |
+| `contextos-launcher rollback` | Returns to the previously active release set. |
+| `contextos-launcher uninstall [--yes]` | Removes services, the Claude Desktop registration, the commands, the `PATH` changes, and the installation folder. Vaults and settings are kept. |
+
 ## Global flags
 
 These apply to every invocation, including the bare server run:

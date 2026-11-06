@@ -6,9 +6,9 @@ ContextOS gives AI assistants safe, structured access to your ContextOS knowledg
 
 | File | What it is |
 | --- | --- |
-| `bin/contextos` | The MCP server. AI assistants connect to it to read, search, and change your vaults. It also holds the setup, health check, and update commands. |
+| `bin/contextos-launcher` | Installs, updates, and removes ContextOS. It also starts the other two programs, so updates take effect without changing your setup. |
+| `bin/contextos` | The MCP server. AI assistants connect to it to read, search, and change your vaults. It also holds the setup and health check commands. |
 | `bin/contextos-web` | The web interface, served on your own machine. It shows your vaults, hosts your apps, and runs your scheduled workflows. |
-| `bin/contextos-launcher` | A small program that starts whichever installed version is active, so updates take effect without changing your setup. Installing sets it up for you. |
 
 On Windows, each of these ends in `.exe`.
 
@@ -19,22 +19,22 @@ Open a terminal in the folder you unpacked this package into, and run one comman
 **Linux and macOS**
 
 ```sh
-./bin/contextos install
+./bin/contextos-launcher install
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-.\bin\contextos.exe install
+.\bin\contextos-launcher.exe install
 ```
 
-This downloads and checks the current release, then sets up the `contextos` and `contextos-web` commands. Open a new terminal, and they are ready to use:
+This downloads and checks the current release, and sets everything up so that the `contextos`, `contextos-web`, and `contextos-launcher` commands work in any terminal. Open a new terminal, and they are ready to use:
 
 ```sh
 contextos --version
 ```
 
-You can delete the unpacked folder afterwards. ContextOS keeps its own copy in `~/.local/share/contextos` on Linux and macOS, and in `%LOCALAPPDATA%\contextos` on Windows. The commands go in `~/.local/bin` or `%LOCALAPPDATA%\Programs\ContextOS`, and that folder is added to your `PATH` if it is not there already. On Linux and macOS, that means adding a line to your shell profile.
+You can delete the unpacked folder afterwards.
 
 These programs are not signed with an Apple or Microsoft certificate, so macOS or Windows may warn you before running them the first time. On macOS, allow them under System Settings, Privacy & Security. On Windows, choose More info, then Run anyway.
 
@@ -42,7 +42,7 @@ These programs are not signed with an Apple or Microsoft certificate, so macOS o
 
 1. Run `contextos config`. It walks you through choosing or creating a vault, logging, the optional semantic search model, and connecting to Claude Desktop.
 2. Run `contextos doctor` to check your configuration and vaults. Add `--resolve` to fix what it can.
-3. Run `contextos-web config` and add `contextos` as a stdio server, first in the list.
+3. Run `contextos-web config` and add the `contextos` server when it asks.
 4. Start the web interface with `contextos-web`, or run `contextos-web service install` to have it start whenever you log in.
 5. Open <http://127.0.0.1:7373/settings/> and check that the server reads **Connected**.
 
@@ -70,13 +70,25 @@ Then run `/vault init` in your vault to finish first-run setup. The marketplace 
 ## Keep up to date
 
 ```sh
-contextos update check
-contextos update
+contextos-launcher update check
+contextos-launcher update
 ```
 
-`contextos rollback` returns to the previous version.
+`contextos-launcher rollback` returns to the previous version.
 
-A background service keeps running the version it started with, so after updating, run `contextos service restart` or `contextos-web service restart`. Restart any assistant connected over stdio too.
+A background service keeps running the version it started with, so after updating, run `contextos service restart` or `contextos-web service restart`. Restart any assistant connected to ContextOS too.
+
+## Remove ContextOS
+
+```sh
+contextos-launcher uninstall
+```
+
+This removes the programs, their background services, and the changes the install made, including ContextOS's entry in Claude Desktop. Your vaults and settings are kept.
+
+## What the install changes
+
+If you want to know exactly what happens on your computer: ContextOS is kept in `~/.local/share/contextos` on Linux and macOS, and in `%LOCALAPPDATA%\contextos` on Windows. The commands go in `~/.local/bin` on Linux and macOS, and in `%LOCALAPPDATA%\contextos\bin` on Windows. So that terminals can find them, the install adds a line to your shell's profile on Linux and macOS, or the folder to your user `Path` on Windows. Nothing needs administrator rights, and `contextos-launcher uninstall` takes all of it back.
 
 ## Learn more
 

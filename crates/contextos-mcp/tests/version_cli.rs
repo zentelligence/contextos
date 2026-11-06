@@ -27,3 +27,14 @@ fn the_updater_reads_the_version_the_binary_reports() -> Result<(), Box<dyn std:
     assert_eq!(reported.to_string(), VERSION);
     Ok(())
 }
+
+// Installing, updating, and removing ContextOS belong to `contextos-launcher`.
+#[test]
+fn install_and_update_are_not_commands_of_this_program() -> Result<(), Box<dyn std::error::Error>> {
+    for command in ["install", "update", "rollback"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_contextos")).arg(command).output()?;
+
+        assert_eq!(output.status.code(), Some(2), "{command}");
+    }
+    Ok(())
+}

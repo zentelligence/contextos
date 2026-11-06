@@ -10,9 +10,14 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ## [0.23.7] - 2026-11-06
 
+### Added
+
+- `contextos-launcher uninstall` removes services, the Claude Desktop registration, the commands, the `PATH` changes, and the installation, keeping vaults and settings.
+
 ### Changed
 
-- `contextos install` needs no version, and sets up the `contextos` and `contextos-web` commands and `PATH` itself, so installing is one command. Running it again sets the commands up again.
+- Installing, updating, and rolling back move from `contextos` to `contextos-launcher`, so no one program owns the suite. `contextos-launcher install` needs no version, and sets up the commands and `PATH` itself, so installing is one command.
+- `contextos-launcher update` also replaces the launcher copies, so fixes to the updater reach existing installations.
 - `contextos --version` and `contextos-web --version` print `ContextOS 0.23.7` and `ContextOS Web 0.23.7`, in place of the lowercase names and a `v` before the version.
 - A release now starts as a prerelease that no client can reach. It becomes the latest release only after a real install from it passes on Linux, Windows, and macOS.
 - Release archives carry a README for people running the programs: installing them, setting up, connecting an assistant, and updating.
@@ -21,7 +26,7 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 ### Fixed
 
 - Services and MCP host registrations created through the launcher record the launcher, so they follow updates and rollbacks rather than staying on a versioned folder that cleanup later deletes. On Linux and macOS the launcher now becomes the program it starts, so a service stop reaches the server and it shuts down cleanly.
-- `contextos install` and `contextos update` work. In 0.23.6 they failed on every platform: the updater could not read a version with a `v` in front of it, and the Linux and macOS archives held `release.json` inside a folder rather than at the top.
+- Installing and updating work. In 0.23.6 they failed on every platform: the updater could not read a version with a `v` in front of it, and the Linux and macOS archives held `release.json` inside a folder rather than at the top.
 
 ## [0.23.6] - 2026-11-05
 

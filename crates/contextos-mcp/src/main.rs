@@ -98,23 +98,6 @@ enum CliCommand {
         #[command(subcommand)]
         action: Option<ConfigAction>,
     },
-    /// Suite-level self-update operations: check, install, clean up, or diagnose. With no
-    /// subcommand, installs the newest available release set. Vault-independent.
-    Update {
-        #[command(subcommand)]
-        action: Option<UpdateAction>,
-        /// Install without an interactive confirmation prompt.
-        #[arg(long)]
-        yes: bool,
-    },
-    /// Roll back to the previously active release set. Vault-independent.
-    Rollback,
-    /// Install the current release and put the `contextos` and `contextos-web` commands on your `PATH`. Vault-independent.
-    Install {
-        /// Install this exact release, for CI and automation. It must be the channel's current release.
-        #[arg(long)]
-        version: Option<String>,
-    },
     /// Install, remove, or report on one per-user background `contextos` that serves MCP over HTTP alone
     /// (`systemd --user` on Linux, a `launchd` `LaunchAgent` on macOS, a Startup App on Windows), and start, stop, or
     /// restart it. It runs `contextos --config <path> --http [ADDR] --no-stdio`: give `--http ADDR` to install to
@@ -124,16 +107,6 @@ enum CliCommand {
         #[command(subcommand)]
         action: ServiceAction,
     },
-}
-
-#[derive(Clone, Debug, Subcommand)]
-enum UpdateAction {
-    /// Report whether a newer release set is available, without installing it.
-    Check,
-    /// Delete obsolete release sets, best-effort.
-    Cleanup,
-    /// Print a structured summary of the installation.
-    Diagnostics,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -279,9 +252,6 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         Some(CliCommand::Service { action }) => {
             return dispatch_service_command(action, resolve_config_toml_path(cli.config.clone())?, cli.http).await;
-        }
-        Some(command @ (CliCommand::Update { .. } | CliCommand::Rollback | CliCommand::Install { .. })) => {
-            return dispatch_update_command(command).await;
         }
         other => other,
     };
@@ -487,36 +457,6 @@ async fn dispatch_service_command(
     let report = tokio::task::spawn_blocking(move || run_service_command(action, &command)).await??;
     writeln!(std::io::stdout().lock(), "{report}")?;
     Ok(())
-}
-
-/// Runs a `contextos update`/`rollback`/`install` subcommand's blocking body (network retrieval,
-/// signature verification, extraction, and filesystem writes) off the async runtime thread, and
-/// prints its human-readable result.
-async fn run_update_transaction(
-    body: impl FnOnce() -> Result<String, Box<dyn Error + Send + Sync>> + Send + 'static,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let output = tokio::task::spawn_blocking(body).await??;
-    println!("{output}");
-    Ok(())
-}
-
-/// Dispatches `contextos update[/check/cleanup/diagnostics]`, `rollback`, and
-/// `install`, all of which are vault-independent and never reach `Config::try_from`.
-async fn dispatch_update_command(command: CliCommand) -> Result<(), Box<dyn Error + Send + Sync>> {
-    match command {
-        CliCommand::Update { action, yes } => {
-            run_update_transaction(move || match action {
-                None => contextos_mcp::run_update(yes),
-                Some(UpdateAction::Check) => contextos_mcp::run_check(),
-                Some(UpdateAction::Cleanup) => contextos_mcp::run_cleanup(),
-                Some(UpdateAction::Diagnostics) => contextos_mcp::run_diagnostics(),
-            })
-            .await
-        }
-        CliCommand::Rollback => run_update_transaction(contextos_mcp::run_rollback).await,
-        CliCommand::Install { version } => run_update_transaction(move || contextos_mcp::run_install(version)).await,
-        _ => Err("dispatch_update_command received a command it does not handle".into()),
-    }
 }
 
 /// Runs `contextos doctor`, or `contextos doctor --resolve`, which resolves through the same dispatch as the
