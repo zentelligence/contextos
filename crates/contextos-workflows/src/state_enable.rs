@@ -491,6 +491,13 @@ impl PackageJobsState {
                 successor: successor.to_owned(),
             });
         }
+        if let Some((predecessor, successor)) = self.predecessors_other_successor(scope.workflow, scope.job) {
+            return Err(TransitionError::StandingSuccessor {
+                transition: Transition::Reactivate.name(),
+                job: predecessor.to_owned(),
+                successor: successor.to_owned(),
+            });
+        }
         if let (Some(named), Some(recorded)) = (named, self.job(scope.workflow, scope.job).and_then(JobState::release))
             && named != recorded
         {
@@ -504,6 +511,15 @@ impl PackageJobsState {
         }
         self.check_kind_allows(scope, ReleaseUse::Reactivate, &Transition::Reactivate)?;
         self.apply_transition(scope.workflow, scope.job, Actor::Operator, &Transition::Reactivate, now)
+    }
+
+    /// The predecessor of `job_slug` and the other job that now stands as its successor, if one does: a chain has one
+    /// successor at a time, so a retired successor cannot come back once another has taken its place.
+    fn predecessors_other_successor(&self, workflow_slug: &str, job_slug: &str) -> Option<(&str, &str)> {
+        let link = self.job(workflow_slug, job_slug)?.link()?;
+        let predecessor = self.holder_of_identity(workflow_slug, job_slug, &link.identity)?;
+        let successor = self.standing_successor_of(workflow_slug, predecessor)?;
+        (successor != job_slug).then_some((predecessor, successor))
     }
 
     /// Refuses re-activating a job whose file names another predecessor than the one its state recorded: the key the link
