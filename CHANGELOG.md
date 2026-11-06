@@ -8,6 +8,8 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ## [Unreleased]
 
+## [0.23.8] - 2026-11-06
+
 ### Fixed
 
 - The shared workflows and library pages have a title, the sidebar, and tabs that lead back to each vault. They had no way back.
