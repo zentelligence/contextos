@@ -44,7 +44,17 @@ async fn site() -> Result<Site, BoxError> {
     std::fs::write(workflow.join("sync.rhai"), "log_info(\"a\");")?;
     std::fs::write(
         workflow.join("jobs/nightly.toml"),
-        "name = \"Nightly\"\ntimeout_secs = 30\nversion = \"1.0.0\"\n",
+        "name = \"Nightly\"\nowner = \"vela\"\ntimeout_secs = 30\nversion = \"1.0.0\"\n",
+    )?;
+    std::fs::create_dir_all(beta.path().join(".contextos"))?;
+    std::fs::write(beta.path().join(".contextos/team.toml"), support::jobs::TEAM)?;
+    // A failed latest run is what puts a job in the sidebar.
+    let runs = beta.path().join("memory/jobs/ops/sync/nightly/2026/09");
+    std::fs::create_dir_all(&runs)?;
+    std::fs::write(
+        runs.join("R-1.md"),
+        "---\ntype: job-run\nworkflow: sync\njob: nightly\nstatus: failed\ntrigger: manual\n\
+         started: 2026-09-01T00:00:00Z\n---\n",
     )?;
     let config_path =
         support::write_named_vaults_config(config.path(), &[("alpha", alpha.path()), ("beta", beta.path())])?;
@@ -141,8 +151,8 @@ async fn the_shared_and_settings_sidebars_follow_the_active_vault() -> Result<()
     Ok(())
 }
 
-// A job that needs attention appears in the sidebar only when its workflow's servers are known, so every page that shows a
-// vault's sidebar must pass them.
+// A job whose latest run failed appears in the sidebar, but only when its workflow's servers are known, so every page that
+// shows a vault's sidebar must pass them.
 #[tokio::test]
 async fn the_settings_sidebar_is_the_same_as_the_shared_one() -> Result<(), BoxError> {
     let site = site().await?;
