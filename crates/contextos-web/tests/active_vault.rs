@@ -198,7 +198,7 @@ async fn the_sidebar_names_the_view_showing_and_the_vault_its_menu_belongs_to() 
     let site = site().await?;
     let shared = site.get("/server/workflows", Some("cc_active_vault=beta")).await?;
     assert!(shared.body.contains("class=\"sidebar-scope\""), "{}", shared.body);
-    assert!(shared.body.contains(">Server View<"), "{}", shared.body);
+    assert!(shared.body.contains(">Shared View<"), "{}", shared.body);
     assert!(shared.body.contains("Vault Menu: beta"), "{}", shared.body);
 
     let settings = site.get("/server/settings/", Some("cc_active_vault=beta")).await?;
@@ -215,8 +215,15 @@ async fn the_shared_view_is_marked_in_the_sidebar_and_the_vaults_workflows_are_n
     let site = site().await?;
     let page = site.get("/server/workflows", Some("cc_active_vault=beta")).await?;
     let sidebar = page.body.split("shell-sidebar").nth(1).unwrap_or_default();
-    assert!(sidebar.contains("href=\"/server/workflows\""), "{sidebar}");
-    assert!(!sidebar.contains("nav-group-heading-link active"), "{sidebar}");
+    assert!(
+        sidebar.contains("nav-group-heading-link active\" href=\"/server/workflows\""),
+        "{sidebar}"
+    );
+    assert!(sidebar.contains("href=\"/beta/workflows\""), "{sidebar}");
+    assert!(
+        !sidebar.contains("nav-group-heading-link active\" href=\"/beta/workflows\""),
+        "{sidebar}"
+    );
     Ok(())
 }
 
@@ -225,7 +232,7 @@ async fn the_shared_view_is_marked_in_the_sidebar_and_the_vaults_workflows_are_n
 async fn the_vault_switcher_does_not_claim_a_vault_on_a_page_with_none() -> Result<(), BoxError> {
     let site = site().await?;
     for (path, label) in [
-        ("/server/workflows", "Server View"),
+        ("/server/workflows", "Shared View"),
         ("/server/settings/", "Server Settings"),
     ] {
         let page = site.get(path, Some("cc_active_vault=beta")).await?;
@@ -241,47 +248,49 @@ async fn the_vault_switcher_does_not_claim_a_vault_on_a_page_with_none() -> Resu
     Ok(())
 }
 
-fn sidebar_link<'a>(page: &'a str, href: &str) -> Option<&'a str> {
-    let link = page.find(&format!("href=\"{href}\""))?;
-    let start = page[..link].rfind("<a ")?;
-    Some(&page[start..link])
+fn shared_group(page: &str) -> Option<&str> {
+    let label = page.find(">Shared</span>")?;
+    let start = page[..label].rfind("<details class=\"nav-group\"")?;
+    let end = page[label..].find("</details>")?;
+    Some(&page[start..label + end])
 }
 
 #[tokio::test]
-async fn every_page_ends_its_sidebar_with_the_server_section() -> Result<(), BoxError> {
+async fn every_page_ends_its_sidebar_with_the_collapsible_shared_group() -> Result<(), BoxError> {
     let site = site().await?;
     for path in ["/beta/workflows", "/server/workflows", "/server/settings/"] {
         let page = site.get(path, None).await?;
         let knowledge = page.body.find(">Knowledge<").ok_or("no Knowledge group")?;
-        let server = page.body.find(">Server<").ok_or("no Server section")?;
-        assert!(server > knowledge, "{path}");
-        let below = &page.body[server..];
-        for (href, label) in [
-            ("/server/workflows", ">Workflows<"),
-            ("/server/jobs", ">Jobs<"),
-            ("/server/packages", ">Libraries<"),
-        ] {
-            assert!(below.contains(&format!("href=\"{href}\"")), "{path}: {href}");
-            assert!(below.contains(label), "{path}: {label}");
-        }
+        let shared = page.body.find(">Shared</span>").ok_or("no Shared group")?;
+        assert!(shared > knowledge, "{path}");
+        let group = shared_group(&page.body).ok_or("the Shared group is not collapsible")?;
+        let links = group.split("<a class=\"nav-link ").skip(1).collect::<Vec<_>>();
+        assert_eq!(links.len(), 2, "{path}: {group}");
+        assert!(links[0].contains("href=\"/server/workflows\""), "{path}: {group}");
+        assert!(links[0].contains(">Workflows<"), "{path}: {group}");
+        assert!(links[1].contains("href=\"/server/packages\""), "{path}: {group}");
+        assert!(links[1].contains(">Libraries<"), "{path}: {group}");
     }
     Ok(())
 }
 
+// Jobs are a tab of the shared workflows screen, so that screen's link stays current on them.
 #[tokio::test]
-async fn the_server_section_marks_the_screen_showing_and_only_that_one() -> Result<(), BoxError> {
+async fn the_shared_group_marks_the_screen_showing_and_only_that_one() -> Result<(), BoxError> {
     let site = site().await?;
-    let all = ["/server/workflows", "/server/jobs", "/server/packages"];
-    for current in all {
-        let page = site.get(current, None).await?;
-        for href in all {
-            let link = sidebar_link(&page.body, href).ok_or("no link")?;
-            assert_eq!(link.contains("active"), href == current, "{current}: {link}");
-        }
-    }
-    let vault = site.get("/beta/workflows", None).await?;
-    for href in all {
-        assert!(!sidebar_link(&vault.body, href).ok_or("no link")?.contains("active"));
+    let workflows = "<a class=\"nav-link active\" href=\"/server/workflows\"";
+    let libraries = "<a class=\"nav-link active\" href=\"/server/packages\"";
+    for (path, on_workflows, on_libraries) in [
+        ("/server/workflows", true, false),
+        ("/server/jobs", true, false),
+        ("/server/packages", false, true),
+        ("/server/settings/", false, false),
+        ("/beta/workflows", false, false),
+    ] {
+        let page = site.get(path, None).await?;
+        let group = shared_group(&page.body).ok_or("no Shared group")?;
+        assert_eq!(group.contains(workflows), on_workflows, "{path}: {group}");
+        assert_eq!(group.contains(libraries), on_libraries, "{path}: {group}");
     }
     Ok(())
 }

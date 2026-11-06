@@ -86,8 +86,6 @@ pub struct SidebarLink {
 /// second piece of cookie- or script-driven state alongside the sidebar's
 /// own wide/narrow toggle.
 pub struct SidebarGroup {
-    /// The heading of the part of the sidebar this group starts, for a group that is not the vault's own.
-    pub section: Option<&'static str>,
     pub label: Option<&'static str>,
     pub heading_href: Option<String>,
     pub icon: &'static str,

@@ -242,7 +242,7 @@ pub async fn detail(
         runs_html,
         notices: Vec::new(),
     });
-    respond(&state, &headers, HostScreen::Jobs, crumbs(&key), fragment).await
+    respond(&state, &headers, HostScreen::Workflows, crumbs(&key), fragment).await
 }
 
 /// `PATCH /server/workflows/{{package}}/{{workflow}}/jobs/{{job}}`: sets the job's schedule, or clears it when empty. A shared

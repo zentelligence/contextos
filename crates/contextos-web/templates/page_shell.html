@@ -106,9 +106,6 @@
     <div class="sidebar-scope" title="{{ view.label }}"><span class="ic ic-{{ view.icon }}" aria-hidden="true"></span><span class="sidebar-scope-text"><strong>{{ view.label }}</strong>{% if let Some(detail) = view.detail %}<span class="hint">{{ detail }}</span>{% endif %}</span></div>
 {% endif %}
 {% for group in nav.sidebar_groups %}
-{% if let Some(section) = group.section %}
-    <p class="nav-section"><span class="nav-section-label">{{ section }}</span></p>
-{% endif %}
 {% if let Some(label) = group.label %}
     <details class="nav-group" open>
       <summary class="nav-group-summary">

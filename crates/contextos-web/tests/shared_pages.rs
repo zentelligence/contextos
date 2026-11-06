@@ -195,7 +195,7 @@ async fn with_no_vault_the_shared_list_still_shows_and_names_none() -> Result<()
     let site = site_over(fixture);
     let page = site.get("/server/workflows").await?;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.body.contains(">Server View<"), "{}", page.body);
+    assert!(page.body.contains(">Shared View<"), "{}", page.body);
     assert!(!page.body.contains("Vault Menu"), "{}", page.body);
     assert!(page.body.contains("Nightly"), "{}", page.body);
     Ok(())

@@ -460,7 +460,7 @@ pub async fn jobs(
     respond_titled(
         &state,
         &headers,
-        HostScreen::Jobs,
+        HostScreen::Workflows,
         vec![crumb("Shared Jobs", None)],
         fragment,
         Some(screen_title("Shared Jobs", "clock")),

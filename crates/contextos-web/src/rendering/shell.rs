@@ -287,7 +287,6 @@ fn sidebar_groups(
     };
     vec![
         SidebarGroup {
-            section: None,
             label: None,
             heading_href: None,
             icon: "",
@@ -295,7 +294,6 @@ fn sidebar_groups(
             links: general_links(vault_name, breadcrumb_suffix, counts),
         },
         SidebarGroup {
-            section: None,
             label: Some("Agents"),
             heading_href: Some(VaultUrls::from(vault_name).agents()),
             icon: "agents",
@@ -303,7 +301,6 @@ fn sidebar_groups(
             links: agent_group_links(vault_name, counts),
         },
         SidebarGroup {
-            section: None,
             label: Some("Apps"),
             heading_href: Some(VaultUrls::from(vault_name).apps()),
             icon: "apps",
@@ -311,7 +308,6 @@ fn sidebar_groups(
             links: favourited_apps,
         },
         SidebarGroup {
-            section: None,
             label: Some("Workflows"),
             heading_href: Some(VaultUrls::from(vault_name).workflows()),
             icon: "jobs",
@@ -319,7 +315,6 @@ fn sidebar_groups(
             links: Vec::new(),
         },
         SidebarGroup {
-            section: None,
             label: Some("Knowledge"),
             heading_href: Some(VaultUrls::from(vault_name).wiki("")),
             icon: "book",
@@ -629,7 +624,6 @@ pub async fn build_nav(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostScreen {
     Workflows,
-    Jobs,
     Libraries,
     Settings,
 }
@@ -637,7 +631,7 @@ pub(crate) enum HostScreen {
 impl HostScreen {
     fn view(self, vault: Option<&str>) -> HostView {
         let (icon, label) = match self {
-            Self::Workflows | Self::Jobs | Self::Libraries => ("jobs", "Server View"),
+            Self::Workflows | Self::Libraries => ("jobs", "Shared View"),
             Self::Settings => ("settings", "Server Settings"),
         };
         HostView {
@@ -648,7 +642,7 @@ impl HostScreen {
     }
 }
 
-/// The sidebar's Server section, on every page: what the server holds for all its vaults. `screen` marks the current one.
+/// The sidebar's Shared group, on every page: what the server holds for all its vaults. `screen` marks the current one.
 pub(crate) fn server_group(screen: Option<HostScreen>) -> SidebarGroup {
     let link = |label: &str, href: &str, icon: &'static str, shows: HostScreen| SidebarLink {
         attention: None,
@@ -660,11 +654,10 @@ pub(crate) fn server_group(screen: Option<HostScreen>) -> SidebarGroup {
         target: None,
     };
     SidebarGroup {
-        section: Some("Server"),
-        label: Some("Workflows"),
-        heading_href: None,
-        icon: "jobs",
-        active: false,
+        label: Some("Shared"),
+        heading_href: Some(crate::urls::SERVER_WORKFLOWS.to_owned()),
+        icon: "globe",
+        active: matches!(screen, Some(HostScreen::Workflows | HostScreen::Libraries)),
         links: vec![
             link(
                 "Workflows",
@@ -672,7 +665,6 @@ pub(crate) fn server_group(screen: Option<HostScreen>) -> SidebarGroup {
                 "jobs",
                 HostScreen::Workflows,
             ),
-            link("Jobs", crate::urls::SERVER_JOBS, "clock", HostScreen::Jobs),
             link(
                 "Libraries",
                 crate::urls::SERVER_PACKAGES,
@@ -693,7 +685,7 @@ pub(crate) async fn build_host_nav(
     known_mcp_servers: &[String],
 ) -> NavData {
     let active = match screen {
-        HostScreen::Workflows | HostScreen::Jobs | HostScreen::Libraries => ActiveScreen::Jobs,
+        HostScreen::Workflows | HostScreen::Libraries => ActiveScreen::Jobs,
         HostScreen::Settings => ActiveScreen::Settings,
     };
     let mut nav = Box::pin(build_nav(client, active, None, None, None, None, known_mcp_servers)).await;
