@@ -406,9 +406,9 @@ pub async fn list(
     respond_titled(
         &state,
         &headers,
-        vec![crumb("Shared workflows", None)],
+        vec![crumb("Shared Workflows", None)],
         fragment,
-        Some(screen_title("Shared workflows", WORKFLOWS.icon)),
+        Some(screen_title("Shared Workflows", WORKFLOWS.icon)),
     )
     .await
 }
@@ -472,7 +472,7 @@ pub async fn workflow(
         &state,
         &headers,
         vec![
-            crumb("Shared workflows", Some(crate::urls::SHARED_WORKFLOWS.to_owned())),
+            crumb("Shared Workflows", Some(crate::urls::SHARED_WORKFLOWS.to_owned())),
             crumb(&package, None),
             crumb(&workflow, None),
         ],

@@ -122,7 +122,7 @@ pub async fn page(
         )
         .await;
         nav.page_title = Some(crate::routes::shared_workflows::screen_title(
-            "Library releases",
+            "Library Releases",
             "library",
         ));
         html_response(page::render_page(&nav, "Workflows", &fragment))

@@ -157,7 +157,7 @@ async fn the_shared_list_is_titled_and_leads_back_to_each_vaults_workflows() -> 
     let site = site(JOB).await?;
     let page = site.get("/shared/workflows").await?;
     assert!(page.body.contains("class=\"page-title\""), "{}", page.body);
-    assert!(page.body.contains("Shared workflows"), "{}", page.body);
+    assert!(page.body.contains("Shared Workflows"), "{}", page.body);
     assert!(
         page.body.contains("href=\"/contract-fixture/workflows\""),
         "{}",
@@ -195,8 +195,8 @@ async fn with_no_vault_the_shared_list_still_shows_and_names_none() -> Result<()
     let site = site_over(fixture);
     let page = site.get("/shared/workflows").await?;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.body.contains(">Shared view<"), "{}", page.body);
-    assert!(!page.body.contains("Vault menu"), "{}", page.body);
+    assert!(page.body.contains(">Shared View<"), "{}", page.body);
+    assert!(!page.body.contains("Vault Menu"), "{}", page.body);
     assert!(page.body.contains("Nightly"), "{}", page.body);
     Ok(())
 }

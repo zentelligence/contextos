@@ -234,11 +234,11 @@ pub async fn list(State(state): State<SharedRoutesState>, headers: HeaderMap) ->
         &state,
         &headers,
         vec![
-            crumb("Shared workflows", Some(crate::urls::SHARED_WORKFLOWS.to_owned())),
-            crumb("Library releases", None),
+            crumb("Shared Workflows", Some(crate::urls::SHARED_WORKFLOWS.to_owned())),
+            crumb("Library Releases", None),
         ],
         fragment,
-        Some(screen_title("Library releases", "library")),
+        Some(screen_title("Library Releases", "library")),
     )
     .await
 }

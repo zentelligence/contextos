@@ -221,12 +221,12 @@ impl Scope<'_> {
         let tab = |label: String, href: String, active: bool| ScopeTab { label, href, active };
         let shared = |active| {
             tab(
-                "Shared workflows".to_owned(),
+                "Shared Workflows".to_owned(),
                 crate::urls::SHARED_WORKFLOWS.to_owned(),
                 active,
             )
         };
-        let libraries = |href, active| tab("Library releases".to_owned(), href, active);
+        let libraries = |href, active| tab("Library Releases".to_owned(), href, active);
         match self {
             Self::VaultWorkflows(vault) | Self::VaultLibraries(vault) => {
                 let urls = crate::urls::VaultUrls::from(vault);

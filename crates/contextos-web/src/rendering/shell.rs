@@ -629,13 +629,13 @@ pub(crate) enum HostScreen {
 impl HostScreen {
     fn view(self, vault: Option<&str>) -> HostView {
         let (icon, label) = match self {
-            Self::Shared => ("jobs", "Shared view"),
-            Self::Settings => ("settings", "Server settings"),
+            Self::Shared => ("jobs", "Shared View"),
+            Self::Settings => ("settings", "Server Settings"),
         };
         HostView {
             icon,
             label,
-            detail: vault.map(|vault| format!("Vault menu: {vault}")),
+            detail: vault.map(|vault| format!("Vault Menu: {vault}")),
         }
     }
 }
@@ -682,7 +682,7 @@ pub(crate) async fn build_host_nav(
     {
         workflows.links.push(SidebarLink {
             attention: None,
-            label: "Shared workflows".to_owned(),
+            label: "Shared Workflows".to_owned(),
             href: crate::urls::SHARED_WORKFLOWS.to_owned(),
             icon: "jobs",
             active: true,

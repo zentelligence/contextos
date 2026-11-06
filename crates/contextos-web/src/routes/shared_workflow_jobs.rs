@@ -123,7 +123,7 @@ fn gather(roots: &SharedRoots, key: &SharedJobKey) -> Result<Option<Gathered>, P
 fn crumbs(key: &SharedJobKey) -> Vec<BreadcrumbSegment> {
     vec![
         BreadcrumbSegment {
-            label: "Shared workflows".to_owned(),
+            label: "Shared Workflows".to_owned(),
             href: Some(crate::urls::SHARED_WORKFLOWS.to_owned()),
         },
         BreadcrumbSegment {

@@ -198,12 +198,12 @@ async fn the_sidebar_names_the_view_showing_and_the_vault_its_menu_belongs_to() 
     let site = site().await?;
     let shared = site.get("/shared/workflows", Some("cc_active_vault=beta")).await?;
     assert!(shared.body.contains("class=\"sidebar-scope\""), "{}", shared.body);
-    assert!(shared.body.contains(">Shared view<"), "{}", shared.body);
-    assert!(shared.body.contains("Vault menu: beta"), "{}", shared.body);
+    assert!(shared.body.contains(">Shared View<"), "{}", shared.body);
+    assert!(shared.body.contains("Vault Menu: beta"), "{}", shared.body);
 
     let settings = site.get("/settings/", Some("cc_active_vault=beta")).await?;
     assert!(settings.body.contains("class=\"sidebar-scope\""), "{}", settings.body);
-    assert!(settings.body.contains(">Server settings<"), "{}", settings.body);
+    assert!(settings.body.contains(">Server Settings<"), "{}", settings.body);
 
     let vault = site.get("/beta/workflows", None).await?;
     assert!(!vault.body.contains("class=\"sidebar-scope\""), "{}", vault.body);
@@ -224,7 +224,7 @@ async fn the_shared_view_is_marked_in_the_sidebar_and_the_vaults_workflows_are_n
 #[tokio::test]
 async fn the_vault_switcher_does_not_claim_a_vault_on_a_page_with_none() -> Result<(), BoxError> {
     let site = site().await?;
-    for (path, label) in [("/shared/workflows", "Shared view"), ("/settings/", "Server settings")] {
+    for (path, label) in [("/shared/workflows", "Shared View"), ("/settings/", "Server Settings")] {
         let page = site.get(path, Some("cc_active_vault=beta")).await?;
         let switcher = page.body.split("id=\"vault-select\"").nth(1).unwrap_or_default();
         let switcher = switcher.split("</select>").next().unwrap_or_default();
