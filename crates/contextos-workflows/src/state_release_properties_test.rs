@@ -678,20 +678,21 @@ impl Run {
         if let Some(file) = self.files.get_mut(key) {
             file.version = version.clone();
         }
-        // A predecessor key a job of another identity now holds fails the link check of the validation.
-        let reused = self.predecessor_reused(key);
+        // A predecessor key a job of another identity now holds, or a predecessor that now has another successor,
+        // fails the link check of the validation.
+        let refused = self.predecessor_reused(key) || self.predecessor_taken(key);
         let (kept, validated) = self.validate_and_dry_run(key, version, now)?;
         prop_assert_eq!(
             validated,
-            !reused,
-            "a job whose version is changed in place validates again unless its predecessor key no longer answers for the job it was linked to"
+            !refused,
+            "a job whose version is changed in place validates again unless the link to its predecessor no longer holds"
         );
         prop_assert_eq!(
             kept.returned_to_draft,
             matches!(stage, JobLifecycle::Validated | JobLifecycle::Registered),
             "a validated or registered job returns to draft when its version changes"
         );
-        if reused {
+        if refused {
             let stored = self.state.job(WORKFLOW, key).and_then(|job| job.validation());
             prop_assert!(
                 stored.is_some_and(|stored| !stored.passed
@@ -706,6 +707,16 @@ impl Run {
             self.recorded.insert(identity, version.clone());
         }
         Ok(())
+    }
+
+    /// Whether another job stands as the successor of the job this job's file names, as one does when a retired
+    /// successor is re-activated after its predecessor gained a new one.
+    fn predecessor_taken(&self, key: &str) -> bool {
+        self.files
+            .get(key)
+            .and_then(|file| file.predecessor.as_deref())
+            .and_then(|name| self.state.standing_successor_of(WORKFLOW, name))
+            .is_some_and(|successor| successor != key)
     }
 
     /// Whether the key the job's file names as its predecessor no longer answers for the job its link recorded: it is
