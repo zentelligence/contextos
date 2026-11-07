@@ -232,8 +232,13 @@ struct DetectBody {
 pub async fn detect(
     State(state): State<SettingsRoutesState>,
     AxumPath(server_name): AxumPath<String>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
+    // The address to probe comes from this request, so another site must not be able to choose it.
+    if !headers.contains_key("hx-request") {
+        return error_response(StatusCode::FORBIDDEN, "settings/not-from-page");
+    }
     let current = match read_current_blocking(state.web_config_path()).await {
         Ok(config) => config,
         Err(response) => return *response,
@@ -247,7 +252,7 @@ pub async fn detect(
         .filter(|endpoint| !endpoint.trim().is_empty())
         .unwrap_or(persisted_endpoint);
 
-    let outcome = oauth_discovery::discover(&reqwest::Client::new(), &endpoint).await;
+    let outcome = oauth_discovery::discover(&endpoint).await;
     if let DiscoveryOutcome::Failed(reason) = &outcome {
         tracing::info!(server = %server_name, reason = %reason, "auth detection did not resolve a usable result");
     }

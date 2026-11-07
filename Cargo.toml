@@ -24,7 +24,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.23.8"
+version = "0.23.9"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Zentelligence Pty Ltd"]
@@ -118,12 +118,12 @@ reqwest = { version = "0.13.4", default-features = false, features = ["blocking"
 # make without running either.
 rhai = { version = "1.26.0", features = ["internals"] }
 # The official MCP SDK, pinned exactly: pre-1.0 in all but name, its 2.x to 3.x move changed protocol semantics as
-# well as API. 3.5.1 serves and speaks protocol revision 2026-07-28 (per-request metadata, `server/discover`) alongside
+# well as API. 3.9.0 serves and speaks protocol revision 2026-07-28 (per-request metadata, `server/discover`) alongside
 # the legacy `initialize` revisions, which this workspace supports only as far as rmcp itself does.
-rmcp = { version = "=3.5.1", default-features = false, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["macros", "server", "transport-io", "transport-streamable-http-server"] }
 # rmcp asks for its macros crate with a caret requirement, so an exact rmcp pin alone lets the macros move. Pinned to
 # the same release; `contextos-mcp` names it only to apply this pin.
-rmcp-macros = "=3.5.1"
+rmcp-macros = "=3.9.0"
 # Pinned exactly: pre-1.0, so the
 # on-disk vec0 format may break across bumps; any pin move re-validates the
 # format and rebuilds `.contextos/vectors.db` through the index-rebuild

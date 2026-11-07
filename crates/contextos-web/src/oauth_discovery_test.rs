@@ -165,7 +165,7 @@ async fn a_non_401_response_means_no_auth_required() -> Result<(), BoxError> {
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     assert_eq!(outcome, DiscoveryOutcome::NoAuthRequired);
     Ok(())
@@ -175,7 +175,7 @@ async fn a_non_401_response_means_no_auth_required() -> Result<(), BoxError> {
 async fn an_unreachable_endpoint_fails_with_probe_unreachable() -> Result<(), BoxError> {
     let endpoint = format!("{}/mcp", crate::test_support::unreachable_loopback_url()?);
 
-    let outcome = discover(&reqwest::Client::new(), &endpoint).await;
+    let outcome = discover(&endpoint).await;
 
     assert_eq!(outcome, DiscoveryOutcome::Failed(DiscoveryFailure::ProbeUnreachable));
     Ok(())
@@ -186,7 +186,7 @@ async fn a_401_with_no_header_hint_and_no_well_known_route_at_all_fails_with_res
 -> Result<(), BoxError> {
     let origin = spawn_stub(|_origin| Ok(RouteStub::unauthorized())).await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     assert_eq!(
         outcome,
@@ -206,7 +206,7 @@ async fn a_legacy_challenge_with_no_well_known_route_either_still_fails_with_res
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     assert_eq!(
         outcome,
@@ -233,7 +233,7 @@ async fn a_401_with_no_header_hint_falls_back_to_the_path_scoped_well_known_uri(
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     let DiscoveryOutcome::Discovered(fields) = outcome else {
         return Err(format!("expected a Discovered outcome, got {outcome:?}").into());
@@ -260,7 +260,7 @@ async fn a_path_scoped_well_known_404_falls_back_to_the_root_well_known_uri() ->
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     assert!(matches!(outcome, DiscoveryOutcome::Discovered(_)), "{outcome:?}");
     Ok(())
@@ -279,7 +279,7 @@ async fn a_header_hint_is_preferred_over_well_known_probing_and_resolves_every_f
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     let DiscoveryOutcome::Discovered(fields) = outcome else {
         return Err(format!("expected a Discovered outcome, got {outcome:?}").into());
@@ -300,7 +300,7 @@ async fn a_resource_metadata_document_naming_no_authorization_server_fails_accor
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     assert_eq!(
         outcome,
@@ -319,7 +319,7 @@ async fn an_unresolvable_authorization_server_fails_with_metadata_unusable() -> 
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     assert_eq!(
         outcome,
@@ -347,7 +347,7 @@ async fn an_authorization_server_metadata_document_with_a_mismatched_issuer_is_r
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     assert_eq!(
         outcome,
@@ -376,7 +376,7 @@ async fn the_resources_own_scopes_are_preferred_over_the_authorization_servers_w
     })
     .await?;
 
-    let outcome = discover(&reqwest::Client::new(), &format!("{origin}/mcp")).await;
+    let outcome = discover(&format!("{origin}/mcp")).await;
 
     let DiscoveryOutcome::Discovered(fields) = outcome else {
         return Err(format!("expected a Discovered outcome, got {outcome:?}").into());
@@ -389,6 +389,75 @@ async fn the_resources_own_scopes_are_preferred_over_the_authorization_servers_w
             "accounting.settings".to_owned()
         ]
     );
+    Ok(())
+}
+
+// A public provider cannot use this process to reach the operator's own services: from its point of view the stub's
+// loopback address is one it should have no way to touch.
+#[tokio::test]
+async fn a_public_endpoint_naming_an_internal_address_gets_nothing_from_it() -> Result<(), BoxError> {
+    let origin = spawn_stub(|origin| {
+        RouteStub::unauthorized()
+            .with_challenge(&format!(
+                "Bearer resource_metadata=\"{origin}/.well-known/oauth-protected-resource\""
+            ))
+            .map(|stub| {
+                stub.with_route(
+                    "/.well-known/oauth-protected-resource",
+                    resource_metadata_body(&[origin]),
+                )
+                .with_route(
+                    "/.well-known/oauth-authorization-server",
+                    authorization_server_metadata_body(origin),
+                )
+            })
+    })
+    .await?;
+    let fetcher = OauthFetcher::public_only()?;
+
+    let outcome = discover_with(&fetcher, &format!("{origin}/mcp")).await;
+
+    assert_eq!(
+        outcome,
+        DiscoveryOutcome::Failed(DiscoveryFailure::ResourceMetadataUnusable)
+    );
+    Ok(())
+}
+
+// Metadata from a trusted place can still name an endpoint Connect should never use.
+#[tokio::test]
+async fn an_authorization_server_naming_an_out_of_bounds_endpoint_is_not_offered() -> Result<(), BoxError> {
+    for (authorization, token) in [
+        ("http://169.254.169.254/authorize", "{issuer}/token"),
+        ("{issuer}/authorize", "http://169.254.169.254/token"),
+        ("javascript:alert(1)", "{issuer}/token"),
+        ("{issuer}/authorize", "file:///etc/passwd"),
+    ] {
+        let origin = spawn_stub(|origin| {
+            Ok(RouteStub::unauthorized()
+                .with_route(
+                    "/.well-known/oauth-protected-resource/mcp",
+                    resource_metadata_body(&[origin]),
+                )
+                .with_route(
+                    "/.well-known/oauth-authorization-server",
+                    serde_json::json!({
+                        "issuer": origin,
+                        "authorization_endpoint": authorization.replace("{issuer}", origin),
+                        "token_endpoint": token.replace("{issuer}", origin),
+                    }),
+                ))
+        })
+        .await?;
+
+        let outcome = discover(&format!("{origin}/mcp")).await;
+
+        assert_eq!(
+            outcome,
+            DiscoveryOutcome::Failed(DiscoveryFailure::AuthorizationServerMetadataUnusable),
+            "{authorization} {token}"
+        );
+    }
     Ok(())
 }
 
@@ -416,7 +485,7 @@ async fn the_probe_is_a_2026_07_28_server_discover_request() -> Result<(), BoxEr
         .with_state(seen.clone());
     tokio::spawn(async move { axum::serve(listener, router).await });
 
-    let outcome = discover(&reqwest::Client::new(), &format!("http://{addr}/mcp")).await;
+    let outcome = discover(&format!("http://{addr}/mcp")).await;
     assert_eq!(outcome, DiscoveryOutcome::NoAuthRequired);
 
     let (headers, body) = seen

@@ -87,6 +87,7 @@ pub mod notes_config;
 pub mod notes_template;
 pub mod oauth;
 mod oauth_discovery;
+mod oauth_http;
 pub mod oauth_refresh;
 pub mod overview_panels;
 pub mod package_bundle;

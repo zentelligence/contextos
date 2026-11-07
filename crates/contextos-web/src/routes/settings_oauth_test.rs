@@ -94,6 +94,56 @@ fn hx_redirect_header(response: &axum::response::Response) -> Option<String> {
 // connect
 // ---------------------------------------------------------------------
 
+fn detect_request(endpoint: &str, hx: bool) -> Result<Request<Body>, BoxError> {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/server/settings/oauth/hosted-oauth/detect");
+    if hx {
+        request = request.header("HX-Request", "true");
+    }
+    Ok(request.body(Body::from(serde_json::json!({"endpoint": endpoint}).to_string()))?)
+}
+
+async fn counting_probe_stub(hits: &'static std::sync::atomic::AtomicUsize) -> Result<String, BoxError> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("http://{}", listener.local_addr()?);
+    let router = Router::new().fallback(move || async move {
+        hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        axum::http::StatusCode::OK
+    });
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    Ok(origin)
+}
+
+// The request names the address to probe, so a page on another site must not be able to send one.
+#[tokio::test]
+async fn detect_from_outside_the_page_is_refused_and_probes_nothing() -> Result<(), BoxError> {
+    static HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let origin = counting_probe_stub(&HITS).await?;
+    let (_dir, router) = router_with_web_toml(&oauth_web_toml("https://provider.invalid/token")).await?;
+
+    let response = send(&router, detect_request(&format!("{origin}/mcp"), false)?).await?;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(HITS.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn detect_from_the_page_probes_the_endpoint() -> Result<(), BoxError> {
+    static HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let origin = counting_probe_stub(&HITS).await?;
+    let (_dir, router) = router_with_web_toml(&oauth_web_toml("https://provider.invalid/token")).await?;
+
+    let response = send(&router, detect_request(&format!("{origin}/mcp"), true)?).await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(HITS.load(std::sync::atomic::Ordering::SeqCst), 1);
+    Ok(())
+}
+
 #[tokio::test]
 async fn connect_on_an_unknown_server_is_a_404() -> Result<(), BoxError> {
     let (_dir, router) = router_with_web_toml(&oauth_web_toml(&format!(

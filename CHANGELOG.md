@@ -8,6 +8,19 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ## [Unreleased]
 
+## [0.23.9] - 2026-11-07
+
+### Security
+
+- Update `rmcp` from 3.5.1 to 3.9.0. This fixes a memory exhaustion in the HTTP server transport, where a client that could reach `contextos` could grow its memory with made-up tool names (GHSA-4432-vg92-fqh6), and in the HTTP client, where a malicious MCP server could exhaust `contextos-web`'s memory with an endless response (GHSA-c9f9-cp8h-jcj5).
+- Detect on the settings page no longer lets an MCP server point `contextos-web` at addresses it should not reach. A URL the server names may reach a public address, or the same kind of address as the configured endpoint, and never a link-local or cloud metadata address. An `https` endpoint is not followed onto `http`, and an endpoint Detect offers must meet the same rules. Detect goes direct rather than through a configured proxy, so behind a proxy with no direct route, enter the endpoints by hand.
+- Detect limits how long each request takes and how much it reads, and refuses a request that did not come from the settings page.
+- A token request limits how long it takes and how much it reads, and does not follow redirects, which could have sent the client secret elsewhere.
+
+### Changed
+
+- A JSON response from an HTTP MCP server over 16 MiB now fails, as does an OAuth discovery or token response over 1 MiB.
+
 ## [0.23.8] - 2026-11-06
 
 ### Fixed

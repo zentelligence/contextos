@@ -61,9 +61,9 @@ pub(crate) struct CredentialedHttpClient {
 }
 
 impl CredentialedHttpClient {
-    /// The client rmcp itself builds for a streamable HTTP transport (no idle connection pool, so a reused
-    /// connection never stalls on a delayed acknowledgement; no redirects, so custom headers are never replayed to
-    /// another host), presenting `credential`.
+    /// A client for a streamable HTTP transport (no idle connection pool, so a reused connection never stalls on a
+    /// delayed acknowledgement; no redirects, so custom headers are never replayed to another host), presenting
+    /// `credential`.
     pub(crate) fn new(credential: SessionCredential) -> Result<Self, reqwest::Error> {
         let inner = reqwest::Client::builder()
             .pool_max_idle_per_host(0)
