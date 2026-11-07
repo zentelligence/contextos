@@ -9345,8 +9345,8 @@ Used by:
 - ref-cast 1.0.27
 - rhai 1.27.0
 - rhai_codegen 3.3.0
-- rmcp-macros 3.5.1
-- rmcp 3.5.1
+- rmcp-macros 3.9.0
+- rmcp 3.9.0
 - rustc-hash 2.1.3
 - rustversion 1.0.23
 - ryu-js 1.0.3
