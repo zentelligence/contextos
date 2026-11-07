@@ -9,6 +9,8 @@
 
 use serde::Deserialize;
 
+use crate::oauth_http::{TOKEN_TIMEOUT, bounded_body};
+
 /// The RFC 6749 §5.1 token response shape common to every grant type this crate performs. Every
 /// other field a provider's response might carry is ignored.
 #[derive(Debug, Deserialize)]
@@ -25,10 +27,36 @@ pub struct TokenResponse {
 /// call site, so only the diagnostic detail (logged here, never returned to a browser or MCP
 /// client) differs between them. `server_name` is carried only for that diagnostic; it never
 /// appears in the returned value.
+///
+/// A redirect is not followed: a `307` repeats the POST, which would hand `form`, client secret and all, to wherever
+/// the response pointed.
 pub async fn request_token(token_endpoint: &str, form: &[(&str, &str)], server_name: &str) -> Option<TokenResponse> {
-    let exchange = reqwest::Client::new().post(token_endpoint).form(form).send().await;
+    request_token_within(TOKEN_TIMEOUT, token_endpoint, form, server_name).await
+}
+
+async fn request_token_within(
+    timeout: std::time::Duration,
+    token_endpoint: &str,
+    form: &[(&str, &str)],
+    server_name: &str,
+) -> Option<TokenResponse> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .build();
+    let client = match client {
+        Ok(client) => client,
+        Err(source) => {
+            tracing::warn!(server = %server_name, error = %source, "OAuth2 token request could not be prepared");
+            return None;
+        }
+    };
+    let exchange = client.post(token_endpoint).form(form).send().await;
     match exchange {
-        Ok(response) if response.status().is_success() => response.json::<TokenResponse>().await.ok(),
+        Ok(response) if response.status().is_success() => {
+            let body = bounded_body(response).await?;
+            serde_json::from_slice(&body).ok()
+        }
         Ok(response) => {
             tracing::warn!(
                 server = %server_name,

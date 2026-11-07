@@ -22,6 +22,8 @@
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::oauth_http::OauthFetcher;
+
 /// The three fields a successful detection pre-fills into the `oauth2` fieldset, plus a
 /// `registration_endpoint` the caller may separately choose to offer a Dynamic Client Registration
 /// (RFC 7591) attempt against; this module itself never calls it.
@@ -79,7 +81,7 @@ struct ProtectedResourceMetadata {
 /// RFC 8414 §2's (or OIDC Discovery's identically shaped) Authorization Server Metadata document:
 /// only the fields this module reads. `issuer`/`authorization_endpoint`/`token_endpoint` are
 /// mandatory by both specifications; a document missing any of them fails to deserialize, which
-/// [`fetch_json`] already collapses into the same "unusable" outcome as an unreachable or
+/// [`OauthFetcher::get_json`] already collapses into the same "unusable" outcome as an unreachable or
 /// malformed document. `issuer` itself is read only to validate against, per RFC 8414 §3.3, never
 /// surfaced to an operator.
 #[derive(Debug, Deserialize)]
@@ -124,10 +126,18 @@ const PROBE_HEADERS: [(&str, &str); 2] = [
 /// Never issues the probe with an `Authorization` header: a server behind an already-working
 /// credential would answer normally regardless, but the whole point of this call is to observe
 /// what an *unauthenticated* request gets back.
-pub(crate) async fn discover(http: &reqwest::Client, endpoint: &str) -> DiscoveryOutcome {
+pub(crate) async fn discover(endpoint: &str) -> DiscoveryOutcome {
+    match OauthFetcher::for_endpoint(endpoint).await {
+        Some(fetcher) => discover_with(&fetcher, endpoint).await,
+        None => DiscoveryOutcome::Failed(DiscoveryFailure::ProbeUnreachable),
+    }
+}
+
+/// [`discover`], through `fetcher`, which limits what the URLs `endpoint` names may reach.
+async fn discover_with(fetcher: &OauthFetcher, endpoint: &str) -> DiscoveryOutcome {
     let probe = PROBE_HEADERS
         .iter()
-        .fold(http.post(endpoint), |request, (name, value)| {
+        .fold(fetcher.http().post(endpoint), |request, (name, value)| {
             request.header(*name, *value)
         })
         .header(reqwest::header::ACCEPT, "application/json, text/event-stream")
@@ -146,16 +156,23 @@ pub(crate) async fn discover(http: &reqwest::Client, endpoint: &str) -> Discover
         .get(reqwest::header::WWW_AUTHENTICATE)
         .and_then(|value| value.to_str().ok());
 
-    let Some(resource_metadata) = resource_metadata_document(http, endpoint, challenge).await else {
+    let Some(resource_metadata) = resource_metadata_document(fetcher, endpoint, challenge).await else {
         return DiscoveryOutcome::Failed(DiscoveryFailure::ResourceMetadataUnusable);
     };
     let Some(authorization_server) = resource_metadata.authorization_servers.first().cloned() else {
         return DiscoveryOutcome::Failed(DiscoveryFailure::NoAuthorizationServers);
     };
 
-    let Some(server_metadata) = fetch_authorization_server_metadata(http, &authorization_server).await else {
+    let Some(server_metadata) = fetch_authorization_server_metadata(fetcher, &authorization_server).await else {
         return DiscoveryOutcome::Failed(DiscoveryFailure::AuthorizationServerMetadataUnusable);
     };
+
+    // Connect sends the operator's browser to one of these and this process's secrets to the other.
+    if !fetcher.permits(&server_metadata.authorization_endpoint).await
+        || !fetcher.permits(&server_metadata.token_endpoint).await
+    {
+        return DiscoveryOutcome::Failed(DiscoveryFailure::AuthorizationServerMetadataUnusable);
+    }
 
     // Prefer the *resource's* own `scopes_supported` (RFC 9728 §2) when it names any: in practice
     // a provider is at least as likely to publish the scopes this specific resource actually needs
@@ -183,26 +200,25 @@ pub(crate) async fn discover(http: &reqwest::Client, endpoint: &str) -> Discover
 /// fallback a header-hint-only implementation cannot express (this module's own top-level doc
 /// comment has the real-world provider shape that makes this fallback necessary, not optional).
 async fn resource_metadata_document(
-    http: &reqwest::Client,
+    fetcher: &OauthFetcher,
     endpoint: &str,
     challenge: Option<&str>,
 ) -> Option<ProtectedResourceMetadata> {
     if let Some(url) = challenge.and_then(resource_metadata_url)
-        && let Ok(document) = fetch_json::<ProtectedResourceMetadata>(http, &url).await
+        && let Ok(document) = fetcher.get_json::<ProtectedResourceMetadata>(&url).await
     {
         return Some(document);
     }
     let (origin, path) = split_origin_and_path(endpoint)?;
     if !path.is_empty()
-        && let Ok(document) = fetch_json::<ProtectedResourceMetadata>(
-            http,
-            &format!("{origin}/.well-known/oauth-protected-resource{path}"),
-        )
-        .await
+        && let Ok(document) = fetcher
+            .get_json::<ProtectedResourceMetadata>(&format!("{origin}/.well-known/oauth-protected-resource{path}"))
+            .await
     {
         return Some(document);
     }
-    fetch_json::<ProtectedResourceMetadata>(http, &format!("{origin}/.well-known/oauth-protected-resource"))
+    fetcher
+        .get_json::<ProtectedResourceMetadata>(&format!("{origin}/.well-known/oauth-protected-resource"))
         .await
         .ok()
 }
@@ -234,13 +250,13 @@ fn authorization_server_metadata_candidates(origin: &str, path: &str) -> Vec<Str
 /// rather than trusted, exactly the "a metadata document from an unrelated origin must never be
 /// used just because it happened to parse" defence RFC 8414 itself calls out by example.
 async fn fetch_authorization_server_metadata(
-    http: &reqwest::Client,
+    fetcher: &OauthFetcher,
     authorization_server: &str,
 ) -> Option<AuthorizationServerMetadata> {
     let (origin, path) = split_origin_and_path(authorization_server)?;
     let expected_issuer = authorization_server.trim_end_matches('/');
     for candidate in authorization_server_metadata_candidates(&origin, &path) {
-        if let Ok(metadata) = fetch_json::<AuthorizationServerMetadata>(http, &candidate).await
+        if let Ok(metadata) = fetcher.get_json::<AuthorizationServerMetadata>(&candidate).await
             && metadata.issuer.trim_end_matches('/') == expected_issuer
         {
             return Some(metadata);
@@ -264,18 +280,6 @@ fn split_origin_and_path(url: &str) -> Option<(String, String)> {
     );
     let path = parsed.path().trim_end_matches('/');
     Some((origin, path.to_owned()))
-}
-
-/// `GET url`, collapsing any transport failure, non-2xx status, or body this crate's own type
-/// cannot deserialize into a single `Err(())`: every metadata fetch in this module treats all
-/// three identically (a best-effort assist has no use for which specific reason a document could
-/// not be used), so the distinction is never propagated past this point.
-async fn fetch_json<T: serde::de::DeserializeOwned>(http: &reqwest::Client, url: &str) -> Result<T, ()> {
-    let response = http.get(url).send().await.map_err(|_source| ())?;
-    if !response.status().is_success() {
-        return Err(());
-    }
-    response.json::<T>().await.map_err(|_source| ())
 }
 
 /// Extracts RFC 9728 §5.1's `resource_metadata` parameter from a `WWW-Authenticate` challenge

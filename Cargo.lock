@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-core"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "camino",
  "dunce",
@@ -702,7 +702,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-ephemeris"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "astro",
  "thiserror",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-events"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-fs"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "dunce",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-git"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-host"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "directories",
  "tempfile",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-index"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -794,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-launcher"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "clap",
  "contextos-host",
@@ -808,7 +808,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-logging"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-host",
  "same-file",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-markdown"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-obsidian",
  "math-core",
@@ -832,7 +832,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-mcp"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-mermaid"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "merman-core",
  "merman-render",
@@ -887,7 +887,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-obsidian"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "proptest",
@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-oplog"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -912,7 +912,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-packages"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -930,7 +930,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-projection"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-search"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "contextos-fs",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-service"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "clap",
  "contextos-fs",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-web"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "askama",
  "axum",
@@ -1041,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "contextos-workflows"
-version = "0.23.8"
+version = "0.23.9"
 dependencies = [
  "contextos-core",
  "croner",
@@ -4454,9 +4454,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "3.5.1"
+version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350"
+checksum = "d24a7e92f4bcaa36b97fa93c4fa7ca8f3e669eced949345b3462dba333c7f909"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4467,6 +4467,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "indexmap",
+ "libc",
  "pastey 0.2.3",
  "pin-project-lite",
  "process-wrap",
@@ -4476,6 +4477,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "sse-stream",
  "thiserror",
  "tokio",
@@ -4488,9 +4490,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "3.5.1"
+version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1da498700030856ba63114bceefa30ba21f5e278cb975e5b9de3529fe842b40"
+checksum = "b3140f24a766f80f9ec1607bde85680959a69b83d46fa9ce87dadab7e67ab029"
 dependencies = [
  "darling 0.24.1",
  "proc-macro2",
