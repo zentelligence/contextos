@@ -67,7 +67,7 @@ async fn send(router: &Router, request: Request<Body>) -> Result<axum::response:
 fn connect_request(server_name: &str, hx: bool) -> Result<Request<Body>, BoxError> {
     let mut builder = Request::builder()
         .method(Method::POST)
-        .uri(format!("/settings/oauth/{server_name}/connect"));
+        .uri(format!("/server/settings/oauth/{server_name}/connect"));
     if hx {
         builder = builder.header("hx-request", "true");
     }
@@ -263,7 +263,7 @@ credential_ref = "preregistered-token"
 fn callback_request(server_name: &str, query: &str) -> Result<Request<Body>, BoxError> {
     Ok(Request::builder()
         .method(Method::GET)
-        .uri(format!("/settings/oauth/{server_name}/callback?{query}"))
+        .uri(format!("/server/settings/oauth/{server_name}/callback?{query}"))
         .body(Body::empty())?)
 }
 
@@ -457,7 +457,7 @@ async fn a_full_connect_then_callback_round_trip_stores_the_token_and_redirects(
     assert_eq!(callback_response.status(), StatusCode::SEE_OTHER);
     let target = location_header(&callback_response).ok_or("missing Location header")?;
     assert!(
-        target.starts_with("/settings/?oauth_connected=hosted-oauth"),
+        target.starts_with("/server/settings/?oauth_connected=hosted-oauth"),
         "{target}"
     );
 
@@ -512,7 +512,7 @@ async fn callback_redirects_with_token_exchange_failed_when_the_provider_rejects
 fn disconnect_request(server_name: &str) -> Result<Request<Body>, BoxError> {
     Ok(Request::builder()
         .method(Method::DELETE)
-        .uri(format!("/settings/oauth/{server_name}/connect"))
+        .uri(format!("/server/settings/oauth/{server_name}/connect"))
         .body(Body::empty())?)
 }
 

@@ -205,7 +205,7 @@ const PAGE_ROUTES: &[&str] = &[
     "/contract-fixture/view.base",
     "/contract-fixture/diagram.canvas",
     "/contract-fixture/apps/",
-    "/settings/",
+    "/server/settings/",
     "/contract-fixture/does-not-exist.md",
 ];
 

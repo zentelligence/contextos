@@ -1,0 +1,3 @@
+  <nav class="task-stage-strip" aria-label="Filter jobs by state">
+{% for tile in tiles %}    <a class="task-stage-tile{% if tile.active %} active{% endif %}{% if tile.attention && tile.count > 0 %} job-tile-attention{% endif %}" href="{{ tile.href }}" hx-get="{{ tile.href }}" hx-target="#workflows-screen" hx-swap="outerHTML" hx-push-url="true" aria-label="{{ tile.label }}: {{ tile.count }}"{% if tile.active %} aria-current="true"{% endif %}><span class="task-stage-count">{{ tile.count }}</span><span class="task-stage-label">{{ tile.label }}</span></a>
+{% endfor %}  </nav>

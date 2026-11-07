@@ -734,3 +734,49 @@ fn rejects_nested_directory_symlink_escape_on_windows() -> Result<(), Box<dyn st
     assert!(matches!(result, Err(PathError::SymlinkEscape { .. })));
     Ok(())
 }
+
+fn root_named(path: PathBuf, name: Option<&str>) -> Result<VaultRoot, PathError> {
+    VaultRoot::try_from(VaultRootInput {
+        path,
+        managed: true,
+        name: name.map(str::to_owned),
+    })
+}
+
+#[test]
+fn a_vault_cannot_take_a_name_the_web_interface_addresses_itself_by() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    for reserved in contextos_core::RESERVED_VAULT_NAMES {
+        let refused = root_named(directory.path().to_path_buf(), Some(reserved));
+        assert!(matches!(refused, Err(PathError::ReservedName { .. })), "{reserved}");
+        assert_eq!(
+            refused.map_err(|error| error.code()).err(),
+            Some("path/reserved-vault-name"),
+            "{reserved}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_folder_with_a_reserved_name_needs_a_vault_name_of_its_own() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    let folder = directory.path().join("server");
+    std::fs::create_dir(&folder)?;
+
+    let refused = root_named(folder.clone(), None);
+    assert!(matches!(refused, Err(PathError::ReservedName { .. })));
+    assert!(refused.is_err_and(|error| error.remediation().contains("name")));
+
+    assert_eq!(root_named(folder, Some("office"))?.name(), "office");
+    Ok(())
+}
+
+#[test]
+fn everyday_vault_names_stay_available() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempdir()?;
+    for name in ["shared", "settings", "family", "Server"] {
+        assert_eq!(root_named(directory.path().to_path_buf(), Some(name))?.name(), name);
+    }
+    Ok(())
+}

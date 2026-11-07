@@ -28,7 +28,7 @@ use thiserror::Error;
 pub(crate) enum JobsAction {
     /// Runs a saved job synchronously from the command line and prints one run summary on standard output: how the
     /// run ended, its run number and record, and the outputs its script declared. A script's own `print` and `debug`
-    /// go to the log, never to standard output. No browser, no `/settings/` round-trip, no separate `contextos-web`
+    /// go to the log, never to standard output. No browser, no `/server/settings/` round-trip, no separate `contextos-web`
     /// server process required to already be running. Connects its own transient `McpClientSet` against the same
     /// `web.toml`, entirely separate from any already-running server process on the same vault, and claims the
     /// identical lock a scheduled tick or the web UI's own "Run now" observes. Exit status: 0 completed (with or

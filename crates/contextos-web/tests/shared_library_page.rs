@@ -105,7 +105,7 @@ async fn each_library_release_shows_whether_its_manifest_syntax_imports_and_decl
         "fn bill() { call_mcp(\"billing\", \"list_invoices\", #{}) }",
     )?;
 
-    let page = site.send("GET", "/shared/packages", None).await?;
+    let page = site.send("GET", "/server/packages", None).await?;
 
     assert_eq!(page.status, StatusCode::OK);
     let good = block(&page.body, "library-acme-text_1_0_0");
@@ -139,7 +139,7 @@ async fn each_library_release_shows_whether_its_manifest_syntax_imports_and_decl
 
 const READY: &str = "ready = true\nname = \"Nightly\"\ntimeout_secs = 30\nversion = \"1.0.0\"\n";
 const IMPORTS: &str = "import \"acme-text:strings\" as s;\ns::act()";
-const LIBRARY_URL: &str = "/shared/packages/acme-text/versions/1.0.0";
+const LIBRARY_URL: &str = "/server/packages/acme-text/versions/1.0.0";
 const JOB_KEY: &str = "acme/sync/nightly";
 
 impl Site {
@@ -154,7 +154,7 @@ impl Site {
         site.fixture.enable().await?;
         site.send(
             "PUT",
-            "/shared/workflows/acme/sync/jobs/nightly/execute/suspend",
+            "/server/workflows/acme/sync/jobs/nightly/execute/suspend",
             Some("{\"reason\": \"held\"}"),
         )
         .await?;
@@ -186,11 +186,11 @@ async fn the_library_release_lists_the_jobs_on_the_workflow_releases_locking_it_
 -> Result<(), BoxError> {
     let site = Site::with_a_suspended_job().await?;
 
-    let page = site.send("GET", "/shared/packages", None).await?;
+    let page = site.send("GET", "/server/packages", None).await?;
 
     let release = block(&page.body, "library-acme-text_1_0_0");
     assert!(
-        release.contains("<a href=\"/shared/workflows/acme/sync/jobs/nightly\">Nightly</a>"),
+        release.contains("<a href=\"/server/workflows/acme/sync/jobs/nightly\">Nightly</a>"),
         "{release}"
     );
     assert!(release.contains("<span class=\"badge\">suspended</span>"), "{release}");
@@ -227,7 +227,7 @@ async fn validating_the_dependents_validates_each_job_through_the_job_operation_
         answer.body
     );
     assert!(
-        answer.body.contains("<li class=\"check-passed\"><a href=\"/shared/workflows/acme/sync/jobs/nightly\">Nightly</a>: Validation passed."),
+        answer.body.contains("<li class=\"check-passed\"><a href=\"/server/workflows/acme/sync/jobs/nightly\">Nightly</a>: Validation passed."),
         "{}",
         answer.body
     );
@@ -250,7 +250,7 @@ async fn resuming_the_picked_dependents_resumes_each_through_the_job_operation_a
 
     assert_eq!(answer.status, StatusCode::OK);
     assert!(
-        answer.body.contains("<li class=\"check-passed\"><a href=\"/shared/workflows/acme/sync/jobs/nightly\">Nightly</a>: The job is now enabled."),
+        answer.body.contains("<li class=\"check-passed\"><a href=\"/server/workflows/acme/sync/jobs/nightly\">Nightly</a>: The job is now enabled."),
         "{}",
         answer.body
     );
@@ -319,9 +319,9 @@ async fn an_action_on_a_library_release_the_store_does_not_hold_or_a_command_tha
     let site = Site::with_a_suspended_job().await?;
 
     for path in [
-        "/shared/packages/acme-text/versions/9.9.9/execute/validate-dependents",
-        "/shared/packages/acme/versions/1.0.0/execute/validate-dependents",
-        "/shared/packages/acme-text/versions/1.0.0/execute/retire",
+        "/server/packages/acme-text/versions/9.9.9/execute/validate-dependents",
+        "/server/packages/acme/versions/1.0.0/execute/validate-dependents",
+        "/server/packages/acme-text/versions/1.0.0/execute/retire",
     ] {
         let answer = site.send("PUT", path, None).await?;
         assert_eq!(answer.status, StatusCode::NOT_FOUND, "{path}");
@@ -366,7 +366,7 @@ async fn a_library_release_that_does_not_read_whole_is_listed_with_its_manifest_
     let site = Site::with_a_suspended_job().await?;
     tamper_with_the_library(&site)?;
 
-    let page = site.send("GET", "/shared/packages", None).await?;
+    let page = site.send("GET", "/server/packages", None).await?;
 
     assert_eq!(page.status, StatusCode::OK);
     let listed = block(&page.body, "library-acme-text_1_0_0");

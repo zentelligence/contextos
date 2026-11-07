@@ -120,48 +120,50 @@ pub(crate) fn workflows_router(state: WorkflowRoutesState) -> Router {
 }
 
 /// The host's shared workflows, the jobs under them, and the runs of each, in the order of that hierarchy. They take no
-/// vault: `/shared/workflows/{package}` stands where `/{vault}/workflows/{package}` does for a vault's workflows, and the shape beneath it is the same.
+/// vault: `/server/workflows/{package}` stands where `/{vault}/workflows/{package}` does for a vault's workflows, and the shape beneath it is the same.
 pub fn shared_router(state: SharedRoutesState) -> Router {
     Router::new()
-        .route("/shared", get(routes::shared_workflows::list))
-        .route("/shared/", get(routes::shared_workflows::list))
-        .route("/shared/packages", get(routes::shared_packages::list))
+        .route("/server/workflows", get(routes::shared_workflows::list))
+        .route("/server/workflows/", get(routes::shared_workflows::list))
+        .route("/server/jobs", get(routes::shared_workflows::jobs))
+        .route("/server/jobs/", get(routes::shared_workflows::jobs))
+        .route("/server/packages", get(routes::shared_packages::list))
         .route(
-            "/shared/packages/{name}/versions/{version}/execute/{command}",
+            "/server/packages/{name}/versions/{version}/execute/{command}",
             put(routes::shared_packages::execute),
         )
         .route(
-            "/shared/workflows/{package}/{workflow_slug}",
+            "/server/workflows/{package}/{workflow_slug}",
             get(routes::shared_workflows::workflow),
         )
         .route(
-            "/shared/workflows/{package}/{workflow_slug}/jobs/{slug}",
+            "/server/workflows/{package}/{workflow_slug}/jobs/{slug}",
             get(routes::shared_workflow_jobs::detail)
                 .patch(routes::shared_workflow_jobs::update)
                 .delete(routes::shared_workflow_jobs::delete),
         )
         .route(
-            "/shared/workflows/{package}/{workflow_slug}/jobs/{slug}/confirm-delete",
+            "/server/workflows/{package}/{workflow_slug}/jobs/{slug}/confirm-delete",
             get(routes::shared_workflow_jobs::confirm_delete),
         )
         .route(
-            "/shared/workflows/{package}/{workflow_slug}/jobs/{slug}/execute/{command}",
+            "/server/workflows/{package}/{workflow_slug}/jobs/{slug}/execute/{command}",
             put(routes::shared_workflow_jobs::execute),
         )
         .route(
-            "/shared/workflows/{package}/{workflow_slug}/jobs/{slug}/runs",
+            "/server/workflows/{package}/{workflow_slug}/jobs/{slug}/runs",
             get(routes::shared_workflow_jobs::list_runs).post(routes::shared_workflow_jobs::start_run),
         )
         .route(
-            "/api/v1/shared/workflows/{package}/{workflow_slug}/jobs/{slug}/execute/successor",
+            "/api/v1/server/workflows/{package}/{workflow_slug}/jobs/{slug}/execute/successor",
             put(routes::successor_api::shared_one),
         )
         .route(
-            "/api/v1/shared/workflows/{package}/{workflow_slug}/jobs/execute/successor",
+            "/api/v1/server/workflows/{package}/{workflow_slug}/jobs/execute/successor",
             post(routes::successor_api::shared_all),
         )
         .route(
-            "/shared/workflows/{package}/{workflow_slug}/jobs/{slug}/runs/{run}/execute/cancel",
+            "/server/workflows/{package}/{workflow_slug}/jobs/{slug}/runs/{run}/execute/cancel",
             put(routes::shared_workflow_jobs::cancel_run),
         )
         .with_state(state)
@@ -224,7 +226,7 @@ pub(crate) fn vault_router(state: VaultRoutesState) -> Router {
         .with_state(state)
 }
 
-/// `/settings/`'s own routes: the vault-independent `web.toml` configuration UI
+/// `/server/settings/`'s own routes: the vault-independent `web.toml` configuration UI
 /// (`routes::settings`), plus the `OAuth2` connect/callback/disconnect routes
 /// (`routes::settings_oauth`) that extend its method contract for an
 /// `oauth2`-mode `[[mcp_server]]` entry. Extracted from [`build_router`] for the identical reason
@@ -232,52 +234,52 @@ pub(crate) fn vault_router(state: VaultRoutesState) -> Router {
 pub(crate) fn settings_router(state: SettingsRoutesState) -> Router {
     Router::new()
         .route(
-            "/settings",
+            "/server/settings",
             get(routes::settings::get)
                 .post(routes::settings::mutate)
                 .patch(routes::settings::mutate)
                 .put(routes::settings::mutate),
         )
         .route(
-            "/settings/",
+            "/server/settings/",
             get(routes::settings::get)
                 .post(routes::settings::mutate)
                 .patch(routes::settings::mutate)
                 .put(routes::settings::mutate),
         )
         .route(
-            "/settings/mcp-servers/{name}",
+            "/server/settings/mcp-servers/{name}",
             delete(routes::settings::delete_mcp_server),
         )
         .route(
-            "/settings/mcp-servers/{name}/connection",
+            "/server/settings/mcp-servers/{name}/connection",
             get(routes::settings_connections::connection),
         )
         .route(
-            "/settings/mcp-servers/{name}/reconnect",
+            "/server/settings/mcp-servers/{name}/reconnect",
             post(routes::settings_connections::reconnect),
         )
         .route(
-            "/settings/mcp-servers/{name}/secrets/{field}",
+            "/server/settings/mcp-servers/{name}/secrets/{field}",
             get(routes::settings_secrets::secret),
         )
         .route(
-            "/settings/oauth/{server_name}/connect",
+            "/server/settings/oauth/{server_name}/connect",
             post(routes::settings_oauth::connect).delete(routes::settings_oauth::disconnect),
         )
         .route(
-            "/settings/oauth/{server_name}/callback",
+            "/server/settings/oauth/{server_name}/callback",
             get(routes::settings_oauth::callback),
         )
         .route(
-            "/settings/oauth/{server_name}/detect",
+            "/server/settings/oauth/{server_name}/detect",
             post(routes::settings_oauth::detect),
         )
         .with_state(state)
 }
 
 /// The vault-scoped `/{{vault_name}}/settings/`'s own route, distinct from
-/// the vault-independent `/settings/` (`web.toml`) [`build_router`] already
+/// the vault-independent `/server/settings/` (`web.toml`) [`build_router`] already
 /// registers. Extracted for the identical reason as [`tasks_router`].
 pub(crate) fn vault_settings_router(state: crate::routes::vault_settings::VaultSettingsRoutesState) -> Router {
     Router::new()
@@ -619,15 +621,15 @@ pub(crate) fn profile_router(state: ProfileRoutesState) -> Router {
 pub(crate) fn packages_router(state: PackagesRoutesState) -> Router {
     Router::new()
         .route(
-            "/api/v1/shared/packages",
+            "/api/v1/server/packages",
             get(routes::packages::shared_list).post(routes::packages::create),
         )
         .route(
-            "/api/v1/shared/packages/{name}/versions/{version}",
+            "/api/v1/server/packages/{name}/versions/{version}",
             get(routes::packages::shared_get).delete(routes::packages::shared_delete),
         )
         .route(
-            "/api/v1/shared/packages/{name}/versions/{version}/execute/remove",
+            "/api/v1/server/packages/{name}/versions/{version}/execute/remove",
             put(routes::packages::shared_remove),
         )
         .with_state(state)

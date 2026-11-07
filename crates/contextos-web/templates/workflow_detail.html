@@ -1,5 +1,5 @@
 <div class="jobs-screen">
-  <a href="{{ back.href }}">{{ back.label }}</a>
+  <a class="back-link" href="{{ back.href }}"><span class="ic ic-chevron-left" aria-hidden="true"></span>{{ back.label }}</a>
   <section class="panel workflow-section">
     <header class="panel-header"><h1>{{ workflow.name }}</h1>{% if let Some(problem) = workflow.problem %}<span class="badge attention">{{ problem.badge }}</span>{% endif %}</header>
 {% if let Some(problem) = workflow.problem %}    <p role="alert">{{ problem.detail }}</p>

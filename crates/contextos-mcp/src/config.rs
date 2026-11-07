@@ -835,13 +835,13 @@ pub enum ConfigError {
          such as \"templates\" or \"memory/events\", with no leading or trailing slash, backslash, drive, `.` or `..`"
     )]
     InvalidLinkExclude { entry: String },
-    #[error("vault path is invalid: {path}")]
+    #[error("vault path is invalid: {path}: {source}. {}", .source.remediation())]
     VaultPath {
         path: PathBuf,
         #[source]
         source: PathError,
     },
-    #[error("configured vault roots are invalid")]
+    #[error("configured vault roots are invalid: {source}. {}", .source.remediation())]
     VaultSet {
         #[source]
         source: PathError,

@@ -48,7 +48,7 @@ pub struct OauthRefreshEntry {
 #[derive(Debug, Error, Eq, PartialEq)]
 #[error(
     "OAuth2 token refresh failed for MCP server {server_name:?}; reconnect via \
-     POST /settings/oauth/{server_name}/connect"
+     POST /server/settings/oauth/{server_name}/connect"
 )]
 pub struct OauthRefreshError {
     pub server_name: String,

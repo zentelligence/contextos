@@ -209,7 +209,7 @@ async fn make_on_host(state: &SharedRoutesState, request: Result<SuccessorReques
     )
 }
 
-/// `PUT /api/v1/shared/workflows/{package}/{workflow}/jobs/{job}/execute/successor`.
+/// `PUT /api/v1/server/workflows/{package}/{workflow}/jobs/{job}/execute/successor`.
 pub async fn shared_one(
     State(state): State<SharedRoutesState>,
     Path((package, workflow, job)): Path<(String, String, String)>,
@@ -218,7 +218,7 @@ pub async fn shared_one(
     make_on_host(&state, one_request((&package, &workflow, &job), &body)).await
 }
 
-/// `POST /api/v1/shared/workflows/{package}/{workflow}/jobs/execute/successor`.
+/// `POST /api/v1/server/workflows/{package}/{workflow}/jobs/execute/successor`.
 pub async fn shared_all(
     State(state): State<SharedRoutesState>,
     Path((package, workflow)): Path<(String, String)>,

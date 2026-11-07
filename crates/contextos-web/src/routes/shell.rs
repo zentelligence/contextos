@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use askama::Template;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
@@ -25,18 +25,28 @@ use crate::routes::SIDEBAR_COOKIE;
 use crate::routes::vault::html_response;
 use crate::scheduler;
 
-/// A `Referer`-relative path is trusted only when it is a same-origin,
-/// root-relative path (`starts_with('/')`, no scheme/host of its own):
-/// anything else (a missing header, an absolute URL, a `javascript:` or
-/// other non-path scheme) falls back to the vault-independent root rather
-/// than redirecting off-site or into a malformed target.
+/// The page to go back to, from `Referer`. A browser sends a whole URL, which counts only when it is this site's own: an
+/// `http` or `https` URL whose host and port match `Host`. A root-relative value is taken as it is. Anything else, or a
+/// path a browser would read as another site (`//host`, `/\\host`), falls back to the vault-independent root rather than
+/// redirecting off-site or into a malformed target.
 fn redirect_target(headers: &HeaderMap) -> String {
     headers
         .get(header::REFERER)
         .and_then(|value| value.to_str().ok())
-        .filter(|referer| referer.starts_with('/') && !referer.starts_with("//"))
-        .unwrap_or("/")
-        .to_owned()
+        .and_then(|referer| same_site_path(referer, headers.get(header::HOST)))
+        .filter(|path| path.starts_with('/') && !path.starts_with("//") && !path.starts_with("/\\"))
+        .unwrap_or_else(|| "/".to_owned())
+}
+
+/// The path and query of `referer`, when it is root-relative or on `host`.
+fn same_site_path(referer: &str, host: Option<&HeaderValue>) -> Option<String> {
+    if referer.starts_with('/') {
+        return Some(referer.to_owned());
+    }
+    let uri = referer.parse::<Uri>().ok()?;
+    let web = matches!(uri.scheme_str(), Some("http" | "https"));
+    let here = uri.authority()?.as_str().as_bytes() == host?.as_bytes();
+    (web && here).then(|| uri.path_and_query().map(ToString::to_string))?
 }
 
 /// `POST /shell/sidebar-toggle`: a plain HTML form submission (no

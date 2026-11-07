@@ -52,7 +52,7 @@ fn oauth_refresh_failed_response(server_name: &str) -> Response {
             server: Some(server_name),
             detail: Some(format!(
                 "the stored OAuth2 token for {server_name:?} could not be refreshed; reconnect via \
-                 POST /settings/oauth/{server_name}/connect"
+                 POST /server/settings/oauth/{server_name}/connect"
             )),
         }),
     )
@@ -78,7 +78,7 @@ pub async fn handle(
 
     let Some(client) = clients.get(&server_name) else {
         // A configured server whose session is not open (it failed to connect, or a reconnect is under way) is
-        // unreachable for now, not unknown: `/settings/` names the cause and connects it again.
+        // unreachable for now, not unknown: `/server/settings/` names the cause and connects it again.
         if clients.is_configured(&server_name) {
             log_outcome(&server_name, &tool_name, start, "not-connected");
             return error_response(StatusCode::BAD_GATEWAY, "mcp/unreachable", Some(&server_name));

@@ -245,7 +245,7 @@ async fn run() -> Result<std::process::ExitCode, Box<dyn Error + Send + Sync>> {
     // Every configured MCP server is attempted (by `server/discover`, or an `initialize` handshake for a server
     // without protocol revision 2026-07-28) before any HTTP request is served, so a page never meets a session that is
     // still opening. A server that cannot be connected does not stop start-up: it is served as not connected, with its
-    // cause, in `/settings/`, and connected again from there without a restart.
+    // cause, in `/server/settings/`, and connected again from there without a restart.
     let mut shutdown_signal = shutdown::ShutdownSignal::new()?;
     let shutdown_requested = tokio_util::sync::CancellationToken::new();
     let signal_token = shutdown_requested.clone();

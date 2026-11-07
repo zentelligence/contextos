@@ -411,7 +411,7 @@ impl McpClient {
     /// obligation to expose), so it is the cheapest transport-agnostic way
     /// to tell a session that is still genuinely responding from one whose
     /// underlying process or connection has died since the initial
-    /// handshake. Used by the `/settings/` MCP servers pane to show each
+    /// handshake. Used by the `/server/settings/` MCP servers pane to show each
     /// configured entry's live status rather than only its static
     /// configuration.
     #[must_use]
@@ -522,7 +522,7 @@ pub enum McpConnectError {
     MissingTokenEnv { server: String, variable: String },
     #[error(
         "no credential is stored under credential_ref {credential_ref:?} for server {server:?}; \
-         paste one via /settings/ first"
+         paste one via /server/settings/ first"
     )]
     MissingCredential { server: String, credential_ref: String },
     #[error("[mcp_server.headers] entry {key:?} for server {server:?} is not a valid HTTP header name or value")]

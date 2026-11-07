@@ -21,6 +21,7 @@ fn empty_nav() -> NavData {
         entity_base_path: None,
         appearance: Appearance::default(),
         sidebar_groups: Vec::new(),
+        host_view: None,
         sidebar_wide: true,
         mcp_status: McpStatus::default(),
         note_href: None,
@@ -262,7 +263,7 @@ fn header_controls_with_no_vault_target_render_disabled_not_as_dead_links() {
     let html = render_page(&empty_nav(), "Settings", "<p>Body.</p>");
     assert!(html.contains("<span class=\"header-icon-button disabled\""));
     // Settings always stays reachable regardless of vault context.
-    assert!(html.contains("href=\"/settings/\" aria-label=\"Settings\""));
+    assert!(html.contains("href=\"/server/settings/\" aria-label=\"Settings\""));
 }
 
 #[test]
@@ -647,6 +648,20 @@ fn a_server_that_is_not_answering_changes_the_header_badge_and_the_footer_dot() 
         assert!(html.contains(dot), "{dot}");
         assert!(html.contains(&format!("{} of {} connected", status.connected, status.total)));
     }
+}
+
+// The badge sits inside the alerts panel, whose own `hx-target` it would otherwise inherit: that target finds nothing from
+// the badge, so its request never runs and the count never shows.
+#[test]
+fn the_alerts_badge_replaces_itself_rather_than_inheriting_the_panels_target() {
+    let mut nav = empty_nav();
+    nav.nav_target_vault = Some("alpha".to_owned());
+
+    let html = render_page(&nav, "note.md", "<p>Body.</p>");
+
+    let badge = html.split("<span class=\"alerts-badge\"").nth(1).unwrap_or_default();
+    let badge = badge.split('>').next().unwrap_or_default();
+    assert!(badge.contains("hx-target=\"this\""), "{badge}");
 }
 
 #[test]

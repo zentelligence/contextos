@@ -1,4 +1,4 @@
-//! `GET /shared/packages`: the packages installed on the host, each release with the modules it exports and the installed
+//! `GET /server/packages`: the packages installed on the host, each release with the modules it exports and the installed
 //! releases that depend on it, and the releases that are installed and cannot be read, each reported for itself. The page
 //! only reads the host's package store; installing and removing are the command line's and the API's.
 
@@ -24,9 +24,12 @@ use crate::package_op_error::PackageOpError;
 use crate::package_standing::StoreStanding;
 use crate::package_store::{self, UnreadableRelease};
 use crate::package_stores::SharedPackages;
-use crate::routes::shared_workflows::{SharedRoutesState, crumb, job_href, respond, workflow_href};
+use crate::rendering::shell::HostScreen;
+use crate::routes::shared_workflows::{
+    SharedRoutesState, crumb, job_href, respond_titled, screen_title, vault_names, workflow_href,
+};
 use crate::routes::vault::{html_response, not_found, unreachable};
-use crate::routes::workflow_views::Link;
+use crate::routes::workflow_views::{Scope, ScopeTab};
 use crate::saved_jobs::SavedJobs;
 use crate::shared_claim::SharedJobKey;
 use crate::shared_job_authoring::{JobListing, SharedJobAuthoring};
@@ -43,7 +46,8 @@ struct PackageRow {
 #[derive(Template)]
 #[template(path = "packages_list.html")]
 struct PackagesPage {
-    back: Link,
+    /// The tabs to the shared workflows and back to each vault.
+    scope: Vec<ScopeTab>,
     rows: Vec<PackageRow>,
     unreadable: Vec<UnreadableRelease>,
     /// The library releases and the workflow releases locked to each.
@@ -53,10 +57,7 @@ struct PackagesPage {
 impl From<PackageListing> for PackagesPage {
     fn from(listing: PackageListing) -> Self {
         Self {
-            back: Link {
-                href: "/shared".to_owned(),
-                label: "All shared workflows",
-            },
+            scope: Vec::new(),
             rows: listing
                 .releases()
                 .iter()
@@ -105,7 +106,7 @@ async fn world_of(state: &SharedRoutesState) -> Result<(StoreStanding, Vec<JobLi
 }
 
 fn release_href(name: &str, version: &str) -> String {
-    format!("/shared/packages/{name}/versions/{version}")
+    format!("/server/packages/{name}/versions/{version}")
 }
 
 /// The host's library releases with what each checks as, the workflow releases locked to each, and the jobs on them, or why
@@ -133,7 +134,7 @@ async fn libraries_of(state: &SharedRoutesState) -> LibrariesSection {
     }
 }
 
-/// `PUT /shared/packages/{name}/versions/{version}/execute/{command}`: validates every job on the workflow releases that
+/// `PUT /server/packages/{name}/versions/{version}/execute/{command}`: validates every job on the workflow releases that
 /// lock the library release (`validate-dependents`), or resumes the picked ones (`resume-dependents`), each through the
 /// operation a job's own page uses, and answers with the library release's jobs block, one result per job.
 pub async fn execute(
@@ -205,7 +206,7 @@ fn block_response(name: &str, version: &str, dependents: &[Dependent], carried: 
     }
 }
 
-/// `GET /shared/packages`.
+/// `GET /server/packages`.
 pub async fn list(State(state): State<SharedRoutesState>, headers: HeaderMap) -> Response {
     let roots = Arc::clone(&state.roots);
     let read = tokio::task::spawn_blocking(move || package_store::inventory(&roots.store_root)).await;
@@ -222,6 +223,7 @@ pub async fn list(State(state): State<SharedRoutesState>, headers: HeaderMap) ->
     };
     let mut page = PackagesPage::from(PackageListing::from(inventory));
     page.libraries = libraries_of(&state).await;
+    page.scope = Scope::SharedLibraries.tabs(&vault_names(&state).await);
     let fragment = match page.render() {
         Ok(fragment) => fragment,
         Err(error) => {
@@ -229,11 +231,16 @@ pub async fn list(State(state): State<SharedRoutesState>, headers: HeaderMap) ->
             return unreachable();
         }
     };
-    respond(
+    respond_titled(
         &state,
         &headers,
-        vec![crumb("shared", Some("/shared".to_owned())), crumb("packages", None)],
+        HostScreen::Libraries,
+        vec![
+            crumb("Shared Workflows", Some(crate::urls::SERVER_WORKFLOWS.to_owned())),
+            crumb("Library Releases", None),
+        ],
         fragment,
+        Some(screen_title("Library Releases", "library")),
     )
     .await
 }

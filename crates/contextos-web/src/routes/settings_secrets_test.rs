@@ -82,7 +82,7 @@ async fn post(router: &axum::Router, body: &str) -> Result<Answer, BoxError> {
         router,
         Request::builder()
             .method(Method::POST)
-            .uri("/settings/")
+            .uri("/server/settings/")
             .header("content-type", "application/json")
             .body(Body::from(body.to_owned()))?,
     )
@@ -182,7 +182,7 @@ async fn a_pasted_token_with_no_reference_to_store_it_under_is_refused_and_nothi
 async fn the_add_form_offers_a_token_variable_or_a_pasted_token_side_by_side() -> Result<(), BoxError> {
     let (_dir, router) = router_with_web_toml(BASE).await?;
 
-    let page = secret(&router, "/settings/").await?;
+    let page = secret(&router, "/server/settings/").await?;
 
     assert!(page.body.contains(r#"id="mcp-server-add-token-env""#), "{}", page.body);
     assert!(
@@ -199,12 +199,12 @@ async fn the_settings_page_shows_a_stored_token_obscured_with_a_show_control() -
     let (dir, router) = router_with_web_toml(&(BASE.to_owned() + PASTED_ENTRY)).await?;
     store(&dir).set("remote-token", &bearer(SECRET))?;
 
-    let page = secret(&router, "/settings/").await?;
+    let page = secret(&router, "/server/settings/").await?;
 
     assert!(!page.body.contains(SECRET), "{}", page.body);
     assert!(
         page.body
-            .contains(r#"hx-get="/settings/mcp-servers/remote/secrets/bearer-token""#),
+            .contains(r#"hx-get="/server/settings/mcp-servers/remote/secrets/bearer-token""#),
         "{}",
         page.body
     );
@@ -216,14 +216,14 @@ async fn revealing_a_stored_token_answers_with_its_value_and_is_never_cached() -
     let (dir, router) = router_with_web_toml(&(BASE.to_owned() + PASTED_ENTRY)).await?;
     store(&dir).set("remote-token", &bearer(SECRET))?;
 
-    let answer = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token").await?;
+    let answer = secret(&router, "/server/settings/mcp-servers/remote/secrets/bearer-token").await?;
 
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
     assert!(answer.body.contains(SECRET), "{}", answer.body);
     assert!(
         answer
             .body
-            .contains("/settings/mcp-servers/remote/secrets/bearer-token?view=obscured"),
+            .contains("/server/settings/mcp-servers/remote/secrets/bearer-token?view=obscured"),
         "the revealed value offers Hide: {}",
         answer.body
     );
@@ -238,7 +238,7 @@ async fn hiding_a_token_answers_the_obscured_control_without_its_value() -> Resu
 
     let answer = secret(
         &router,
-        "/settings/mcp-servers/remote/secrets/bearer-token?view=obscured",
+        "/server/settings/mcp-servers/remote/secrets/bearer-token?view=obscured",
     )
     .await?;
 
@@ -247,7 +247,7 @@ async fn hiding_a_token_answers_the_obscured_control_without_its_value() -> Resu
     assert!(
         answer
             .body
-            .contains(r#"hx-get="/settings/mcp-servers/remote/secrets/bearer-token""#),
+            .contains(r#"hx-get="/server/settings/mcp-servers/remote/secrets/bearer-token""#),
         "{}",
         answer.body
     );
@@ -262,7 +262,7 @@ async fn revealing_a_token_needs_the_pages_own_request() -> Result<(), BoxError>
     let answer = send(
         &router,
         Request::builder()
-            .uri("/settings/mcp-servers/remote/secrets/bearer-token")
+            .uri("/server/settings/mcp-servers/remote/secrets/bearer-token")
             .body(Body::empty())?,
     )
     .await?;
@@ -284,7 +284,11 @@ async fn revealing_a_token_variable_shows_its_current_value() -> Result<(), BoxE
     )
     .await?;
 
-    let answer = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token-variable").await?;
+    let answer = secret(
+        &router,
+        "/server/settings/mcp-servers/remote/secrets/bearer-token-variable",
+    )
+    .await?;
 
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
     assert!(answer.body.contains(env!("CARGO_PKG_NAME")), "{}", answer.body);
@@ -305,7 +309,11 @@ async fn revealing_an_unset_token_variable_says_it_is_not_set() -> Result<(), Bo
     ))
     .await?;
 
-    let answer = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token-variable").await?;
+    let answer = secret(
+        &router,
+        "/server/settings/mcp-servers/remote/secrets/bearer-token-variable",
+    )
+    .await?;
 
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
     assert!(answer.body.contains("is not set"), "{}", answer.body);
@@ -331,13 +339,13 @@ async fn revealing_an_oauth_client_secret_answers_with_its_value() -> Result<(),
         },
     )?;
 
-    let page = secret(&router, "/settings/").await?;
-    let answer = secret(&router, "/settings/mcp-servers/remote/secrets/client-secret").await?;
+    let page = secret(&router, "/server/settings/").await?;
+    let answer = secret(&router, "/server/settings/mcp-servers/remote/secrets/client-secret").await?;
 
     assert!(!page.body.contains(SECRET), "{}", page.body);
     assert!(
         page.body
-            .contains(r#"hx-get="/settings/mcp-servers/remote/secrets/client-secret""#),
+            .contains(r#"hx-get="/server/settings/mcp-servers/remote/secrets/client-secret""#),
         "{}",
         page.body
     );
@@ -350,10 +358,14 @@ async fn revealing_an_oauth_client_secret_answers_with_its_value() -> Result<(),
 async fn revealing_a_secret_the_entry_does_not_have_is_a_404() -> Result<(), BoxError> {
     let (_dir, router) = router_with_web_toml(&(BASE.to_owned() + PASTED_ENTRY)).await?;
 
-    let not_stored = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token").await?;
-    let no_variable = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token-variable").await?;
-    let unknown_field = secret(&router, "/settings/mcp-servers/remote/secrets/password").await?;
-    let unknown_server = secret(&router, "/settings/mcp-servers/elsewhere/secrets/bearer-token").await?;
+    let not_stored = secret(&router, "/server/settings/mcp-servers/remote/secrets/bearer-token").await?;
+    let no_variable = secret(
+        &router,
+        "/server/settings/mcp-servers/remote/secrets/bearer-token-variable",
+    )
+    .await?;
+    let unknown_field = secret(&router, "/server/settings/mcp-servers/remote/secrets/password").await?;
+    let unknown_server = secret(&router, "/server/settings/mcp-servers/elsewhere/secrets/bearer-token").await?;
 
     assert_eq!(not_stored.status, StatusCode::NOT_FOUND);
     assert!(
@@ -390,12 +402,12 @@ async fn show_and_hide_never_carry_the_edit_forms_values() -> Result<(), BoxErro
     let (dir, router) = router_with_web_toml(&(BASE.to_owned() + PASTED_ENTRY)).await?;
     store(&dir).set("remote-token", &bearer(SECRET))?;
 
-    let page = secret(&router, "/settings/").await?;
-    let revealed = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token").await?;
+    let page = secret(&router, "/server/settings/").await?;
+    let revealed = secret(&router, "/server/settings/mcp-servers/remote/secrets/bearer-token").await?;
 
     for (name, html) in [("page", &page.body), ("revealed", &revealed.body)] {
         let buttons = html
-            .matches("/settings/mcp-servers/remote/secrets/bearer-token")
+            .matches("/server/settings/mcp-servers/remote/secrets/bearer-token")
             .count();
         assert!(buttons > 0, "{name}: {html}");
         assert_eq!(
@@ -415,7 +427,7 @@ async fn revealing_a_token_from_a_page_naming_another_host_is_refused() -> Resul
     let answer = send(
         &router,
         Request::builder()
-            .uri("/settings/mcp-servers/remote/secrets/bearer-token")
+            .uri("/server/settings/mcp-servers/remote/secrets/bearer-token")
             .header("hx-request", "true")
             .header("host", "attacker.example:7373")
             .body(Body::empty())?,
@@ -479,7 +491,7 @@ async fn an_unreadable_credential_store_record_is_reported_by_the_reveal() -> Re
     std::fs::create_dir_all(dir.path().join("credentials"))?;
     std::fs::write(dir.path().join("credentials").join("remote-token.json"), b"{ not json")?;
 
-    let answer = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token").await?;
+    let answer = secret(&router, "/server/settings/mcp-servers/remote/secrets/bearer-token").await?;
 
     assert_eq!(answer.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
@@ -501,7 +513,7 @@ async fn a_record_of_another_kind_under_the_reference_is_not_revealed() -> Resul
         },
     )?;
 
-    let answer = secret(&router, "/settings/mcp-servers/remote/secrets/bearer-token").await?;
+    let answer = secret(&router, "/server/settings/mcp-servers/remote/secrets/bearer-token").await?;
 
     assert_eq!(answer.status, StatusCode::NOT_FOUND);
     assert!(
@@ -533,8 +545,12 @@ async fn a_client_secret_variable_is_shown_in_its_field_and_revealed_on_request(
     )
     .await?;
 
-    let page = secret(&router, "/settings/").await?;
-    let answer = secret(&router, "/settings/mcp-servers/remote/secrets/client-secret-variable").await?;
+    let page = secret(&router, "/server/settings/").await?;
+    let answer = secret(
+        &router,
+        "/server/settings/mcp-servers/remote/secrets/client-secret-variable",
+    )
+    .await?;
 
     assert!(
         page.body
@@ -544,7 +560,7 @@ async fn a_client_secret_variable_is_shown_in_its_field_and_revealed_on_request(
     );
     assert!(
         page.body
-            .contains(r#"hx-get="/settings/mcp-servers/remote/secrets/client-secret-variable""#),
+            .contains(r#"hx-get="/server/settings/mcp-servers/remote/secrets/client-secret-variable""#),
         "{}",
         page.body
     );

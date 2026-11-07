@@ -77,14 +77,14 @@ pub fn is_trackable_path(path: &str) -> bool {
         || trimmed.is_empty())
 }
 
-/// A human label for `path`, derived from its own last segment: the fixed vault-independent `/settings/` page is
+/// A human label for `path`, derived from its own last segment: the fixed vault-independent `/server/settings/` page is
 /// named directly; a bare `/{{vault_name}}/` (no segment past the vault name) is the vault's own Dashboard, the
 /// one case [`crate::rendering::shell::breadcrumb_segments`] also special-cases; every other path is labelled
 /// from its own final segment, hyphens and underscores read as word breaks.
 #[must_use]
 pub fn label_for_path(path: &str) -> String {
     let trimmed = path.trim_matches('/');
-    if trimmed == "settings" {
+    if trimmed == "server/settings" {
         return "Settings".to_owned();
     }
     if trimmed.is_empty() || !trimmed.contains('/') {
@@ -126,7 +126,7 @@ pub async fn track(request: Request, next: Next) -> Response {
             },
         );
         if let Some(cookie) = set_cookie_header(&updated) {
-            response.headers_mut().insert(header::SET_COOKIE, cookie);
+            response.headers_mut().append(header::SET_COOKIE, cookie);
         }
     }
     response

@@ -1,1 +1,1 @@
-<span class="alerts-badge"{% if count == 0 %} hidden{% endif %} hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-swap="outerHTML" aria-label="{{ count }} alerts">{{ count }}</span>
+<span class="alerts-badge"{% if count == 0 %} hidden{% endif %} hx-get="{{ refresh_href }}" hx-trigger="sse:attention, sse:reload" hx-target="this" hx-swap="outerHTML" aria-label="{{ count }} alerts">{{ count }}</span>

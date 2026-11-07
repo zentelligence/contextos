@@ -12,7 +12,7 @@ async fn get_body_with_query(router: &axum::Router, query: &str) -> Result<Strin
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/settings/?{query}"))
+                .uri(format!("/server/settings/?{query}"))
                 .body(Body::empty())?,
         )
         .await?;
@@ -121,7 +121,7 @@ async fn a_configured_indicator_appears_only_once_a_credential_record_actually_e
     let after = get_body(&router).await?;
     assert!(after.contains("Pasted token:"), "{after}");
     assert!(
-        after.contains("/settings/mcp-servers/remote/secrets/bearer-token"),
+        after.contains("/server/settings/mcp-servers/remote/secrets/bearer-token"),
         "{after}"
     );
     assert!(
@@ -262,6 +262,9 @@ async fn the_edit_forms_patch_sits_on_its_save_button_so_no_control_inside_inher
         2,
         "{body}"
     );
-    assert!(body.contains("hx-post=\"/settings/oauth/remote/detect\""), "{body}");
+    assert!(
+        body.contains("hx-post=\"/server/settings/oauth/remote/detect\""),
+        "{body}"
+    );
     Ok(())
 }

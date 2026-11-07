@@ -63,7 +63,7 @@ async fn delete(router: &Router, name: &str) -> Result<(StatusCode, String), Box
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/settings/mcp-servers/{name}"))
+                .uri(format!("/server/settings/mcp-servers/{name}"))
                 .body(Body::empty())?,
         )
         .await?;
@@ -78,7 +78,7 @@ async fn put(router: &Router, body: &str) -> Result<(StatusCode, String), BoxErr
         .oneshot(
             Request::builder()
                 .method(Method::PUT)
-                .uri("/settings/")
+                .uri("/server/settings/")
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_owned()))?,
         )

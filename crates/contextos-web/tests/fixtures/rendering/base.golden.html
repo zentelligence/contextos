@@ -51,10 +51,10 @@
 
       <a class="header-icon-button" href="/contract-fixture/settings/" aria-label="Vault settings" title="Vault settings"><span class="ic ic-database-zap" aria-hidden="true"></span></a>
 
-      <a class="header-icon-button " href="/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
+      <a class="header-icon-button " href="/server/settings/" aria-label="Settings" title="Settings"><span class="ic ic-settings" aria-hidden="true"></span></a>
 
       <details class="favourites-panel alerts-panel" hx-get="/contract-fixture/alerts" hx-trigger="toggle" hx-target="find .favourites-panel-dropdown" hx-swap="innerHTML">
-        <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/contract-fixture/alerts/summary" hx-trigger="load" hx-swap="outerHTML"></span></summary>
+        <summary class="header-icon-button" aria-label="Alerts" title="Alerts"><span class="ic ic-bell" aria-hidden="true"></span><span class="alerts-badge" hidden hx-get="/contract-fixture/alerts/summary" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></span></summary>
         <div class="favourites-panel-dropdown alerts-dropdown">
           <p class="hint">Loading&hellip;</p>
         </div>
@@ -68,6 +68,7 @@
 
   <div class="shell-body">
     <aside class="shell-sidebar">
+
 
 
     <ul class="nav-links nav-links-general">
@@ -152,6 +153,24 @@
         <li><a class="nav-link active" href="/contract-fixture/wiki/"><span class="ic ic-book" aria-hidden="true"></span><span class="nav-link-label">Wiki</span></a></li>
 
         <li><a class="nav-link " href="/contract-fixture/insights/"><span class="ic ic-sparkles" aria-hidden="true"></span><span class="nav-link-label">Insights</span></a></li>
+
+      </ul>
+    </details>
+
+
+
+    <details class="nav-group" open>
+      <summary class="nav-group-summary">
+
+        <a class="nav-group-heading-link " href="/server/workflows"><span class="ic ic-globe" aria-hidden="true"></span><span class="nav-group-label-text">Shared</span></a>
+
+        <span class="ic ic-chevron-down nav-group-chevron" aria-hidden="true"></span>
+      </summary>
+      <ul class="nav-links">
+
+        <li><a class="nav-link " href="/server/workflows"><span class="ic ic-jobs" aria-hidden="true"></span><span class="nav-link-label">Workflows</span></a></li>
+
+        <li><a class="nav-link " href="/server/packages"><span class="ic ic-library" aria-hidden="true"></span><span class="nav-link-label">Libraries</span></a></li>
 
       </ul>
     </details>
@@ -602,7 +621,7 @@
       <ul class="stream-ticks visually-hidden" aria-hidden="true" sse-swap="signal" hx-swap="none" hx-on:htmx:sse-message="this.dataset.n=String((Number(this.dataset.n)||0)+1);this.closest('.stream-status').querySelector('.stream-count').textContent=this.dataset.n"></ul>
     </span>
 
-    <span class="status-bar-item status-bar-about"><a href="https://zentelligence.au" target="_blank" rel="noopener noreferrer">Zentelligence</a> <span class="status-bar-meta">v0.23.7</span></span>
+    <span class="status-bar-item status-bar-about"><a href="https://zentelligence.au" target="_blank" rel="noopener noreferrer">Zentelligence</a> <span class="status-bar-meta">v0.23.8</span></span>
   </footer>
 </div>
 </body>

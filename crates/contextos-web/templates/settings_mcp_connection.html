@@ -1,7 +1,7 @@
 <div
   class="mcp-server-connection"
 {% if connection.connecting %}
-  hx-get="/settings/mcp-servers/{{ connection.name_encoded }}/connection"
+  hx-get="/server/settings/mcp-servers/{{ connection.name_encoded }}/connection"
   hx-trigger="load delay:1s"
   hx-swap="outerHTML"
 {% endif %}
@@ -13,13 +13,13 @@
   <button
     type="button"
     class="btn small mcp-server-reconnect"
-    hx-post="/settings/mcp-servers/{{ connection.name_encoded }}/reconnect"
+    hx-post="/server/settings/mcp-servers/{{ connection.name_encoded }}/reconnect"
     hx-target="closest .mcp-server-connection"
     hx-swap="outerHTML"
   >Reconnect</button>
 {% endif %}
 {% if connection.offers_oauth_connect %}
-  <button type="button" class="btn small primary" hx-post="/settings/oauth/{{ connection.name_encoded }}/connect">Sign in</button>
+  <button type="button" class="btn small primary" hx-post="/server/settings/oauth/{{ connection.name_encoded }}/connect">Sign in</button>
 {% endif %}
 {% if let Some(remedy) = connection.remedy %}
   <p class="hint mcp-server-remedy">{{ remedy }}</p>

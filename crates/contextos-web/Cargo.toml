@@ -136,7 +136,7 @@ tokio-util = { workspace = true, features = ["rt"] }
 # The shared job claim is an advisory lock the operating system releases when its holder dies (`shared_claim.rs`);
 # the same lock the graph store already takes.
 toml.workspace = true
-# Structure- and comment-preserving `web.toml` edits for `/settings/`,
+# Structure- and comment-preserving `web.toml` edits for `/server/settings/`,
 # mirroring `contextos-mcp`'s own `config_writer.rs` use of this
 # crate for the identical `config.toml` discipline.
 toml_edit.workspace = true

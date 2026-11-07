@@ -1,5 +1,5 @@
 //! `GET`/`PATCH /{{vault_name}}/settings/`: the vault-scoped settings screen's configuration page, distinct from the
-//! vault-independent `/settings/` (`web.toml`, Command Centre chrome). Its sidebar ([`SettingsNav`]) has two groups:
+//! vault-independent `/server/settings/` (`web.toml`, Command Centre chrome). Its sidebar ([`SettingsNav`]) has two groups:
 //! the configuration panes, all rendered in this one response and switched client-side (the same `data-pane`
 //! mechanism as `templates/settings.html`), and the vault management categories, each its own page
 //! (`routes::vault_management`).

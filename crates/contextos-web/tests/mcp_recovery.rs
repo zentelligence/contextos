@@ -120,17 +120,17 @@ async fn a_first_launch_with_no_server_and_no_vault_serves_setup_diagnostics_and
         Some(&roots),
     );
 
-    let (settings, page) = get(&router, "/settings/").await?;
+    let (settings, page) = get(&router, "/server/settings/").await?;
     let (root, location) = get(&router, "/").await?;
     let (status, _) = get(&router, "/shell/status").await?;
-    let (packages, _) = get(&router, "/api/v1/shared/packages").await?;
+    let (packages, _) = get(&router, "/api/v1/server/packages").await?;
 
     assert_eq!(settings, StatusCode::OK);
     assert!(
         page.contains("No <code>[[mcp_server]]</code> entries are configured."),
         "{page}"
     );
-    assert_eq!((root, location.as_str()), (StatusCode::SEE_OTHER, "/settings/"));
+    assert_eq!((root, location.as_str()), (StatusCode::SEE_OTHER, "/server/settings/"));
     assert_eq!(status, StatusCode::OK);
     assert_eq!(packages, StatusCode::OK);
     Ok(())
@@ -143,7 +143,7 @@ async fn a_stdio_server_that_cannot_start_leaves_setup_reachable_with_its_cause(
 
     let (_clients, router) = serve(&web_toml).await?;
 
-    let (status, page) = get(&router, "/settings/").await?;
+    let (status, page) = get(&router, "/server/settings/").await?;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("Not connected"), "{page}");
     assert!(page.contains("Check the command and its arguments"), "{page}");
@@ -153,7 +153,7 @@ async fn a_stdio_server_that_cannot_start_leaves_setup_reachable_with_its_cause(
         "the footer counts the configured server: {page}"
     );
     let (root, location) = get(&router, "/").await?;
-    assert_eq!((root, location.as_str()), (StatusCode::SEE_OTHER, "/settings/"));
+    assert_eq!((root, location.as_str()), (StatusCode::SEE_OTHER, "/server/settings/"));
     let (proxied, body) = send(&router, Method::POST, "/mcp/contextos/vault_info", "{}").await?;
     assert_eq!(proxied, StatusCode::BAD_GATEWAY);
     assert!(body.contains("mcp/unreachable"), "{body}");
@@ -179,7 +179,7 @@ async fn an_unreachable_http_server_is_listed_with_its_cause_beside_a_working_on
         Readiness::Connected { .. }
     ));
     assert!(matches!(settled(&clients, "remote").await?, Readiness::Failed(_)));
-    let (_, page) = get(&router, "/settings/").await?;
+    let (_, page) = get(&router, "/server/settings/").await?;
     assert!(page.contains("1 of 2 connected"), "{page}");
     let (root, location) = get(&router, "/").await?;
     assert_eq!((root, location.as_str()), (StatusCode::SEE_OTHER, "/contract-fixture/"));
@@ -204,7 +204,7 @@ async fn saving_a_corrected_entry_connects_it_without_a_restart() -> Result<(), 
             "args": ["--config", config_path.to_string_lossy()],
         },
     });
-    let (status, _) = send(&router, Method::PATCH, "/settings/", &patch.to_string()).await?;
+    let (status, _) = send(&router, Method::PATCH, "/server/settings/", &patch.to_string()).await?;
 
     assert_eq!(status, StatusCode::OK);
     assert!(matches!(
@@ -233,7 +233,13 @@ async fn reconnect_connects_an_entry_corrected_by_hand_and_keeps_the_other_serve
         &(contextos_table(&config_path)? + broken_other.as_str()),
     )?;
 
-    let (status, panel) = send(&router, Method::POST, "/settings/mcp-servers/contextos/reconnect", "").await?;
+    let (status, panel) = send(
+        &router,
+        Method::POST,
+        "/server/settings/mcp-servers/contextos/reconnect",
+        "",
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::OK);
     assert!(panel.contains("conn-pending"), "the panel reads as connecting: {panel}");
@@ -241,9 +247,9 @@ async fn reconnect_connects_an_entry_corrected_by_hand_and_keeps_the_other_serve
         settled(&clients, "contextos").await?,
         Readiness::Connected { .. }
     ));
-    let (_, panel) = get(&router, "/settings/mcp-servers/contextos/connection").await?;
+    let (_, panel) = get(&router, "/server/settings/mcp-servers/contextos/connection").await?;
     assert!(panel.contains("Connected"), "{panel}");
-    let (_, other) = get(&router, "/settings/mcp-servers/other/connection").await?;
+    let (_, other) = get(&router, "/server/settings/mcp-servers/other/connection").await?;
     assert!(
         other.contains(MISSING_COMMAND),
         "another server's cause survives the recovery: {other}"
@@ -257,7 +263,13 @@ async fn reconnecting_an_unknown_server_is_refused() -> Result<(), BoxError> {
     let web_toml = write_web_toml(config_dir.path(), "")?;
     let (_clients, router) = serve(&web_toml).await?;
 
-    let (status, body) = send(&router, Method::POST, "/settings/mcp-servers/nowhere/reconnect", "").await?;
+    let (status, body) = send(
+        &router,
+        Method::POST,
+        "/server/settings/mcp-servers/nowhere/reconnect",
+        "",
+    )
+    .await?;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body.contains("settings/unknown-mcp-server"), "{body}");
@@ -272,10 +284,16 @@ async fn the_first_vault_added_is_picked_up_by_reconnecting_the_contextos_server
     let web_toml = write_web_toml(config_dir.path(), &contextos_table(&config_path)?)?;
     let (clients, router) = serve(&web_toml).await?;
     let (_, before) = get(&router, "/").await?;
-    assert_eq!(before, "/settings/");
+    assert_eq!(before, "/server/settings/");
 
     support::write_vault_config(config_dir.path(), vault_dir.path())?;
-    send(&router, Method::POST, "/settings/mcp-servers/contextos/reconnect", "").await?;
+    send(
+        &router,
+        Method::POST,
+        "/server/settings/mcp-servers/contextos/reconnect",
+        "",
+    )
+    .await?;
 
     assert!(matches!(
         settled(&clients, "contextos").await?,
@@ -297,15 +315,21 @@ async fn the_last_vault_removed_is_picked_up_by_reconnecting_the_contextos_serve
     assert_eq!(before, format!("/{VAULT}/"));
 
     support::write_zero_vault_config(config_dir.path())?;
-    send(&router, Method::POST, "/settings/mcp-servers/contextos/reconnect", "").await?;
+    send(
+        &router,
+        Method::POST,
+        "/server/settings/mcp-servers/contextos/reconnect",
+        "",
+    )
+    .await?;
 
     assert!(matches!(
         settled(&clients, "contextos").await?,
         Readiness::Connected { .. }
     ));
     let (_, after) = get(&router, "/").await?;
-    assert_eq!(after, "/settings/");
-    let (settings, _) = get(&router, "/settings/").await?;
+    assert_eq!(after, "/server/settings/");
+    let (settings, _) = get(&router, "/server/settings/").await?;
     assert_eq!(settings, StatusCode::OK);
     Ok(())
 }
@@ -377,7 +401,7 @@ async fn pasting_the_missing_bearer_token_connects_the_server() -> Result<(), Bo
             "auth": {"mode": "bearer", "credential_ref": "remote-token", "credential_value": "good"},
         },
     });
-    let (status, page) = send(&router, Method::PATCH, "/settings/", &patch.to_string()).await?;
+    let (status, page) = send(&router, Method::PATCH, "/server/settings/", &patch.to_string()).await?;
 
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(
@@ -397,7 +421,7 @@ async fn removing_a_server_while_the_primary_is_not_connected_is_refused_as_unre
     let (_clients, router) = serve(&web_toml).await?;
     let before = std::fs::read_to_string(&web_toml)?;
 
-    let (status, body) = send(&router, Method::DELETE, "/settings/mcp-servers/other", "").await?;
+    let (status, body) = send(&router, Method::DELETE, "/server/settings/mcp-servers/other", "").await?;
 
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
     assert!(body.contains("mcp/unreachable"), "{body}");
@@ -420,7 +444,7 @@ async fn a_reconnect_not_sent_by_the_settings_page_is_refused() -> Result<(), Bo
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/settings/mcp-servers/contextos/reconnect")
+                .uri("/server/settings/mcp-servers/contextos/reconnect")
                 .body(Body::empty())?,
         )
         .await?;

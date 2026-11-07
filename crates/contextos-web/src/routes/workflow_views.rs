@@ -19,6 +19,7 @@ pub(crate) struct JobCard {
     pub(crate) registers: bool,
     /// Whether the card offers to run the job now.
     pub(crate) can_run: bool,
+    pub(crate) lifecycle: JobLifecycle,
     pub(crate) lifecycle_label: &'static str,
     pub(crate) attention: bool,
     pub(crate) schedule_label: String,
@@ -29,6 +30,8 @@ pub(crate) struct JobCard {
     pub(crate) last_run: String,
     /// The star toggle's own rendered markup, or nothing for a job that has no favourites.
     pub(crate) favourite_toggle_html: String,
+    /// The workflow the job is under, on a list of jobs from several.
+    pub(crate) workflow: Option<String>,
     pub(crate) accent: u8,
 }
 
@@ -54,6 +57,7 @@ impl From<CardParts<'_>> for JobCard {
             href: parts.href,
             registers: parts.registers,
             can_run: parts.can_run,
+            lifecycle,
             lifecycle_label: lifecycle.as_str(),
             attention: needs_attention(lifecycle),
             schedule_label: parts
@@ -72,6 +76,7 @@ impl From<CardParts<'_>> for JobCard {
                 .latest
                 .map_or_else(|| "Never run".to_owned(), |run| run.started.clone()),
             favourite_toggle_html: parts.favourite_toggle_html,
+            workflow: None,
             accent: parts.slug.bytes().fold(0u8, |sum, byte| (sum + byte % 6) % 6) + 1,
         }
     }
@@ -137,26 +142,47 @@ impl StateFilter {
     }
 }
 
-/// One filter chip.
-pub(crate) struct FilterChip {
+/// Every job's state in a list, whatever the list's filter shows, so the strip always gives the whole picture.
+pub(crate) struct StateCounts(Vec<JobLifecycle>);
+
+impl FromIterator<JobLifecycle> for StateCounts {
+    fn from_iter<T: IntoIterator<Item = JobLifecycle>>(states: T) -> Self {
+        Self(states.into_iter().collect())
+    }
+}
+
+impl StateCounts {
+    fn of(&self, filter: StateFilter) -> usize {
+        self.0.iter().filter(|state| filter.admits(**state)).count()
+    }
+}
+
+/// One tile of the state strip: a filter, with how many jobs it admits.
+pub(crate) struct StateTile {
     pub(crate) label: &'static str,
     pub(crate) href: String,
     pub(crate) active: bool,
+    pub(crate) count: usize,
+    /// Whether this tile is the one that counts the jobs waiting on the operator.
+    pub(crate) attention: bool,
 }
 
-/// The chips a list offers, each a request for the same list with another filter.
-pub(crate) fn chips(list_path: &str, active: StateFilter) -> Vec<FilterChip> {
-    let mut chips = vec![
-        FilterChip {
-            label: "All",
-            href: list_path.to_owned(),
-            active: active == StateFilter::All,
-        },
-        FilterChip {
-            label: "Needs attention",
-            href: format!("{list_path}?state=attention"),
-            active: active == StateFilter::Attention,
-        },
+/// The tiles a list offers, each a request for the same list with another filter.
+pub(crate) fn state_tiles(list_path: &str, active: StateFilter, counts: &StateCounts) -> Vec<StateTile> {
+    let tile = |label, href, filter| StateTile {
+        label,
+        href,
+        active: active == filter,
+        count: counts.of(filter),
+        attention: filter == StateFilter::Attention,
+    };
+    let mut tiles = vec![
+        tile("All", list_path.to_owned(), StateFilter::All),
+        tile(
+            "Needs attention",
+            format!("{list_path}?state=attention"),
+            StateFilter::Attention,
+        ),
     ];
     for state in [
         JobLifecycle::Draft,
@@ -166,16 +192,86 @@ pub(crate) fn chips(list_path: &str, active: StateFilter) -> Vec<FilterChip> {
         JobLifecycle::Suspended,
         JobLifecycle::Retired,
     ] {
-        chips.push(FilterChip {
-            label: state.as_str(),
-            href: format!("{list_path}?state={}", state.as_str()),
-            active: active == StateFilter::State(state),
-        });
+        tiles.push(tile(
+            state.as_str(),
+            format!("{list_path}?state={}", state.as_str()),
+            StateFilter::State(state),
+        ));
     }
-    chips
+    tiles
 }
 
-/// A link to the other scope's workflows, which a list offers.
+/// Which of the workflow screens a page is, and so which tab it marks and where the others lead.
+#[derive(Clone, Copy)]
+pub(crate) enum Scope<'a> {
+    VaultWorkflows(&'a str),
+    VaultLibraries(&'a str),
+    SharedWorkflows,
+    SharedJobs,
+    SharedLibraries,
+}
+
+/// One tab of the row that moves between a vault's workflows, the shared workflows, and the library releases.
+pub(crate) struct ScopeTab {
+    pub(crate) label: String,
+    pub(crate) href: String,
+    pub(crate) active: bool,
+}
+
+impl Scope<'_> {
+    /// The tabs of this screen. The shared screens have no vault in their address, so `vaults` is every configured
+    /// vault, each with a tab of its own that leads back to it; a vault's own screens need no other vault's.
+    pub(crate) fn tabs(self, vaults: &[String]) -> Vec<ScopeTab> {
+        let tab = |label: String, href: String, active: bool| ScopeTab { label, href, active };
+        let shared = |active| {
+            tab(
+                "Shared Workflows".to_owned(),
+                crate::urls::SERVER_WORKFLOWS.to_owned(),
+                active,
+            )
+        };
+        let libraries = |href, active| tab("Library Releases".to_owned(), href, active);
+        match self {
+            Self::VaultWorkflows(vault) | Self::VaultLibraries(vault) => {
+                let urls = crate::urls::VaultUrls::from(vault);
+                vec![
+                    tab(
+                        "Workflows".to_owned(),
+                        urls.workflows(),
+                        matches!(self, Self::VaultWorkflows(_)),
+                    ),
+                    shared(false),
+                    libraries(urls.packages(), matches!(self, Self::VaultLibraries(_))),
+                ]
+            }
+            Self::SharedWorkflows | Self::SharedJobs | Self::SharedLibraries => {
+                let mut tabs: Vec<ScopeTab> = vaults
+                    .iter()
+                    .map(|vault| {
+                        tab(
+                            format!("{vault} workflows"),
+                            crate::urls::VaultUrls::from(vault.as_str()).workflows(),
+                            false,
+                        )
+                    })
+                    .collect();
+                tabs.push(shared(matches!(self, Self::SharedWorkflows)));
+                tabs.push(tab(
+                    "Shared Jobs".to_owned(),
+                    crate::urls::SERVER_JOBS.to_owned(),
+                    matches!(self, Self::SharedJobs),
+                ));
+                tabs.push(libraries(
+                    crate::urls::SERVER_PACKAGES.to_owned(),
+                    matches!(self, Self::SharedLibraries),
+                ));
+                tabs
+            }
+        }
+    }
+}
+
+/// A link back up from a page to the list it belongs to.
 pub(crate) struct Link {
     pub(crate) href: String,
     pub(crate) label: &'static str,
@@ -184,14 +280,23 @@ pub(crate) struct Link {
 #[derive(Template)]
 #[template(path = "workflows_list.html")]
 pub(crate) struct WorkflowsList {
-    /// Links to the other places workflows are kept and to the packages they come from.
-    pub(crate) links: Vec<Link>,
+    /// The other places workflows are kept, and the library releases beside them.
+    pub(crate) scope: Vec<ScopeTab>,
     pub(crate) filter_value: &'static str,
-    pub(crate) chips: Vec<FilterChip>,
+    pub(crate) tiles: Vec<StateTile>,
     pub(crate) workflows: Vec<WorkflowEntry>,
-    pub(crate) shown: usize,
     /// What the page says about the vault before its workflows, such as a team that cannot be used.
     pub(crate) notices: Vec<String>,
+}
+
+/// Every job of the server, whichever workflow it is under.
+#[derive(Template)]
+#[template(path = "server_jobs.html")]
+pub(crate) struct JobsList {
+    pub(crate) scope: Vec<ScopeTab>,
+    pub(crate) filter_value: &'static str,
+    pub(crate) tiles: Vec<StateTile>,
+    pub(crate) jobs: Vec<JobCard>,
 }
 
 #[derive(Template)]
@@ -230,6 +335,12 @@ pub(crate) fn render_job(view: &JobDetail) -> String {
 pub(crate) fn render_list(view: &WorkflowsList) -> String {
     view.render()
         .unwrap_or_else(|_| "<p>The workflows could not be rendered.</p>".to_owned())
+}
+
+/// The server's jobs as a fragment, or a sentence saying they could not be drawn.
+pub(crate) fn render_jobs(view: &JobsList) -> String {
+    view.render()
+        .unwrap_or_else(|_| "<p>The jobs could not be rendered.</p>".to_owned())
 }
 
 /// One workflow as a fragment, or a sentence saying it could not be drawn.

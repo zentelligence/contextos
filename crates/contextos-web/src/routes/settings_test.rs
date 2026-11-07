@@ -91,7 +91,7 @@ async fn request(
         .oneshot(
             Request::builder()
                 .method(method)
-                .uri("/settings/")
+                .uri("/server/settings/")
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_owned()))?,
         )
@@ -106,7 +106,7 @@ async fn request(
     Ok((status, value))
 }
 
-/// `DELETE /settings/mcp-servers/{name}`: `name` is the URL path segment,
+/// `DELETE /server/settings/mcp-servers/{name}`: `name` is the URL path segment,
 /// never a request body field, matching what a real `hx-delete` button
 /// actually sends (`docs/http-routing-response-contract.md`'s sub-entity
 /// form; htmx's own `methodsThatUseUrlParams` default never puts a `DELETE`
@@ -120,7 +120,7 @@ async fn delete_mcp_server_request(
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/settings/mcp-servers/{name}"))
+                .uri(format!("/server/settings/mcp-servers/{name}"))
                 .body(Body::empty())?,
         )
         .await?;
@@ -137,7 +137,7 @@ async fn delete_mcp_server_request(
 async fn get_body(router: &axum::Router) -> Result<String, BoxError> {
     let response = router
         .clone()
-        .oneshot(Request::builder().uri("/settings/").body(Body::empty())?)
+        .oneshot(Request::builder().uri("/server/settings/").body(Body::empty())?)
         .await?;
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
@@ -149,7 +149,7 @@ async fn get_renders_the_configured_mcp_server() -> Result<(), BoxError> {
 
     let response = router
         .clone()
-        .oneshot(Request::builder().uri("/settings/").body(Body::empty())?)
+        .oneshot(Request::builder().uri("/server/settings/").body(Body::empty())?)
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
@@ -218,7 +218,7 @@ async fn every_js_hx_vals_expression_on_this_page_already_starts_with_a_brace() 
     Ok(())
 }
 
-/// `/settings/` is an SSR+HTMX
+/// `/server/settings/` is an SSR+HTMX
 /// surface, so a plain browser navigation (no `HX-Request` header) gets the
 /// full page shell, htmx and its `json-enc` extension included, matching
 /// `docs/http-routing-response-contract.md`'s "no HX-Request
@@ -228,7 +228,7 @@ async fn get_without_hx_request_returns_the_full_page_shell_with_htmx_loaded() -
     let (_dir, router) = router_with_web_toml(BASE).await?;
 
     let response = router
-        .oneshot(Request::builder().uri("/settings/").body(Body::empty())?)
+        .oneshot(Request::builder().uri("/server/settings/").body(Body::empty())?)
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
@@ -236,8 +236,8 @@ async fn get_without_hx_request_returns_the_full_page_shell_with_htmx_loaded() -
     assert!(body.contains("<html"));
     assert!(body.contains("/static/htmx.min.js"));
     assert!(body.contains("/static/htmx-ext-json-enc.min.js"));
-    assert!(body.contains("hx-post=\"/settings/\""));
-    assert!(body.contains("hx-delete=\"/settings/mcp-servers/contextos\""));
+    assert!(body.contains("hx-post=\"/server/settings/\""));
+    assert!(body.contains("hx-delete=\"/server/settings/mcp-servers/contextos\""));
     // The HTTP-transport add form (endpoint + token_env), not just stdio.
     assert!(body.contains("id=\"mcp-server-add-http\""));
     assert!(body.contains("data-transport=\"http\""));
@@ -257,7 +257,7 @@ async fn get_with_hx_request_returns_a_bare_fragment() -> Result<(), BoxError> {
     let response = router
         .oneshot(
             Request::builder()
-                .uri("/settings/")
+                .uri("/server/settings/")
                 .header("hx-request", "true")
                 .body(Body::empty())?,
         )
@@ -372,7 +372,7 @@ async fn a_fuzzed_body_naming_a_vault_field_never_touches_config_toml() -> Resul
     assert_eq!(
         std::fs::read_to_string(dir.path().join("config.toml"))?,
         before_config_toml,
-        "config.toml must never be touched by a /settings/ submission"
+        "config.toml must never be touched by a /server/settings/ submission"
     );
     Ok(())
 }
@@ -442,7 +442,7 @@ async fn patch_updates_an_http_mcp_servers_token_env() -> Result<(), BoxError> {
 }
 
 /// Slices the `<button>...</button>` block for one Appearance picker option
-/// out of a rendered `/settings/` body, keyed by the exact `key`/`value`
+/// out of a rendered `/server/settings/` body, keyed by the exact `key`/`value`
 /// pair its own `hx-vals` patch submits (e.g. `("theme", "dark")`) - so an
 /// assertion about that option's own `selected` state cannot be satisfied
 /// by a different option's markup.
@@ -498,7 +498,7 @@ async fn patching_the_theme_triggers_a_full_page_refresh() -> Result<(), BoxErro
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri("/settings/")
+                .uri("/server/settings/")
                 .header("content-type", "application/json")
                 .body(Body::from(r#"{"target":"ui","patch":{"theme":"dark"}}"#))?,
         )
@@ -534,7 +534,7 @@ async fn patching_font_size_system_name_or_logo_also_triggers_a_refresh() -> Res
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri("/settings/")
+                    .uri("/server/settings/")
                     .header("content-type", "application/json")
                     .body(Body::from(patch))?,
             )
@@ -576,7 +576,7 @@ async fn patching_an_mcp_server_or_an_inert_ui_key_never_triggers_a_refresh() ->
             .oneshot(
                 Request::builder()
                     .method(Method::PATCH)
-                    .uri("/settings/")
+                    .uri("/server/settings/")
                     .header("content-type", "application/json")
                     .body(Body::from(patch))?,
             )
@@ -810,10 +810,10 @@ async fn delete_on_an_unknown_name_is_a_404() -> Result<(), BoxError> {
 
 #[tokio::test]
 async fn delete_at_the_old_body_addressed_settings_root_is_rejected_not_silently_ignored() -> Result<(), BoxError> {
-    // The route this replaces (`DELETE /settings/` with `{"name": ...}` in
+    // The route this replaces (`DELETE /server/settings/` with `{"name": ...}` in
     // the body) must no longer exist at all: leaving it registered
     // alongside the new path-addressed route would let a stale client keep
-    // hitting the exact no-op this fix removes. `/settings/` still answers
+    // hitting the exact no-op this fix removes. `/server/settings/` still answers
     // `GET`/`POST`/`PATCH`/`PUT`, so a `DELETE` there is a documented method
     // rejection, not a 404.
     let (_dir, router) = router_with_web_toml(BASE).await?;
@@ -832,7 +832,7 @@ async fn get_returns_a_validation_error_when_web_toml_cannot_be_read() -> Result
     let router = build_router(clients, Some(dir.path()), &dir.path().join("web.toml"));
 
     let response = router
-        .oneshot(Request::builder().uri("/settings/").body(Body::empty())?)
+        .oneshot(Request::builder().uri("/server/settings/").body(Body::empty())?)
         .await?;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     Ok(())

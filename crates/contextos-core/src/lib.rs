@@ -27,8 +27,8 @@ pub use team::{
 };
 
 pub use path::{
-    PathError, PortableRelativePath, VaultChildInput, VaultPath, VaultPathInput, VaultRoot, VaultRootId,
-    VaultRootInput, VaultSet,
+    PathError, PortableRelativePath, RESERVED_VAULT_NAMES, VaultChildInput, VaultPath, VaultPathInput, VaultRoot,
+    VaultRootId, VaultRootInput, VaultSet,
 };
 pub use pipeline::{
     AppendMutation, AppendOutcome, AppliesMutations, Clock, ContentHash, ContentHashError, CreateDirectoryMutation,

@@ -1,4 +1,4 @@
-//! `web.toml` editing for `/settings/`: structure- and comment-preserving
+//! `web.toml` editing for `/server/settings/`: structure- and comment-preserving
 //! edits via `toml_edit`, mirroring `contextos-mcp`'s own `contextos
 //! config` validate-then-write discipline directly as its precedent.
 //!
@@ -97,7 +97,7 @@ impl WebConfigDocument {
             .unwrap_or_default()
     }
 
-    /// Appends a new `[[mcp_server]]` entry (`POST /settings/`). `entry`'s
+    /// Appends a new `[[mcp_server]]` entry (`POST /server/settings/`). `entry`'s
     /// keys and value shapes are otherwise unconstrained here: the real
     /// constraint is [`WebConfig`]'s own schema (`transport`, `name`, and
     /// the fields each transport requires), enforced by re-parsing the
@@ -128,7 +128,7 @@ impl WebConfigDocument {
     }
 
     /// Merges `patch`'s keys into the `[[mcp_server]]` entry currently named
-    /// `name` (`PATCH /settings/`, `target: "mcp_server"`), leaving every
+    /// `name` (`PATCH /server/settings/`, `target: "mcp_server"`), leaving every
     /// other key on that entry untouched, except that a patch carrying an
     /// `auth` table and no `token_env` removes the entry's top-level
     /// `token_env`, which the table supersedes.
@@ -157,7 +157,7 @@ impl WebConfigDocument {
     }
 
     /// Replaces the `[[mcp_server]]` entry currently named `current_name`
-    /// with `entry` in full (`PUT /settings/`).
+    /// with `entry` in full (`PUT /server/settings/`).
     ///
     /// # Errors
     ///
@@ -189,7 +189,7 @@ impl WebConfigDocument {
     }
 
     /// Removes the `[[mcp_server]]` entry named `name` (`DELETE
-    /// /settings/`).
+    /// /server/settings/`).
     ///
     /// # Errors
     ///
@@ -211,7 +211,7 @@ impl WebConfigDocument {
         self.validate_or_rollback(backup)
     }
 
-    /// Merges `patch`'s keys into `[server.ui]` (`PATCH /settings/`,
+    /// Merges `patch`'s keys into `[server.ui]` (`PATCH /server/settings/`,
     /// `target: "ui"`); `[server.ui]`'s own key set is intentionally
     /// unenumerated (it belongs to the rendering and theme code), so any JSON-representable value is accepted
     /// here.

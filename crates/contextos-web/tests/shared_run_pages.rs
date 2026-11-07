@@ -19,7 +19,7 @@ use tower::ServiceExt as _;
 
 /// A job file that says authoring is finished, so the automatic pass validates it.
 const JOB: &str = "ready = true\nname = \"Nightly\"\ntimeout_secs = 30\nversion = \"1.0.0\"\n";
-const JOB_URL: &str = "/shared/workflows/acme/sync/jobs/nightly";
+const JOB_URL: &str = "/server/workflows/acme/sync/jobs/nightly";
 
 struct Answer {
     status: StatusCode,
@@ -287,7 +287,7 @@ async fn an_active_shared_run_is_seen_and_cancelled_from_the_page() -> Result<()
 async fn the_list_offers_run_now_for_a_registered_shared_job_and_its_form_post_runs_it() -> Result<(), BoxError> {
     let site = site("log_info(\"a\");").await?;
 
-    let list = site.send("GET", "/shared", None).await?;
+    let list = site.send("GET", "/server/workflows", None).await?;
     let form = site
         .router
         .clone()

@@ -14,7 +14,7 @@
 //! I/O.
 //!
 //! Writing goes through [`WebConfigDocument`], the same comment-preserving,
-//! schema-revalidating `web.toml` writer `/settings/` uses, so a wizard run
+//! schema-revalidating `web.toml` writer `/server/settings/` uses, so a wizard run
 //! against an existing file keeps its hand-written commentary and can never
 //! persist a document that would fail [`crate::config::load_web_config`] to
 //! re-load. Nothing is written until every question has been answered: an

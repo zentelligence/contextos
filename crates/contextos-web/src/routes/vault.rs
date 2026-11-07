@@ -263,11 +263,11 @@ fn redirect_response(target: &str, is_hx_request: bool) -> Response {
 /// somewhere that does resolve, mirroring the nav shell's own "no page-
 /// specific vault yet, fall back to the first configured one" behaviour
 /// ([`shell::build_nav`]'s `nav_target_vault`): the first configured
-/// vault's own root, or `/settings/` when no vault is configured at all (or
+/// vault's own root, or `/server/settings/` when no vault is configured at all (or
 /// the primary MCP session cannot be reached to ask).
 pub async fn get_server_root(State(state): State<VaultRoutesState>) -> Response {
     let Ok(client) = state.client() else {
-        return Redirect::to("/settings/").into_response();
+        return Redirect::to(crate::urls::SERVER_SETTINGS).into_response();
     };
     let target = shell::configured_vault_names(&client)
         .await
@@ -275,7 +275,7 @@ pub async fn get_server_root(State(state): State<VaultRoutesState>) -> Response 
         .into_iter()
         .next()
         .map_or_else(
-            || "/settings/".to_owned(),
+            || crate::urls::SERVER_SETTINGS.to_owned(),
             |name| crate::urls::VaultUrls::from(&*name).root(),
         );
     Redirect::to(&target).into_response()

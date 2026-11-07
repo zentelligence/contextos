@@ -222,7 +222,7 @@ impl McpClientSet {
     }
 
     /// Connects every entry for the long-running server, which serves its pages whatever the outcome: a server that
-    /// cannot be connected is kept with its cause, shown in `/settings/`, and connected again from there.
+    /// cannot be connected is kept with its cause, shown in `/server/settings/`, and connected again from there.
     ///
     /// Every entry is attempted at once, and this returns when each attempt has ended or timed out.
     ///
@@ -278,7 +278,7 @@ impl McpClientSet {
             tracing::warn!(
                 unconnected,
                 total = entries.len(),
-                "contextos-web starting with one or more MCP servers not connected; see /settings/ for each cause"
+                "contextos-web starting with one or more MCP servers not connected; see /server/settings/ for each cause"
             );
         }
         Ok(set)
@@ -547,7 +547,7 @@ impl McpClientSet {
             (Some(error), Some(_)) => tracing::warn!(
                 server = %server,
                 error = %error_chain(error),
-                "MCP server could not be connected; connect it again from /settings/ once the cause is fixed"
+                "MCP server could not be connected; connect it again from /server/settings/ once the cause is fixed"
             ),
             (None, _) => tracing::info!(server = %server, "MCP server connected"),
             (Some(_), None) => {}

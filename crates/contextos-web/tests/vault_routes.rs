@@ -276,7 +276,7 @@ async fn the_bare_server_root_redirects_to_settings_when_no_vault_is_configured_
     let Some(location) = response.headers().get("location") else {
         return Err("a redirect carries a Location header".into());
     };
-    assert_eq!(location, "/settings/");
+    assert_eq!(location, "/server/settings/");
     Ok(())
 }
 

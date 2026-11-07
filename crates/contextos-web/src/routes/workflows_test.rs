@@ -215,27 +215,85 @@ fn a_filter_admits_exactly_the_states_it_names() {
 }
 
 #[test]
-fn the_chips_offer_every_filter_and_mark_the_one_in_use() {
-    let chips = chips("/vault/workflows", StateFilter::Attention);
+fn the_tiles_offer_every_filter_count_every_job_and_mark_the_one_in_use() {
+    let counts: StateCounts = [JobLifecycle::Draft, JobLifecycle::Suspended, JobLifecycle::Enabled]
+        .into_iter()
+        .collect();
 
-    let labels: Vec<&str> = chips.iter().map(|chip| chip.label).collect();
+    let tiles = state_tiles("/vault/workflows", StateFilter::Attention, &counts);
+
+    let shown: Vec<(&str, usize)> = tiles.iter().map(|tile| (tile.label, tile.count)).collect();
     assert_eq!(
-        labels,
+        shown,
         [
-            "All",
-            "Needs attention",
-            "draft",
-            "validated",
-            "registered",
-            "enabled",
-            "suspended",
-            "retired"
+            ("All", 3),
+            ("Needs attention", 2),
+            ("draft", 1),
+            ("validated", 0),
+            ("registered", 0),
+            ("enabled", 1),
+            ("suspended", 1),
+            ("retired", 0),
         ]
     );
-    let active: Vec<&str> = chips.iter().filter(|chip| chip.active).map(|chip| chip.label).collect();
+    let active: Vec<&str> = tiles.iter().filter(|tile| tile.active).map(|tile| tile.label).collect();
     assert_eq!(active, ["Needs attention"]);
-    assert_eq!(chips[0].href, "/vault/workflows");
-    assert_eq!(chips[1].href, "/vault/workflows?state=attention");
+    assert_eq!(tiles[0].href, "/vault/workflows");
+    assert_eq!(tiles[1].href, "/vault/workflows?state=attention");
+    let attention: Vec<&str> = tiles
+        .iter()
+        .filter(|tile| tile.attention)
+        .map(|tile| tile.label)
+        .collect();
+    assert_eq!(attention, ["Needs attention"]);
+}
+
+#[test]
+fn a_vaults_tabs_lead_to_its_workflows_the_shared_workflows_and_its_libraries() {
+    let tabs = Scope::VaultLibraries("alpha").tabs(&[]);
+
+    let shown: Vec<(&str, &str, bool)> = tabs
+        .iter()
+        .map(|tab| (tab.label.as_str(), tab.href.as_str(), tab.active))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("Workflows", "/alpha/workflows", false),
+            ("Shared Workflows", "/server/workflows", false),
+            ("Library Releases", "/alpha/packages", true),
+        ]
+    );
+}
+
+#[test]
+fn the_shared_tabs_lead_back_to_every_vault() {
+    let vaults = ["alpha".to_owned(), "beta".to_owned()];
+
+    let tabs = Scope::SharedWorkflows.tabs(&vaults);
+
+    let shown: Vec<(&str, &str, bool)> = tabs
+        .iter()
+        .map(|tab| (tab.label.as_str(), tab.href.as_str(), tab.active))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("alpha workflows", "/alpha/workflows", false),
+            ("beta workflows", "/beta/workflows", false),
+            ("Shared Workflows", "/server/workflows", true),
+            ("Shared Jobs", "/server/jobs", false),
+            ("Library Releases", "/server/packages", false),
+        ]
+    );
+}
+
+#[test]
+fn with_no_vault_the_shared_tabs_are_the_shared_screens_alone() {
+    let tabs = Scope::SharedLibraries.tabs(&[]);
+
+    let labels: Vec<&str> = tabs.iter().map(|tab| tab.label.as_str()).collect();
+    assert_eq!(labels, ["Shared Workflows", "Shared Jobs", "Library Releases"]);
 }
 
 #[test]

@@ -6,8 +6,9 @@
 //! - Under a program's name it resolves the active release set and becomes that program, passing on every argument.
 //!   The program is told this launcher's path, so that a service or MCP host registration it creates records the
 //!   launcher, not a versioned folder a later update leaves behind.
-//! - As `contextos-launcher` it installs, updates, rolls back, and removes the suite, so that no one program owns that.
-//!   `update` also replaces the launcher copies, which is how fixes to this code reach an installation.
+//! - Under any other name it installs, updates, rolls back, and removes the suite, so that no one program owns that.
+//!   That name is normally `contextos-launcher`, but a downloaded copy may be `contextos-launcher (1)` or anything else
+//!   its owner chose. `update` also replaces the launcher copies, which is how fixes to this code reach an installation.
 
 mod commands;
 mod manage;
@@ -20,12 +21,15 @@ use std::process::{Command, ExitCode};
 use contextos_host::LAUNCHER_VARIABLE;
 use updater_launcher::{LauncherError, ProcessEnvironment, resolve_command, resolve_installation_root};
 
-/// This binary's own name, under which it manages the installation rather than starting a program.
+/// The name this binary is installed under to manage the installation.
 const LAUNCHER_NAME: &str = "contextos-launcher";
+
+/// The names under which this binary starts a program. Under any other name it manages the installation.
+const PROGRAM_NAMES: [&str; 2] = ["contextos", "contextos-web"];
 
 fn main() -> ExitCode {
     let command_name = requested_command_name();
-    if command_name == LAUNCHER_NAME {
+    if !PROGRAM_NAMES.contains(&command_name.as_str()) {
         return manage::run();
     }
 

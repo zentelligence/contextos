@@ -13,13 +13,13 @@ type BoxError = Box<dyn std::error::Error>;
 
 fn router(store_root: &std::path::Path) -> Router {
     Router::new()
-        .route("/api/v1/shared/packages", get(shared_list).post(create))
+        .route("/api/v1/server/packages", get(shared_list).post(create))
         .route(
-            "/api/v1/shared/packages/{name}/versions/{version}",
+            "/api/v1/server/packages/{name}/versions/{version}",
             get(shared_get).delete(shared_delete),
         )
         .route(
-            "/api/v1/shared/packages/{name}/versions/{version}/execute/remove",
+            "/api/v1/server/packages/{name}/versions/{version}/execute/remove",
             put(shared_remove),
         )
         .with_state(PackagesRoutesState::new(
@@ -103,7 +103,7 @@ async fn post_bundle(router: &Router, bundle_bytes: &[u8]) -> Result<(StatusCode
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/shared/packages")
+                .uri("/api/v1/server/packages")
                 .header("content-type", format!("multipart/form-data; boundary={BOUNDARY}"))
                 .body(Body::from(body))?,
         )
@@ -147,7 +147,7 @@ async fn an_empty_store_lists_with_no_releases_and_no_ledger_yet() -> Result<(),
     let root = tempfile::tempdir()?;
     let router = router(root.path());
 
-    let (status, body) = get_path(&router, "/api/v1/shared/packages").await?;
+    let (status, body) = get_path(&router, "/api/v1/server/packages").await?;
 
     assert_eq!(status, StatusCode::OK);
     let json: serde_json::Value = serde_json::from_slice(&body)?;
@@ -168,7 +168,7 @@ async fn installing_a_bundle_returns_201_with_a_location_header_and_the_identity
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(
         location.as_deref(),
-        Some("/api/v1/shared/packages/sync-crm/versions/1.0.0")
+        Some("/api/v1/server/packages/sync-crm/versions/1.0.0")
     );
     let json: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(json["name"], "sync-crm");
@@ -182,12 +182,12 @@ async fn an_installed_package_is_listed_and_inspectable() -> Result<(), BoxError
     let router = router(root.path());
     post_bundle(&router, &build_bundle("sync-crm", "1.0.0")?).await?;
 
-    let (list_status, list_body) = get_path(&router, "/api/v1/shared/packages").await?;
+    let (list_status, list_body) = get_path(&router, "/api/v1/server/packages").await?;
     assert_eq!(list_status, StatusCode::OK);
     let list_json: serde_json::Value = serde_json::from_slice(&list_body)?;
     assert_eq!(list_json["releases"].as_array().map(Vec::len), Some(1));
 
-    let (inspect_status, inspect_body) = get_path(&router, "/api/v1/shared/packages/sync-crm/versions/1.0.0").await?;
+    let (inspect_status, inspect_body) = get_path(&router, "/api/v1/server/packages/sync-crm/versions/1.0.0").await?;
     assert_eq!(inspect_status, StatusCode::OK);
     let inspect_json: serde_json::Value = serde_json::from_slice(&inspect_body)?;
     assert_eq!(inspect_json["workflows"][0]["workflow"], "sync");
@@ -205,10 +205,10 @@ async fn removing_an_installed_package_returns_204_and_it_is_no_longer_listed() 
     let router = router(root.path());
     post_bundle(&router, &build_bundle("sync-crm", "1.0.0")?).await?;
 
-    let delete_status = delete_path(&router, "/api/v1/shared/packages/sync-crm/versions/1.0.0").await?;
+    let delete_status = delete_path(&router, "/api/v1/server/packages/sync-crm/versions/1.0.0").await?;
     assert_eq!(delete_status, StatusCode::NO_CONTENT);
 
-    let (get_status, get_body) = get_path(&router, "/api/v1/shared/packages/sync-crm/versions/1.0.0").await?;
+    let (get_status, get_body) = get_path(&router, "/api/v1/server/packages/sync-crm/versions/1.0.0").await?;
     assert_eq!(get_status, StatusCode::NOT_FOUND);
     let json: serde_json::Value = serde_json::from_slice(&get_body)?;
     assert_eq!(json["error"]["code"], "packages/not-found");
@@ -264,7 +264,7 @@ async fn installing_the_same_bundle_again_is_201_and_changes_nothing() -> Result
     let (status, _body, _location) = post_bundle(&router, &bundle).await?;
 
     assert_eq!(status, StatusCode::CREATED);
-    let (_status, listing) = get_path(&router, "/api/v1/shared/packages").await?;
+    let (_status, listing) = get_path(&router, "/api/v1/server/packages").await?;
     assert_eq!(json_of(&listing)?["releases"].as_array().map(Vec::len), Some(1));
     Ok(())
 }
@@ -274,7 +274,7 @@ async fn an_invalid_version_segment_returns_400_before_touching_the_store() -> R
     let root = tempfile::tempdir()?;
     let router = router(root.path());
 
-    let (status, body) = get_path(&router, "/api/v1/shared/packages/sync-crm/versions/not-a-version").await?;
+    let (status, body) = get_path(&router, "/api/v1/server/packages/sync-crm/versions/not-a-version").await?;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let json: serde_json::Value = serde_json::from_slice(&body)?;
@@ -292,7 +292,7 @@ async fn a_multipart_request_with_no_field_is_rejected_as_a_missing_bundle() -> 
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/shared/packages")
+                .uri("/api/v1/server/packages")
                 .header("content-type", format!("multipart/form-data; boundary={BOUNDARY}"))
                 .body(Body::from(format!("--{BOUNDARY}--\r\n")))?,
         )
@@ -333,9 +333,9 @@ async fn a_name_that_could_leave_the_store_is_refused_with_400_and_nothing_outsi
     let router = router(&store);
 
     for path in [
-        "/api/v1/shared/packages/..%2Fvictim/versions/1.0.0",
-        "/api/v1/shared/packages/..%5Cvictim/versions/1.0.0",
-        "/api/v1/shared/packages/Victim/versions/1.0.0",
+        "/api/v1/server/packages/..%2Fvictim/versions/1.0.0",
+        "/api/v1/server/packages/..%5Cvictim/versions/1.0.0",
+        "/api/v1/server/packages/Victim/versions/1.0.0",
     ] {
         let deleted = delete_path(&router, path).await?;
         let (read, body) = get_path(&router, path).await?;
@@ -408,7 +408,7 @@ async fn the_listing_shows_each_releases_exports_and_the_workflow_releases_that_
     post_bundle(&router, &build_library("acme-text", "1.2.0", &[])?).await?;
     post_bundle(&router, &build_dependent("acme", "1.0.0", &[("acme-text", "^1")])?).await?;
 
-    let (status, body) = get_path(&router, "/api/v1/shared/packages").await?;
+    let (status, body) = get_path(&router, "/api/v1/server/packages").await?;
 
     assert_eq!(status, StatusCode::OK);
     let json = json_of(&body)?;
@@ -449,7 +449,7 @@ async fn a_release_that_cannot_be_read_is_listed_for_itself_and_the_others_are_l
         "this is not a manifest",
     )?;
 
-    let (status, body) = get_path(&router, "/api/v1/shared/packages").await?;
+    let (status, body) = get_path(&router, "/api/v1/server/packages").await?;
 
     assert_eq!(status, StatusCode::OK);
     let json = json_of(&body)?;
@@ -503,7 +503,7 @@ async fn deleting_a_release_a_saved_job_names_returns_409_in_use_naming_the_job_
     post_bundle(&router, &build_dependent("acme", "1.0.0", &[])?).await?;
     save_job(root.path(), "1.0.0")?;
 
-    let (status, body) = delete_with_body(&router, "/api/v1/shared/packages/acme/versions/1.0.0").await?;
+    let (status, body) = delete_with_body(&router, "/api/v1/server/packages/acme/versions/1.0.0").await?;
 
     assert_eq!(status, StatusCode::CONFLICT);
     let json = json_of(&body)?;
@@ -535,7 +535,7 @@ async fn the_forced_removal_removes_it_and_names_what_was_overridden_and_the_job
 
     let (status, body) = put_json(
         &router,
-        "/api/v1/shared/packages/acme/versions/1.0.0/execute/remove",
+        "/api/v1/server/packages/acme/versions/1.0.0/execute/remove",
         r#"{"force":true}"#,
     )
     .await?;
@@ -565,13 +565,13 @@ async fn the_remove_command_without_force_is_the_guarded_removal() -> Result<(),
 
     let (empty, _) = put_json(
         &router,
-        "/api/v1/shared/packages/acme/versions/1.0.0/execute/remove",
+        "/api/v1/server/packages/acme/versions/1.0.0/execute/remove",
         "",
     )
     .await?;
     let (explicit, _) = put_json(
         &router,
-        "/api/v1/shared/packages/acme/versions/1.0.0/execute/remove",
+        "/api/v1/server/packages/acme/versions/1.0.0/execute/remove",
         r#"{"force":false}"#,
     )
     .await?;
@@ -586,7 +586,7 @@ async fn a_remove_body_with_an_unknown_or_malformed_field_is_a_400_and_removes_n
     let root = tempfile::tempdir()?;
     let router = router(root.path());
     post_bundle(&router, &build_bundle("acme", "1.0.0")?).await?;
-    let path = "/api/v1/shared/packages/acme/versions/1.0.0/execute/remove";
+    let path = "/api/v1/server/packages/acme/versions/1.0.0/execute/remove";
 
     for body in [r#"{"force":"yes"}"#, r#"{"hard":true}"#, "not json"] {
         let (status, answer) = put_json(&router, path, body).await?;
@@ -606,8 +606,8 @@ async fn deleting_a_release_no_rule_keeps_is_204_and_a_query_string_is_a_400_wit
     post_bundle(&router, &build_bundle("acme", "1.0.0")?).await?;
 
     let (forced_by_query, body) =
-        delete_with_body(&router, "/api/v1/shared/packages/acme/versions/1.0.0?force=true").await?;
-    let (removed, empty) = delete_with_body(&router, "/api/v1/shared/packages/acme/versions/1.0.0").await?;
+        delete_with_body(&router, "/api/v1/server/packages/acme/versions/1.0.0?force=true").await?;
+    let (removed, empty) = delete_with_body(&router, "/api/v1/server/packages/acme/versions/1.0.0").await?;
 
     assert_eq!(forced_by_query, StatusCode::BAD_REQUEST);
     assert_eq!(json_of(&body)?["error"]["code"], "packages/invalid-query");
@@ -622,9 +622,9 @@ async fn deleting_a_release_that_is_not_there_is_404_and_a_ledger_that_cannot_be
     let router = router(root.path());
     post_bundle(&router, &build_bundle("acme", "1.0.0")?).await?;
 
-    let (missing, body) = delete_with_body(&router, "/api/v1/shared/packages/acme/versions/9.0.0").await?;
+    let (missing, body) = delete_with_body(&router, "/api/v1/server/packages/acme/versions/9.0.0").await?;
     std::fs::write(root.path().join("ledger.toml"), "this is not a ledger")?;
-    let (unreadable, answer) = delete_with_body(&router, "/api/v1/shared/packages/acme/versions/1.0.0").await?;
+    let (unreadable, answer) = delete_with_body(&router, "/api/v1/server/packages/acme/versions/1.0.0").await?;
 
     assert_eq!(missing, StatusCode::NOT_FOUND);
     assert_eq!(json_of(&body)?["error"]["code"], "packages/not-found");
@@ -645,7 +645,7 @@ async fn a_state_file_that_cannot_be_read_is_a_500_with_its_own_code_and_no_path
         "this is = not [valid",
     )?;
 
-    let (listed, body) = get_path(&router, "/api/v1/shared/packages").await?;
+    let (listed, body) = get_path(&router, "/api/v1/server/packages").await?;
 
     assert_eq!(listed, StatusCode::INTERNAL_SERVER_ERROR);
     let json = json_of(&body)?;
@@ -775,7 +775,7 @@ async fn deleting_a_future_release_that_alone_kept_a_library_release_answers_200
     )?;
     let router = router(root.path());
 
-    let (status, body) = delete_with_body(&router, "/api/v1/shared/packages/crm/versions/1.2.0").await?;
+    let (status, body) = delete_with_body(&router, "/api/v1/server/packages/crm/versions/1.2.0").await?;
 
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let json = json_of(&body)?;
@@ -794,10 +794,10 @@ async fn a_delete_while_another_operation_holds_the_store_is_409_store_locked() 
     let store = crate::host_store::HostStore::new(root.path());
     let held = store.lock()?;
 
-    let (status, body) = delete_with_body(&router, "/api/v1/shared/packages/acme/versions/1.0.0").await?;
+    let (status, body) = delete_with_body(&router, "/api/v1/server/packages/acme/versions/1.0.0").await?;
     let (forced, answer) = put_json(
         &router,
-        "/api/v1/shared/packages/acme/versions/1.0.0/execute/remove",
+        "/api/v1/server/packages/acme/versions/1.0.0/execute/remove",
         r#"{"force":true}"#,
     )
     .await?;

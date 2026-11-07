@@ -1,6 +1,6 @@
 //! Automatic `OAuth2` endpoint detection for an HTTP `[[mcp_server]]` entry: a
 //! tokenless probe against the server, then RFC 9728 Protected Resource Metadata and RFC
-//! 8414/OIDC Authorization Server Metadata discovery, so `/settings/`'s "Detect" action can
+//! 8414/OIDC Authorization Server Metadata discovery, so `/server/settings/`'s "Detect" action can
 //! pre-fill `authorization_endpoint`/`token_endpoint`/`scopes` instead of always requiring an
 //! operator to find and type them by hand.
 //!
@@ -35,7 +35,7 @@ pub(crate) struct DiscoveredOauthFields {
 
 /// Every way [`discover`] can end without a usable result, each with an operator-facing message:
 /// distinguishing "no auth needed" and "found it" from every one of these is exactly what lets
-/// `/settings/` degrade to today's manual-entry behaviour rather than showing a misleading or stuck
+/// `/server/settings/` degrade to today's manual-entry behaviour rather than showing a misleading or stuck
 /// result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub(crate) enum DiscoveryFailure {

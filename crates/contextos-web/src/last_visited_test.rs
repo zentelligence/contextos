@@ -166,5 +166,5 @@ fn a_percent_encoded_segment_is_decoded_in_the_classified_visit() -> Result<(), 
 #[test]
 fn an_unrelated_path_does_not_classify_as_a_visit() {
     assert!(classify("/myvault/tasks/").is_none());
-    assert!(classify("/settings/").is_none());
+    assert!(classify("/server/settings/").is_none());
 }

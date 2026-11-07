@@ -1,13 +1,13 @@
-//! On-disk credential store for `/settings/`.
+//! On-disk credential store for `/server/settings/`.
 //!
-//! Every secret `/settings/` will ever accept or produce — a pasted bearer token, an `OAuth2` client secret, or an
+//! Every secret `/server/settings/` will ever accept or produce — a pasted bearer token, an `OAuth2` client secret, or an
 //! `OAuth2` access/refresh token pair — is written here, one JSON file per `credential_ref`, and never into
 //! `web.toml` itself, for the two entry paths an environment variable does not cover: a non-technical operator has no environment variable to point at, and an
 //! `OAuth2` token is a value `contextos-web` itself produces).
 //!
 //! This module is a pure storage boundary: it has no injected clock and never reads system time itself, so every
 //! timestamp field is a plain `String` (RFC 3339) supplied by the caller. Nothing in this crate calls it yet; a
-//! later increment wires `OAuth2` routes and `/settings/` validation against it.
+//! later increment wires `OAuth2` routes and `/server/settings/` validation against it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,7 +32,7 @@ pub(crate) fn credentials_directory(web_config_path: &Path) -> PathBuf {
 }
 
 /// Whether `credential_ref` can name a record: not empty, with no `/` or `\\` separator and no `..` segment, so it
-/// always names one file directly inside the store. Checked before any filesystem operation, and by `/settings/`
+/// always names one file directly inside the store. Checked before any filesystem operation, and by `/server/settings/`
 /// before it saves a reference a pasted secret would be stored under.
 #[must_use]
 pub(crate) fn can_hold(credential_ref: &str) -> bool {
@@ -48,9 +48,9 @@ pub(crate) fn can_hold(credential_ref: &str) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CredentialRecord {
-    /// A pasted bearer token (`/settings/`'s `PATCH`/`POST` on a `bearer`-mode entry).
+    /// A pasted bearer token (`/server/settings/`'s `PATCH`/`POST` on a `bearer`-mode entry).
     Bearer { value: String, updated_at: String },
-    /// An `OAuth2` client secret (`/settings/`'s `PATCH`/`POST` on an `oauth2`-mode entry).
+    /// An `OAuth2` client secret (`/server/settings/`'s `PATCH`/`POST` on an `oauth2`-mode entry).
     Oauth2ClientSecret { value: String, updated_at: String },
     /// An `OAuth2` access/refresh token pair (the callback route and the refresh path). `refresh_token` is `None`
     /// when the provider never issued one.
@@ -62,7 +62,7 @@ pub enum CredentialRecord {
     },
 }
 
-/// A small capability trait over the credential store, so a later increment's `OAuth2` routes and `/settings/`
+/// A small capability trait over the credential store, so a later increment's `OAuth2` routes and `/server/settings/`
 /// validation depend on this trait rather than the concrete filesystem implementation.
 ///
 /// # Windows scope boundary

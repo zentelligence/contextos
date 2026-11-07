@@ -27,7 +27,7 @@
               type="button"
               class="appearance-option{% if option.selected %} selected{% endif %}"
               aria-pressed="{{ option.selected }}"
-              hx-patch="/settings/"
+              hx-patch="/server/settings/"
               hx-target=".settings"
               hx-swap="outerHTML"
               hx-vals='{"target":"ui","patch":{"theme":"{{ option.value }}"}}'
@@ -47,7 +47,7 @@
               type="button"
               class="appearance-option{% if option.selected %} selected{% endif %}"
               aria-pressed="{{ option.selected }}"
-              hx-patch="/settings/"
+              hx-patch="/server/settings/"
               hx-target=".settings"
               hx-swap="outerHTML"
               hx-vals='{"target":"ui","patch":{"size":"{{ option.value }}"}}'
@@ -66,7 +66,7 @@
               type="button"
               class="appearance-option{% if option.selected %} selected{% endif %}"
               aria-pressed="{{ option.selected }}"
-              hx-patch="/settings/"
+              hx-patch="/server/settings/"
               hx-target=".settings"
               hx-swap="outerHTML"
               hx-vals='{"target":"ui","patch":{"font":"{{ option.value }}"}}'
@@ -79,7 +79,7 @@
 
         <form
           class="field-row"
-          hx-patch="/settings/"
+          hx-patch="/server/settings/"
           hx-target=".settings"
           hx-swap="outerHTML"
           hx-vals="js:{target:'ui', patch:{system_name: document.getElementById('system-name-input').value}}"
@@ -92,7 +92,7 @@
           <summary>Advanced</summary>
           <p class="hint">Every other <code>[server.ui]</code> key (<code>logo</code> for the header logo's filename under <code>static_dir</code>, and any other unenumerated rendering-side preference); edit an existing key below or add a new one.</p>
           <form
-            hx-patch="/settings/"
+            hx-patch="/server/settings/"
             hx-target=".settings"
             hx-swap="outerHTML"
             hx-vals="js:{target:'ui', patch:(function(){var out={};document.querySelectorAll('#appearance-fields input[data-ui-key]').forEach(function(i){out[i.dataset.uiKey]=i.value;});var k=(document.getElementById('ui-new-key').value||'').trim();var v=document.getElementById('ui-new-value').value||'';if(k)out[k]=v;return out;})()}"
@@ -131,7 +131,7 @@
               <button
                 type="button"
                 class="mcp-server-delete btn small"
-                hx-delete="/settings/mcp-servers/{{ server.name_encoded }}"
+                hx-delete="/server/settings/mcp-servers/{{ server.name_encoded }}"
                 hx-target=".settings"
                 hx-swap="outerHTML"
                 hx-confirm="Remove MCP server &quot;{{ server.name }}&quot;? Any registered app whose manifest still names it will be refused."
@@ -182,7 +182,7 @@
                     <button
                       type="button"
                       class="btn small"
-                      hx-post="/settings/oauth/{{ server.name_encoded }}/detect"
+                      hx-post="/server/settings/oauth/{{ server.name_encoded }}/detect"
                       hx-target=".settings"
                       hx-swap="outerHTML"
                       hx-vals="js:{endpoint: document.getElementById('mcp-server-edit-{{ loop.index0 }}').querySelector('[data-field=endpoint]').value}"
@@ -213,11 +213,11 @@
                   <div class="mcp-server-oauth-status">
 {% if server.auth.oauth_connected %}
                     <span class="hint">Connected{% if !server.auth.oauth_expires_at.is_empty() %} (expires {{ server.auth.oauth_expires_at }}){% endif %}</span>
-                    <button type="button" class="btn small" hx-post="/settings/oauth/{{ server.name_encoded }}/connect">Sign in again</button>
-                    <button type="button" class="btn small" hx-delete="/settings/oauth/{{ server.name_encoded }}/connect" hx-target=".settings" hx-swap="outerHTML">Disconnect</button>
+                    <button type="button" class="btn small" hx-post="/server/settings/oauth/{{ server.name_encoded }}/connect">Sign in again</button>
+                    <button type="button" class="btn small" hx-delete="/server/settings/oauth/{{ server.name_encoded }}/connect" hx-target=".settings" hx-swap="outerHTML">Disconnect</button>
 {% else %}
                     <span class="hint">Not connected</span>
-                    <button type="button" class="btn small" hx-post="/settings/oauth/{{ server.name_encoded }}/connect">Connect</button>
+                    <button type="button" class="btn small" hx-post="/server/settings/oauth/{{ server.name_encoded }}/connect">Connect</button>
 {% endif %}
                   </div>
                 </fieldset>
@@ -244,7 +244,7 @@
               <button
                 type="submit"
                 class="btn primary small mcp-server-save"
-                hx-patch="/settings/"
+                hx-patch="/server/settings/"
                 hx-target=".settings"
                 hx-swap="outerHTML"
 {% if server.transport == "stdio" %}
@@ -292,7 +292,7 @@ return p;
         <form
           class="mcp-server-add"
           id="mcp-server-add-stdio"
-          hx-post="/settings/"
+          hx-post="/server/settings/"
           hx-target=".settings"
           hx-swap="outerHTML"
           hx-vals="js:{args: (document.getElementById('mcp-server-add-args').value || '').split(/\s+/).filter(Boolean)}"
@@ -309,7 +309,7 @@ return p;
           class="mcp-server-add"
           id="mcp-server-add-http"
           hidden
-          hx-post="/settings/"
+          hx-post="/server/settings/"
           hx-target=".settings"
           hx-swap="outerHTML"
           hx-vals="js:{auth: (function(form){

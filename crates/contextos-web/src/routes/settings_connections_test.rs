@@ -19,7 +19,7 @@ fn a_connected_server_shows_its_tool_count_and_offers_reconnect() -> Result<(), 
     assert!(html.contains("conn-dot conn-ok"), "{html}");
     assert!(html.contains("Connected, 46 tools"), "{html}");
     assert!(
-        html.contains(r#"hx-post="/settings/mcp-servers/my%20server/reconnect""#),
+        html.contains(r#"hx-post="/server/settings/mcp-servers/my%20server/reconnect""#),
         "{html}"
     );
     assert!(!html.contains("hx-trigger"), "a settled panel does not poll: {html}");
@@ -32,7 +32,7 @@ fn a_connecting_server_polls_its_panel_and_offers_no_reconnect_meanwhile() -> Re
 
     assert!(html.contains("conn-dot conn-pending"), "{html}");
     assert!(
-        html.contains(r#"hx-get="/settings/mcp-servers/my%20server/connection""#),
+        html.contains(r#"hx-get="/server/settings/mcp-servers/my%20server/connection""#),
         "{html}"
     );
     assert!(html.contains(r#"hx-trigger="load delay:1s""#), "{html}");
@@ -77,7 +77,7 @@ fn an_oauth2_server_needing_a_login_offers_sign_in() -> Result<(), askama::Error
     assert!(html.contains("conn-dot conn-attention"), "{html}");
     assert!(html.contains("Login required"), "{html}");
     assert!(
-        html.contains(r#"hx-post="/settings/oauth/my%20server/connect">Sign in<"#),
+        html.contains(r#"hx-post="/server/settings/oauth/my%20server/connect">Sign in<"#),
         "{html}"
     );
     Ok(())
@@ -126,7 +126,7 @@ fn the_reconnect_button_replaces_its_own_panel_whatever_the_server_is_called() -
 
     assert!(html.contains(r#"hx-target="closest .mcp-server-connection""#), "{html}");
     assert!(
-        html.contains(r#"hx-post="/settings/mcp-servers/docs.local%2Fa%20b/reconnect""#),
+        html.contains(r#"hx-post="/server/settings/mcp-servers/docs.local%2Fa%20b/reconnect""#),
         "{html}"
     );
     Ok(())

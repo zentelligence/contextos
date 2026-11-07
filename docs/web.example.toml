@@ -71,7 +71,7 @@ args = ["--config", "/absolute/path/to/config.toml"]
 # [mcp_server.auth]
 # mode = "bearer"
 # token_env = "CONTEXTOS_MCP_TOKEN"
-# Or, instead of token_env, a token pasted on /settings/ and kept in the
+# Or, instead of token_env, a token pasted on /server/settings/ and kept in the
 # credentials/ folder beside this file, never here:
 # credential_ref = "contextos-remote-token"
 #

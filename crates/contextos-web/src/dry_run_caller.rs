@@ -61,7 +61,7 @@ impl DryRunMcpCaller {
         if !cache.contains_key(server) {
             let Some(client) = self.clients.get(server) else {
                 let message = if self.clients.is_configured(server) {
-                    "MCP server is not connected; /settings/ shows why and connects it again"
+                    "MCP server is not connected; /server/settings/ shows why and connects it again"
                 } else {
                     "MCP server is not configured"
                 };

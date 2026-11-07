@@ -2,7 +2,7 @@
 //! `log_max_size_mb`, `log_rotate_daily`, `log_retention_days`,
 //! `log_retention_files`) into `contextos-logging`'s rotating file
 //! destination for `tracing`, closing the gap where `log_file` was accepted
-//! and displayed on `/settings/` but never used: every log line went to
+//! and displayed on `/server/settings/` but never used: every log line went to
 //! stderr regardless of its value.
 //!
 //! The rotation/retention mechanism itself ([`RotatingLog`],

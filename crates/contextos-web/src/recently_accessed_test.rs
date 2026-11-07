@@ -75,7 +75,7 @@ fn static_shell_and_mcp_paths_are_not_trackable() {
 #[test]
 fn an_ordinary_vault_page_is_trackable() {
     assert!(is_trackable_path("/myvault/tasks/"));
-    assert!(is_trackable_path("/settings/"));
+    assert!(is_trackable_path("/server/settings/"));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn a_bare_vault_root_is_labelled_dashboard() {
 
 #[test]
 fn the_vault_independent_settings_page_is_labelled_settings() {
-    assert_eq!(label_for_path("/settings/"), "Settings");
+    assert_eq!(label_for_path("/server/settings/"), "Settings");
 }
 
 #[test]

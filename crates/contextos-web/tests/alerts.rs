@@ -138,6 +138,8 @@ async fn the_bell_counts_the_alerts_and_opens_their_list() -> Result<(), BoxErro
     let (status, summary) = fragment(&router, &format!("/{VAULT_NAME}/alerts/summary")).await?;
     assert_eq!(status, StatusCode::OK, "{summary}");
     assert!(summary.contains(">4<"), "{summary}");
+    // The badge is replaced in place, inside a panel with a target of its own that it must not inherit on a later refresh.
+    assert!(summary.contains("hx-target=\"this\""), "{summary}");
     Ok(())
 }
 

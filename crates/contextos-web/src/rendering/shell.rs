@@ -6,7 +6,9 @@
 //! One live MCP call per full page: `vault_info`, feeding the vault
 //! switcher's own list and per-vault entity accents.
 
-use super::page::{BreadcrumbSegment, NavData, NavEntityOption, NavVault, PageTitle, SidebarGroup, SidebarLink};
+use super::page::{
+    BreadcrumbSegment, HostView, NavData, NavEntityOption, NavVault, PageTitle, SidebarGroup, SidebarLink,
+};
 use crate::entities;
 use crate::mcp_client::{McpCallError, McpClient, McpClientSet};
 use crate::nav_counts::{self, NavCounts};
@@ -90,7 +92,7 @@ pub(crate) fn breadcrumb_segments(vault_name: &str, path: &str) -> Vec<Breadcrum
     segments
 }
 
-/// The vault-independent breadcrumb (`/settings/`): a single unlinked
+/// The vault-independent breadcrumb (`/server/settings/`): a single unlinked
 /// `"settings"` segment, matching every other page's own final,
 /// current-location segment carrying no link.
 fn settings_breadcrumb() -> Vec<BreadcrumbSegment> {
@@ -269,7 +271,7 @@ fn is_under_knowledge(current_path: Option<&str>, entities: &[NavEntityOption]) 
 }
 
 /// Builds every [`SidebarGroup`] the sidebar renders for a vault-scoped
-/// page: `None` for a vault-independent page (`/settings/`), which shows
+/// page: `None` for a vault-independent page (`/server/settings/`), which shows
 /// no groups at all, matching [`NavData::entities`]'s identical "hidden
 /// on a vault-independent page" convention.
 fn sidebar_groups(
@@ -499,7 +501,7 @@ fn events_stream_href(vault_name: &str, current_entity: Option<&str>) -> String 
 
 /// Assembles [`NavData`] for one page render.
 ///
-/// `vault_name` is `None` for a vault-independent page (`/settings/`).
+/// `vault_name` is `None` for a vault-independent page (`/server/settings/`).
 /// `breadcrumb_suffix` is the caller-formatted path segment(s) shown after
 /// the vault name in the breadcrumb (a file's own full path, or a fixed
 /// label like `"apps"`), and doubles as the current path
@@ -567,11 +569,12 @@ pub async fn build_nav(
     } else {
         (None, None)
     };
+    sidebar_groups.push(server_group(None));
     // The header's "New note" and "Profile" controls target the vault a
     // reader would land in from a vault-independent page too (the same
     // `nav_target_vault` the header's own wordmark link already falls back
     // to), so they stay reachable rather than merely disabled from
-    // `/settings/`.
+    // `/server/settings/`.
     let nav_target_urls = nav_target_vault.as_deref().map(VaultUrls::from);
     let nav_target_vault_notes = nav_target_urls.as_ref().map(|urls| urls.notes(""));
     let nav_target_vault_profile = nav_target_urls.as_ref().map(VaultUrls::profile);
@@ -598,6 +601,7 @@ pub async fn build_nav(
         // (it is an MCP-only assembler, `shell.rs`'s own module doc).
         appearance: super::page::Appearance::default(),
         sidebar_groups,
+        host_view: None,
         // Every caller overwrites this with the toggle cookie's own value
         // immediately after, the same "assembled here, finished by the
         // caller" pattern `appearance` already follows: `build_nav` reads
@@ -616,9 +620,117 @@ pub async fn build_nav(
     }
 }
 
+/// A page with no vault in its address.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HostScreen {
+    Workflows,
+    Libraries,
+    Settings,
+}
+
+impl HostScreen {
+    fn view(self, vault: Option<&str>) -> HostView {
+        let (icon, label) = match self {
+            Self::Workflows | Self::Libraries => ("jobs", "Shared View"),
+            Self::Settings => ("settings", "Server Settings"),
+        };
+        HostView {
+            icon,
+            label,
+            detail: vault.map(|vault| format!("Vault Menu: {vault}")),
+        }
+    }
+}
+
+/// The sidebar's Shared group, on every page: what the server holds for all its vaults. `screen` marks the current one.
+pub(crate) fn server_group(screen: Option<HostScreen>) -> SidebarGroup {
+    let link = |label: &str, href: &str, icon: &'static str, shows: HostScreen| SidebarLink {
+        attention: None,
+        label: label.to_owned(),
+        href: href.to_owned(),
+        icon,
+        active: screen == Some(shows),
+        meta: None,
+        target: None,
+    };
+    SidebarGroup {
+        label: Some("Shared"),
+        heading_href: Some(crate::urls::SERVER_WORKFLOWS.to_owned()),
+        icon: "globe",
+        active: matches!(screen, Some(HostScreen::Workflows | HostScreen::Libraries)),
+        links: vec![
+            link(
+                "Workflows",
+                crate::urls::SERVER_WORKFLOWS,
+                "jobs",
+                HostScreen::Workflows,
+            ),
+            link(
+                "Libraries",
+                crate::urls::SERVER_PACKAGES,
+                "library",
+                HostScreen::Libraries,
+            ),
+        ],
+    }
+}
+
+/// [`build_nav`] for a page with no vault in its address. Someone reaches it from a vault and goes back to one, so it has
+/// that vault's sidebar: `active_vault` when that is still configured, otherwise the first vault the header would lead to.
+/// The page itself stays out of every vault, and says so through [`NavData::host_view`].
+pub(crate) async fn build_host_nav(
+    client: &McpClient,
+    screen: HostScreen,
+    active_vault: Option<&str>,
+    known_mcp_servers: &[String],
+) -> NavData {
+    let active = match screen {
+        HostScreen::Workflows | HostScreen::Libraries => ActiveScreen::Jobs,
+        HostScreen::Settings => ActiveScreen::Settings,
+    };
+    let mut nav = Box::pin(build_nav(client, active, None, None, None, None, known_mcp_servers)).await;
+    let configured = active_vault.filter(|vault| nav.vaults.iter().any(|entry| entry.name == *vault));
+    let target = configured.map(str::to_owned).or_else(|| nav.nav_target_vault.clone());
+    if let Some(vault) = target.as_deref() {
+        // `Settings` marks no sidebar entry as current, which is right: none of them is this page.
+        let vault_nav = Box::pin(build_nav(
+            client,
+            ActiveScreen::Settings,
+            Some(vault),
+            None,
+            None,
+            None,
+            known_mcp_servers,
+        ))
+        .await;
+        nav.sidebar_groups = vault_nav.sidebar_groups;
+        nav.note_href = vault_nav.note_href;
+        nav.profile_href = vault_nav.profile_href;
+        nav.vault_settings_href = vault_nav.vault_settings_href;
+        nav.nav_target_vault = target.clone();
+    }
+    if let Some(server) = nav.sidebar_groups.last_mut() {
+        *server = server_group(Some(screen));
+    }
+    nav.host_view = Some(screen.view(target.as_deref()));
+    nav
+}
+
 #[cfg(test)]
 #[path = "shell_test.rs"]
 mod tests;
+
+/// The configured vaults' names, or none when the server cannot say. A warning, because a page that wants them still
+/// shows without them.
+pub(crate) async fn vault_names(client: &McpClient) -> Vec<String> {
+    match fetch_vault_info(client).await {
+        Ok(info) => info.vaults.into_iter().map(|vault| vault.name).collect(),
+        Err(error) => {
+            tracing::warn!(%error, "the configured vaults could not be read");
+            Vec::new()
+        }
+    }
+}
 
 /// The main content panel's title bar for `view`: its icon and name, and the star that un/favourites it, showing the
 /// vault's stored state.

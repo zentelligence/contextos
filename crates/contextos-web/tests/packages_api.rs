@@ -1,4 +1,4 @@
-//! `/api/v1/{vault}/packages` and `/api/v1/shared/packages` through the real router over a real vault behind a real
+//! `/api/v1/{vault}/packages` and `/api/v1/server/packages` through the real router over a real vault behind a real
 //! `contextos` session and a real host store: the JSON each answers with, the guarded `DELETE`, the forced
 //! `PUT .../execute/remove`, and the status of each refusal.
 
@@ -190,7 +190,7 @@ async fn a_vault_the_server_does_not_serve_is_404_and_a_query_on_a_delete_is_400
 async fn the_host_store_is_reached_under_shared_by_the_same_router() -> Result<(), BoxError> {
     let site = site().await?;
 
-    let (status, body) = site.send("GET", "/api/v1/shared/packages", "").await?;
+    let (status, body) = site.send("GET", "/api/v1/server/packages", "").await?;
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["store"], "shared");

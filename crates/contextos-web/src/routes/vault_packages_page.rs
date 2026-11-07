@@ -22,7 +22,7 @@ use crate::package_standing::StoreStanding;
 use crate::package_stores::VaultPackagesOf;
 use crate::rendering::page;
 use crate::routes::vault::{html_response, not_found, unreachable};
-use crate::routes::workflow_views::Link;
+use crate::routes::workflow_views::{Scope, ScopeTab};
 use crate::routes::workflows::{
     WorkflowRoutesState, WorkflowsQuery, ensure_vault, nav_with_appearance, registry_error_response,
 };
@@ -54,7 +54,8 @@ async fn world_of(
 #[derive(Template)]
 #[template(path = "vault_packages.html")]
 struct VaultPackagesPage {
-    back: Link,
+    /// The tabs to the vault's workflows and the shared workflows.
+    scope: Vec<ScopeTab>,
     libraries: LibrariesSection,
 }
 
@@ -100,10 +101,7 @@ pub async fn page(
         }
     };
     let Ok(fragment) = (VaultPackagesPage {
-        back: Link {
-            href: urls.workflows(),
-            label: "All workflows",
-        },
+        scope: Scope::VaultLibraries(&vault_name).tabs(&[]),
         libraries,
     })
     .render() else {
@@ -113,7 +111,7 @@ pub async fn page(
     if headers.contains_key("hx-request") {
         html_response(fragment)
     } else {
-        let nav = nav_with_appearance(
+        let mut nav = nav_with_appearance(
             &state,
             &client,
             &vault_name,
@@ -123,6 +121,10 @@ pub async fn page(
             crate::routes::sidebar_wide_from_headers(&headers),
         )
         .await;
+        nav.page_title = Some(crate::routes::shared_workflows::screen_title(
+            "Library Releases",
+            "library",
+        ));
         html_response(page::render_page(&nav, "Workflows", &fragment))
     }
 }

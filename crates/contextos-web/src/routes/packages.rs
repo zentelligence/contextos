@@ -1,4 +1,4 @@
-//! `/api/v1/shared/packages`: the host's package store as a JSON API
+//! `/api/v1/server/packages`: the host's package store as a JSON API
 //! (`docs/http-routing-response-contract.md`): install a bundle, list the store, inspect a release, and remove one.
 //! `DELETE .../{name}/versions/{version}` is the guarded removal, and `PUT .../execute/remove` with `force` in its body is
 //! the forced one. A vault's store has the same surface under `/api/v1/{vault}/packages`
@@ -34,7 +34,7 @@ use crate::saved_jobs::SavedJobs;
 use crate::shared_state::SharedStateStore;
 use crate::store_retention::RetentionWarning;
 
-/// Shared state every `/api/v1/shared/packages` handler needs: the package store's own paths, resolved once (see this
+/// Shared state every `/api/v1/server/packages` handler needs: the package store's own paths, resolved once (see this
 /// module's own doc).
 #[derive(Clone)]
 pub struct PackagesRoutesState {
@@ -354,13 +354,13 @@ impl From<Installed> for InstalledBody {
     }
 }
 
-/// `GET /api/v1/shared/packages`: the store, with its ledger, each release and what keeps it, what was removed, and what
+/// `GET /api/v1/server/packages`: the store, with its ledger, each release and what keeps it, what was removed, and what
 /// unfinished operations left. A release that cannot be read is listed for itself and does not stop the others.
 pub async fn shared_list(State(state): State<PackagesRoutesState>) -> Response {
     standing_response(state.packages().standing().await)
 }
 
-/// `POST /api/v1/shared/packages`: verifies and installs a package bundle
+/// `POST /api/v1/server/packages`: verifies and installs a package bundle
 /// submitted as a single multipart field's own raw bytes (a `.tar.gz`
 /// archive), matching `routes::inbox_outbox_upload`'s identical
 /// multipart-field pattern.
@@ -406,7 +406,7 @@ pub async fn create(State(state): State<PackagesRoutesState>, mut multipart: Mul
     match outcome {
         Ok(Ok(installed)) => {
             let location = format!(
-                "/api/v1/shared/packages/{}/versions/{}",
+                "/api/v1/server/packages/{}/versions/{}",
                 installed.identity.name, installed.identity.version
             );
             (
@@ -421,7 +421,7 @@ pub async fn create(State(state): State<PackagesRoutesState>, mut multipart: Mul
     }
 }
 
-/// `GET /api/v1/shared/packages/{name}/versions/{version}`: one release in full.
+/// `GET /api/v1/server/packages/{name}/versions/{version}`: one release in full.
 pub async fn shared_get(
     State(state): State<PackagesRoutesState>,
     Path((name, version)): Path<(String, String)>,
@@ -429,7 +429,7 @@ pub async fn shared_get(
     release_response(state.packages().release(&name, &version).await)
 }
 
-/// `DELETE /api/v1/shared/packages/{name}/versions/{version}`: the guarded removal. A release a rule keeps is refused with
+/// `DELETE /api/v1/server/packages/{name}/versions/{version}`: the guarded removal. A release a rule keeps is refused with
 /// `409` `packages/in-use`, naming the jobs and releases that hold it. A removal that finished cleanly is `204`; one with
 /// something it could not finish afterwards, or after which retention removed further releases, is `200` with the
 /// removal as a document.
@@ -444,7 +444,7 @@ pub async fn shared_delete(
     deleted_response(state.packages().remove(&name, &version, false).await)
 }
 
-/// `PUT /api/v1/shared/packages/{name}/versions/{version}/execute/remove`: the removal asked for as a command, with
+/// `PUT /api/v1/server/packages/{name}/versions/{version}/execute/remove`: the removal asked for as a command, with
 /// `{"force": true}` in the body to override the guard. The answer names what was overridden and the jobs the next
 /// validation pass will move.
 pub async fn shared_remove(

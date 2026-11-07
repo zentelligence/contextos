@@ -46,6 +46,14 @@ pub struct NavEntityOption {
     pub is_current: bool,
 }
 
+/// What a page with no vault in its address is showing, in place of the vault its sidebar belongs to.
+pub struct HostView {
+    pub icon: &'static str,
+    pub label: &'static str,
+    /// Which vault the sidebar's links open, or nothing when no vault is configured.
+    pub detail: Option<String>,
+}
+
 /// One destination in a [`SidebarGroup`]'s own link list (the shell's
 /// grouped sidebar navigation: General/Agents/Knowledge/Apps/Workflows
 /// sections). Every link here already resolves through a route that exists
@@ -141,13 +149,14 @@ pub struct BreadcrumbSegment {
 #[allow(clippy::struct_excessive_bools)]
 pub struct NavData {
     pub vaults: Vec<NavVault>,
-    /// `None` for a vault-independent page (`/settings/`); the vault
+    /// `None` for a vault-independent page (`/server/settings/`); the vault
     /// switcher still lists every configured vault.
     pub current_vault: Option<String>,
     /// The vault the header's own wordmark link targets when there is no
     /// current vault: `current_vault` itself when there is one, otherwise
-    /// the first configured vault, so a vault-independent page like
-    /// `/settings/` still offers a way back rather than degrading to inert
+    /// the active vault or, failing that, the first configured vault
+    /// ([`crate::rendering::shell::build_host_nav`]), so a vault-independent page like
+    /// `/server/settings/` still offers a way back rather than degrading to inert
     /// text merely because the current page has no vault of its own.
     /// `None` only when no vault is configured at all (or none could be
     /// listed), the one case that link has nothing to point at.
@@ -165,7 +174,7 @@ pub struct NavData {
     /// The current vault's own `--entity-N` accent (see [`NavEntityOption::accent`]
     /// for the six-hue wrapping rule), so the header's vault switcher can be
     /// tinted with it. `None` on a vault-independent
-    /// page (`/settings/`).
+    /// page (`/server/settings/`).
     pub current_vault_entity: Option<u8>,
     /// The current vault's configured entities (`.contextos/entities.toml`):
     /// empty when the vault has none configured, or there is no current
@@ -182,11 +191,11 @@ pub struct NavData {
     pub current_entity_accent: Option<u8>,
     /// The current page's own path, carrying no `?entity=` query parameter,
     /// so the entity switcher can compose each option's own href by
-    /// appending one; `None` on a vault-independent page (`/settings/`),
+    /// appending one; `None` on a vault-independent page (`/server/settings/`),
     /// where no entity switcher renders regardless of `entities`.
     pub entity_base_path: Option<String>,
     /// `web.toml`'s `[server.ui]` theme/font/size/`system_name` (the
-    /// `/settings/` Appearance pane): `theme`/`font`/`size` are applied as
+    /// `/server/settings/` Appearance pane): `theme`/`font`/`size` are applied as
     /// `<html data-theme="..." data-font="..." data-size="...">` so
     /// `contextos-web.css`'s corresponding attribute selectors take effect
     /// on the very next page render after a save; `system_name` is the
@@ -198,9 +207,11 @@ pub struct NavData {
     /// half-applied appearance.
     pub appearance: Appearance,
     /// The sidebar's grouped navigation sections (General, Agents,
-    /// Knowledge, Apps, Workflows), in render order; empty on a vault-
-    /// independent page, where the sidebar shows no groups at all.
+    /// Knowledge, Apps, Workflows), in render order. A vault-independent page has
+    /// the groups of [`Self::nav_target_vault`], and none when no vault is configured.
     pub sidebar_groups: Vec<SidebarGroup>,
+    /// What a page with no vault in its address is showing, since its sidebar is a vault's; `None` on a vault's own page.
+    pub host_view: Option<HostView>,
     /// Whether the sidebar renders in its wide (grouped, labelled) form or
     /// its narrow (icon-only) form, read from the toggle's own cookie by
     /// the route handler; `true` (wide) is the default a first-ever visit
@@ -219,7 +230,7 @@ pub struct NavData {
     pub profile_href: Option<String>,
     /// The header's "Vault Settings" control target: the current vault's
     /// own vault-scoped settings screen (`/{{vault_name}}/settings/`,
-    /// distinct from the vault-independent `/settings/`); `None` when
+    /// distinct from the vault-independent `/server/settings/`); `None` when
     /// there is no current vault, where the control renders disabled
     /// instead.
     pub vault_settings_href: Option<String>,
