@@ -108,7 +108,9 @@ impl From<IpAddr> for AddressClass {
 struct AddressPolicy {
     /// The local class a URL may reach besides public addresses, when the endpoint is on one.
     endpoint_class: Option<AddressClass>,
-    /// An `https` endpoint is never followed onto plain `http`.
+    /// The name in the endpoint's URL, when it has one.
+    endpoint_domain: Option<String>,
+    /// An `https` endpoint is not followed onto plain `http`, except on loopback, where nothing leaves the machine.
     https_only: bool,
 }
 
@@ -124,6 +126,7 @@ impl AddressPolicy {
         let local = !classes.contains(&AddressClass::Public);
         Self {
             endpoint_class: classes.first().copied().filter(|_class| local),
+            endpoint_domain: None,
             https_only,
         }
     }
@@ -146,9 +149,20 @@ impl AddressPolicy {
         }
     }
 
+    /// Whether a loopback endpoint names a `url` that is on loopback too: an address, `localhost` or a name under it, or
+    /// the endpoint's own name, which is held to its loopback addresses.
+    fn stays_on_loopback(&self, url: &Url) -> bool {
+        let local_name = url.domain().is_some_and(|domain| {
+            domain == "localhost" || domain.ends_with(".localhost") || Some(domain) == self.endpoint_domain.as_deref()
+        });
+        self.endpoint_class == Some(AddressClass::Loopback)
+            && (local_name || literal_address(url).is_some_and(|ip| AddressClass::from(ip) == AddressClass::Loopback))
+    }
+
     /// Whether `url`'s scheme is acceptable and, when its host is an address rather than a name, that address is.
     fn permits_url(&self, url: &Url) -> bool {
-        let scheme = url.scheme() == "https" || (url.scheme() == "http" && !self.https_only);
+        let scheme =
+            url.scheme() == "https" || (url.scheme() == "http" && (!self.https_only || self.stays_on_loopback(url)));
         scheme && (url.domain().is_some() || literal_address(url).is_some_and(|ip| self.permits_address(ip)))
     }
 }
@@ -227,7 +241,8 @@ impl OauthFetcher {
     async fn judged(endpoint: &str, lookup: Arc<dyn Resolve>, timeout: Duration) -> Option<Self> {
         let url = Url::parse(endpoint).ok()?;
         let addresses = addresses_of(&url, lookup.as_ref()).await;
-        let policy = AddressPolicy::for_addresses(&addresses, url.scheme() == "https");
+        let mut policy = AddressPolicy::for_addresses(&addresses, url.scheme() == "https");
+        policy.endpoint_domain = url.domain().map(str::to_owned);
         let pinned = match url.domain() {
             Some(domain) => {
                 let addrs = policy.pin(&addresses);
@@ -247,6 +262,7 @@ impl OauthFetcher {
     pub(crate) fn public_only() -> Result<Self, reqwest::Error> {
         let policy = AddressPolicy {
             endpoint_class: None,
+            endpoint_domain: None,
             https_only: false,
         };
         Self::with_policy(policy, Arc::new(SystemLookup), None, DISCOVERY_TIMEOUT)
@@ -304,10 +320,13 @@ impl OauthFetcher {
             return true;
         }
         let addresses = addresses_of(&parsed, self.lookup.as_ref()).await;
+        // A name allowed plain `http` for being on loopback has to lead there.
+        let loopback_only = self.policy.https_only && parsed.scheme() == "http";
         !addresses.is_empty()
-            && addresses
-                .into_iter()
-                .all(|address| self.policy.permits_address(address))
+            && addresses.into_iter().all(|address| {
+                self.policy.permits_address(address)
+                    && (!loopback_only || AddressClass::from(address) == AddressClass::Loopback)
+            })
     }
 
     /// `GET url`, collapsing a refused address, transport failure, non-2xx status, oversized body, or body `T` cannot

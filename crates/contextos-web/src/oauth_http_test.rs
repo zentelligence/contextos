@@ -68,6 +68,7 @@ fn an_ipv6_address_carrying_an_ipv4_one_is_classed_as_what_it_leads_to() -> Resu
 fn policy(endpoint_class: Option<AddressClass>, https_only: bool) -> AddressPolicy {
     AddressPolicy {
         endpoint_class,
+        endpoint_domain: None,
         https_only,
     }
 }
@@ -488,10 +489,87 @@ async fn a_loopback_endpoint_keeps_its_own_kind_of_address() -> Result<(), BoxEr
 
 #[tokio::test]
 async fn an_https_endpoint_is_not_followed_onto_plain_http() -> Result<(), BoxError> {
-    let fetcher = OauthFetcher::for_endpoint("https://127.0.0.1:9/mcp")
+    for (endpoint_address, other_address) in [("8.8.8.8", "8.8.4.4"), ("10.0.0.1", "10.0.0.2")] {
+        let lookup = StaticLookup::with(&[
+            ("mcp.example", &[endpoint_address][..]),
+            ("other.example", &[other_address][..]),
+        ]);
+        let fetcher = OauthFetcher::judged("https://mcp.example/mcp", lookup, DISCOVERY_TIMEOUT)
+            .await
+            .ok_or("no fetcher")?;
+        assert!(fetcher.permits("https://mcp.example/token").await, "{endpoint_address}");
+        assert!(
+            fetcher.permits("https://other.example/token").await,
+            "{endpoint_address}"
+        );
+        assert!(!fetcher.permits("http://mcp.example/token").await, "{endpoint_address}");
+        assert!(
+            !fetcher.permits("http://other.example/token").await,
+            "{endpoint_address}"
+        );
+    }
+    Ok(())
+}
+
+// Loopback traffic never leaves the machine, so plain `http` exposes nothing there, whatever the endpoint uses.
+#[tokio::test]
+async fn an_https_loopback_endpoint_may_use_plain_http_on_loopback() -> Result<(), BoxError> {
+    let lookup = StaticLookup::with(&[
+        ("dev.example", &["127.0.0.1"][..]),
+        ("localhost", &["127.0.0.1", "::1"][..]),
+        ("auth.localhost", &["127.0.0.1"][..]),
+    ]);
+    let fetcher = OauthFetcher::judged("https://dev.example:8443/mcp", lookup, DISCOVERY_TIMEOUT)
         .await
         .ok_or("no fetcher")?;
-    assert!(fetcher.permits("https://127.0.0.1:9/token").await);
-    assert!(!fetcher.permits("http://127.0.0.1:9/token").await);
+    for url in [
+        "http://127.0.0.1:9000/token",
+        "http://[::1]:9000/token",
+        "http://localhost:9000/token",
+        "http://auth.localhost:9000/token",
+        "http://dev.example:9000/token",
+    ] {
+        assert!(fetcher.permits(url).await, "{url}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn plain_http_stays_on_loopback_for_an_https_loopback_endpoint() -> Result<(), BoxError> {
+    let lookup = StaticLookup::with(&[("localhost", &["127.0.0.1"][..]), ("public.example", &["8.8.8.8"][..])]);
+    let fetcher = OauthFetcher::judged("https://localhost:8443/mcp", lookup, DISCOVERY_TIMEOUT)
+        .await
+        .ok_or("no fetcher")?;
+    assert!(fetcher.permits("https://public.example/token").await);
+    assert!(!fetcher.permits("http://public.example/token").await);
+    assert!(!fetcher.permits("http://8.8.8.8/token").await);
+    assert!(!fetcher.permits("http://notlocalhost/token").await);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_localhost_name_leading_off_the_machine_gets_no_plain_http() -> Result<(), BoxError> {
+    let lookup = StaticLookup::with(&[("dev.example", &["127.0.0.1"][..]), ("localhost", &["8.8.8.8"][..])]);
+    let fetcher = OauthFetcher::judged("https://dev.example/mcp", lookup, DISCOVERY_TIMEOUT)
+        .await
+        .ok_or("no fetcher")?;
+    assert!(!fetcher.permits("http://localhost/token").await);
+    Ok(())
+}
+
+// A public endpoint gets no such allowance, and cannot reach loopback over either scheme.
+#[tokio::test]
+async fn a_public_https_endpoint_gets_no_loopback_allowance() -> Result<(), BoxError> {
+    let lookup = StaticLookup::with(&[("mcp.example", &["8.8.8.8"][..]), ("localhost", &["127.0.0.1"][..])]);
+    let fetcher = OauthFetcher::judged("https://mcp.example/mcp", lookup, DISCOVERY_TIMEOUT)
+        .await
+        .ok_or("no fetcher")?;
+    for url in [
+        "http://127.0.0.1/token",
+        "http://localhost/token",
+        "https://localhost/token",
+    ] {
+        assert!(!fetcher.permits(url).await, "{url}");
+    }
     Ok(())
 }
