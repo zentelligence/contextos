@@ -63,10 +63,18 @@ impl From<&Subject<'_>> for Finding {
         } = value;
         let place = host.map_or_else(String::new, |host| format!(" for {host}"));
         let source = vault.map_or_else(String::new, |vault| format!(" from vault `{vault}`"));
+        // What an existing entry is compared with: the named vault's definition when the finding knows the vault.
+        let compared_with = |tense: &str| {
+            vault.map_or_else(
+                || "its source definition".to_owned(),
+                |vault| format!("what vault `{vault}` {tense}"),
+            )
+        };
         let message = match kind {
-            FindingKind::ProjectionStale => {
-                format!("The {definition} `{name}`{place} is missing or differs from what{source} now defines.")
-            }
+            FindingKind::ProjectionStale => format!(
+                "The {definition} `{name}`{place} is missing or differs from {}.",
+                compared_with("now defines")
+            ),
             FindingKind::ProjectionHandEdited => format!(
                 "The projected {definition} `{name}`{place} was edited outside ContextOS; reprojecting replaces the edit."
             ),
@@ -83,7 +91,8 @@ impl From<&Subject<'_>> for Finding {
                 vault.unwrap_or("?")
             ),
             FindingKind::ProjectionUnownedCollision => format!(
-                "A file or folder at the {definition} `{name}`{place} was not projected by ContextOS and differs from what{source} defines; move it or rename the definition."
+                "A file or folder at the {definition} `{name}`{place} was not projected by ContextOS and differs from {}; move it or rename the definition.",
+                compared_with("defines")
             ),
             FindingKind::ProjectionForeignOwner => {
                 let owner = owner.map_or_else(
@@ -266,3 +275,7 @@ impl From<&InstructionsSubject<'_>> for Finding {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "report_test.rs"]
+mod tests;
