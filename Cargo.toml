@@ -24,7 +24,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.23.9"
+version = "0.24.0"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Zentelligence Pty Ltd"]
@@ -129,7 +129,7 @@ rmcp-macros = "=3.9.0"
 # format and rebuilds `.contextos/vectors.db` through the index-rebuild
 # path. `rusqlite`'s `bundled` feature statically links SQLite on every
 # target so no system SQLite is required.
-rusqlite = { version = "=0.40.1", default-features = false, features = ["bundled"] }
+rusqlite = { version = "=0.42.0", default-features = false, features = ["bundled"] }
 # `contextos-logging` only: whether the file at the log path is still the file a writer holds open (device and inode on
 # Unix, volume serial number and file index on Windows), which std exposes only through unstable APIs on Windows and
 # only through `unsafe` calls anywhere a safe wrapper is absent. No features; already in the lock file transitively.

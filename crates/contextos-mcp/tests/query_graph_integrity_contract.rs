@@ -144,6 +144,42 @@ async fn a_configured_link_exclusion_list_replaces_the_default() -> TestResult {
 }
 
 #[tokio::test]
+async fn unresolved_leaves_out_links_whose_target_lies_in_a_folder_not_checked_as_link_targets() -> TestResult {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::create_dir_all(vault.path().join("journal"))?;
+    std::fs::write(vault.path().join("journal/day.md"), "[[inbox/gone]]\n[[kept/gone]]\n")?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].index_md.enabled = false;
+    config.vaults[0].links.ignore_targets = vec!["inbox".to_owned()];
+    let server = ContextOsServer::try_from(config)?;
+
+    let result = call_tool(server, json!({"operation": "unresolved"})).await?;
+
+    let body = content(&result)?;
+    let targets: Vec<_> = list(body, "links")?
+        .iter()
+        .filter_map(|link| link.get("target").and_then(Value::as_str))
+        .collect();
+    assert_eq!(targets, vec!["kept/gone"]);
+    assert_eq!(body.get("total"), Some(&json!(1)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_query_graph_description_names_both_link_settings() -> TestResult {
+    let catalogue = ContextOsServer::catalogue().list_all();
+    let description = catalogue
+        .iter()
+        .find(|tool| tool.name == "query_graph")
+        .and_then(|tool| tool.description.as_deref())
+        .ok_or("query_graph is not advertised")?;
+
+    assert!(description.contains("`[vault.links] exclude`"), "{description}");
+    assert!(description.contains("`[vault.links] ignore_targets`"), "{description}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn unresolved_pages_with_offset_and_limit_and_reports_the_total_of_the_whole() -> TestResult {
     let vault = broken_vault()?;
     let server = server_over(&vault)?;

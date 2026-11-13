@@ -93,6 +93,10 @@ pub struct QueryDefinition {
     pub formulas: Map<String, Value>,
 }
 
+/// The keys an inline definition accepts: one view's own keys, at the top level, plus the base-level `properties` and
+/// `formulas` its columns may name.
+pub(crate) const INLINE_KEYS: [&str; 6] = ["filters", "order", "sort", "limit", "properties", "formulas"];
+
 impl QueryDefinition {
     /// Resolves the named view (or the first view when `view` is `None`)
     /// from an already schema-validated [`BaseDocument`].
@@ -159,10 +163,20 @@ impl QueryDefinition {
     ///
     /// # Errors
     ///
-    /// Returns [`BaseQueryError::MalformedDefinition`] for a structurally
-    /// invalid `order`, `sort`, or `limit`, or [`BaseQueryError::NoColumns`]
-    /// when neither `order` nor `properties` yield a display column set.
+    /// Returns [`BaseQueryError::InlineViews`] for a definition holding
+    /// `views` (the shape of a `.base` file), [`BaseQueryError::UnknownInlineKey`]
+    /// for any other key outside the one-view shape, since an ignored key would
+    /// leave the caller believing it took effect,
+    /// [`BaseQueryError::MalformedDefinition`] for a structurally invalid
+    /// `order`, `sort`, or `limit`, or [`BaseQueryError::NoColumns`] when
+    /// neither `order` nor `properties` yield a display column set.
     pub fn from_inline(definition: &Map<String, Value>) -> Result<Self, BaseQueryError> {
+        if definition.contains_key("views") {
+            return Err(BaseQueryError::InlineViews);
+        }
+        if let Some(key) = definition.keys().find(|key| !INLINE_KEYS.contains(&key.as_str())) {
+            return Err(BaseQueryError::UnknownInlineKey { key: key.clone() });
+        }
         let filters = definition.get("filters").cloned();
         let order = string_array(definition.get("order"), "order")?;
         let sort = parse_sort(definition.get("sort"))?;

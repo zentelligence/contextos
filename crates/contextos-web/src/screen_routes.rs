@@ -202,8 +202,7 @@ pub async fn task_ids_by_path(client: &McpClient, vault_name: &str) -> HashMap<S
         "definition".to_owned(),
         serde_json::json!({
             "filters": format!("file.inFolder(\"{TASKS_DIR}\")"),
-            "properties": { "file.path": {}, "id": {} },
-            "views": [{ "type": "table", "name": "rows", "order": ["file.path", "id"] }],
+            "order": ["file.path", "id"],
         }),
     );
     let Ok(result) = client.call_tool("base_query".to_owned(), args).await else {

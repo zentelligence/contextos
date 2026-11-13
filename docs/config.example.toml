@@ -171,7 +171,7 @@ exclude = [
 # Default budget, in seconds, for query_index_rebuild's semantic phase when a
 # call omits budget_seconds. A per-call budget_seconds always overrides this.
 # Some agents (Claude Cowork, for example) may impose a lower ceiling on the budget
-# may restart the MCP process if the rebuild exceeds that ceiling. 
+# may restart the MCP process if the rebuild exceeds that ceiling.
 rebuild_budget_seconds = 25
 
 [vault.search.embedding]
@@ -194,6 +194,18 @@ api_key_env = ""
 # any other application using the same cache) reuses one on-disk copy of
 # the model instead of downloading it again.
 model_directory = "/home/you/.fastembed_cache"
+
+[vault.links]
+# Folders whose notes are not checked as link sources by doctor's
+# link_integrity check and query_graph's unresolved and unlinked operations.
+# Replaces the default list, so the defaults are repeated here;
+# [vault.search].exclude is always added. Links into these folders are
+# still checked.
+exclude = ["templates", "memory/events", "memory/jobs", ".contextos"]
+# Folders whose files are not checked as link targets by link_integrity and
+# unresolved: a link into one, broken or not, is left out and counted apart.
+# For folders whose contents come and go. Empty by default, nothing added.
+ignore_targets = ["inbox", "outbox"]
 
 # Optional second vault example: openai-compatible embeddings.
 [[vault]]

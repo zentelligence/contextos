@@ -120,8 +120,13 @@ async fn sigint_and_sigterm_cancel_a_vault_one_off_run_and_exit_130() -> Result<
 async fn a_second_signal_exits_130_at_once_with_no_summary_and_leaves_the_record_running() -> Result<(), BoxError> {
     let host = RunHost::new()?;
     let command = jobs_run(false, "spin", &["--format", "json"]);
-    let child = started_run(&host, &command, false, "spin").await?;
+    let mut child = started_run(&host, &command, false, "spin").await?;
     let pid = child.id().ok_or("the run has no process id")?;
+    // The servers inherit the run's standard error, so they hold that pipe open after the run exits. The pipes are read
+    // apart from the exit, which is the only thing this test times: end of file depends on how long the stopped servers
+    // live, which is not the run's doing (whether the kernel ends them depends on what reparents them).
+    let stdout_reader = read_to_end(child.stdout.take().ok_or("the run has no standard output")?);
+    let stderr_reader = read_to_end(child.stderr.take().ok_or("the run has no standard error")?);
     // Stopping the server the run talks to means the run cannot finish its record after the first signal, so the second
     // signal arrives while the run is still ending.
     let servers = children_of(pid);
@@ -133,11 +138,17 @@ async fn a_second_signal_exits_130_at_once_with_no_summary_and_leaves_the_record
     signal("INT", pid)?;
     signal("TERM", pid)?;
 
-    let result = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output()).await;
+    let exited = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await;
+    // Ending the servers closes their copies of the pipes, so both readers reach end of file.
     for server in &servers {
         let _ = signal("KILL", *server);
     }
-    let output = result.map_err(|_| "the run did not exit on its second signal")??;
+    let status = exited.map_err(|_| "the run did not exit on its second signal")??;
+    let output = std::process::Output {
+        status,
+        stdout: stdout_reader.await??,
+        stderr: stderr_reader.await??,
+    };
 
     assert_eq!(
         output.status.code(),
@@ -153,6 +164,18 @@ async fn a_second_signal_exits_130_at_once_with_no_summary_and_leaves_the_record
         "the record is left for the next run to mark interrupted: {record}"
     );
     Ok(())
+}
+
+/// Reads `pipe` to its end on a task of its own, so a full pipe never holds up the process writing to it.
+fn read_to_end(
+    mut pipe: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+) -> tokio::task::JoinHandle<std::io::Result<Vec<u8>>> {
+    use tokio::io::AsyncReadExt as _;
+    tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        pipe.read_to_end(&mut bytes).await?;
+        Ok(bytes)
+    })
 }
 
 /// Opens the write end of the named pipe `fifo` without waiting, which succeeds only once a reader has it open.

@@ -1,7 +1,8 @@
 //! The `Link integrity` doctor check: every link in the vault's notes resolves to exactly one file. It asks the link
 //! graph the same question `query_graph`'s `unresolved` operation does, so the two always agree: the graph is brought
 //! up to date with the vault first, links resolve by the one Obsidian rule against every file, and notes in the
-//! folders `[vault.links] exclude` names are not checked as link sources. Never auto-fixable: giving an ambiguous link
+//! folders `[vault.links] exclude` names are not checked as link sources, nor links whose target lies in the folders
+//! `[vault.links] ignore_targets` names, which are counted apart. Never auto-fixable: giving an ambiguous link
 //! a path, and correcting or removing a broken one, is the author's decision.
 
 use std::collections::BTreeSet;
@@ -59,11 +60,19 @@ pub(crate) fn link_integrity_check(
     };
     match service.link_integrity() {
         Ok(report) if report.unresolved.is_empty() => {
-            DoctorCheck::pass(kind, format!("{} links checked", report.checked))
+            let mut message = format!("{} links checked", report.checked);
+            if report.ignored > 0 {
+                let _ = write!(
+                    message,
+                    ", and {} links into the folders [vault.links] ignore_targets names not checked",
+                    report.ignored
+                );
+            }
+            DoctorCheck::pass(kind, message)
         }
         Ok(report) => DoctorCheck::fail(
             kind,
-            describe(&report.unresolved),
+            describe(&report.unresolved, report.ignored),
             "List every broken link with query_graph operation \"unresolved\" (it pages through the whole list), \
              give each ambiguous link a path that names one file, correct or remove each broken one, and rewrite \
              any note whose links cannot be read, then rerun the doctor. Notes in the folders [vault.links] exclude \
@@ -73,8 +82,9 @@ pub(crate) fn link_integrity_check(
     }
 }
 
-/// The failure message: the counts, then the first links listed as `source:line -> target (kind)`.
-fn describe(unresolved: &[UnresolvedLink]) -> String {
+/// The failure message: the counts, then the first links listed as `source:line -> target (kind)`, then how many links
+/// into the folders `[vault.links] ignore_targets` names were left unchecked, when any were.
+fn describe(unresolved: &[UnresolvedLink], ignored: usize) -> String {
     let count = |wanted: UnresolvedKind| unresolved.iter().filter(|link| link.kind == wanted).count();
     let notes: BTreeSet<&str> = unresolved.iter().map(|link| link.source.as_str()).collect();
     let mut message = format!(
@@ -88,6 +98,12 @@ fn describe(unresolved: &[UnresolvedLink]) -> String {
     message.push_str(&listed.join("; "));
     if unresolved.len() > MAX_REPORTED {
         let _ = write!(message, ", and {} more", unresolved.len() - MAX_REPORTED);
+    }
+    if ignored > 0 {
+        let _ = write!(
+            message,
+            ". {ignored} link(s) into the folders [vault.links] ignore_targets names were not checked."
+        );
     }
     message
 }

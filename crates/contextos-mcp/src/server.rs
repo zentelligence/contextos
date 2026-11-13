@@ -500,6 +500,7 @@ pub(crate) fn open_vault_search(
         root: root.path().to_path_buf(),
         excludes: config.search.exclude.clone(),
         link_excludes: config.links.exclude.clone(),
+        link_ignore_targets: config.links.ignore_targets.clone(),
         hidden: config.hidden.clone(),
         state_directory: state_directory.clone(),
         text_enabled: config.search.text,

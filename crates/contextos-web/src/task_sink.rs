@@ -134,8 +134,7 @@ impl TaskSink for McpTaskSink<'_> {
                 "definition".to_owned(),
                 serde_json::json!({
                     "filters": format!("{TASK_NOTES_FILTER} && origin.contains(\"{}\")", escaped(prefix)),
-                    "properties": { "origin": {}, "task_type": {}, "state": {} },
-                    "views": [{ "type": "table", "name": "rows", "order": ["origin", "task_type", "state"] }],
+                    "order": ["origin", "task_type", "state"],
                 }),
             );
             let result = self

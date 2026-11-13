@@ -70,10 +70,17 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-features --no-fail-fast
 
-      # The test executables have run and the release build below needs their room.
+      # The test executables have run and the release build below needs their room. Cargo keeps them in
+      # target/debug/deps, or, from Rust 1.100, beside their build in target/debug/build/<package>/<hash>/out, so both
+      # are cleared and either may be missing. Build scripts are kept.
       - name: remove the test executables
         if: matrix.os == 'ubuntu-latest'
-        run: find target/debug/deps -maxdepth 1 -type f -executable ! -name '*.so' -delete
+        run: |
+          for dir in target/debug/deps target/debug/build; do
+            if [ -d "$dir" ]; then
+              find "$dir" -type f -executable ! -name '*.so' ! -name 'build-script-*' -delete
+            fi
+          done
 
       # The note page's latency budget is the shipped product's, so it is measured in a release build (`just performance`),
       # and only here: shared macOS and Windows runners are too noisy for a wall-clock budget.

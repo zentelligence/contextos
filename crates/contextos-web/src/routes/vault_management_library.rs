@@ -358,8 +358,7 @@ async fn folder_descriptions(
         "definition".to_owned(),
         json!({
             "filters": filter,
-            "properties": {"file.name": {}, "description": {}},
-            "views": [{"type": "table", "name": "rows", "order": ["file.name", "description"]}],
+            "order": ["file.name", "description"],
         }),
     );
     let Ok(result) = client.call_tool("base_query".to_owned(), args).await else {

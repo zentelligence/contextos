@@ -11409,8 +11409,8 @@ THE SOFTWARE.
 
 Used by:
 
-- libsqlite3-sys 0.38.2
-- rusqlite 0.40.1
+- libsqlite3-sys 0.40.0
+- rusqlite 0.42.0
 
 ```text
 Copyright (c) 2014 The rusqlite developers

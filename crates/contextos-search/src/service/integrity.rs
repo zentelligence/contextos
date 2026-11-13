@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use contextos_core::VaultPath;
 use contextos_obsidian::LinkForm;
 
-use crate::{GraphNode, GraphNodeKind, SearchError};
+use crate::{GraphEdge, GraphNode, GraphNodeKind, SearchError};
 
 use super::VaultSearchService;
 use super::scan::is_excluded;
@@ -48,6 +48,9 @@ pub struct UnresolvedLink {
 pub struct LinkIntegrity {
     /// How many links were checked: every link in a checked note except template placeholders, resolved or not.
     pub checked: usize,
+    /// How many links were left unchecked because their target lies under a folder whose files are not checked as
+    /// link targets; they are neither counted in `checked` nor listed.
+    pub ignored: usize,
     /// The links that do not resolve and the notes that cannot be read, sorted by source then line.
     pub unresolved: Vec<UnresolvedLink>,
 }
@@ -119,6 +122,22 @@ impl VaultSearchService {
             && !is_excluded(&self.excludes, path)
     }
 
+    /// Whether the link `edge`, reaching a node of `kind`, has a target under a folder whose files are not checked as link
+    /// targets: the file it resolves to, or, when it resolves to no file, the path it names. An ambiguous link is never
+    /// ignored, since which file it reaches is the question its report asks.
+    fn is_ignored_target(&self, edge: &GraphEdge, kind: GraphNodeKind) -> bool {
+        if self.link_ignore_targets.is_empty() {
+            return false;
+        }
+        match kind {
+            GraphNodeKind::Note | GraphNodeKind::File => is_excluded(&self.link_ignore_targets, &edge.to),
+            GraphNodeKind::NotFound => {
+                named_path(edge).is_some_and(|path| is_excluded(&self.link_ignore_targets, &path))
+            }
+            GraphNodeKind::Ambiguous => false,
+        }
+    }
+
     /// Every link that does not resolve, sorted by source then line, from the notes in the folder `scope` (the whole
     /// vault when `None` or the vault root; the caller has checked that it is a folder of this vault) outside the link-excluded folders. A note whose links cannot be read is listed once.
     ///
@@ -175,10 +194,15 @@ impl VaultSearchService {
             if source.kind != GraphNodeKind::Note || !self.is_checked_source(&edge.from, scope) {
                 continue;
             }
-            report.checked = report.checked.saturating_add(1);
             let Some(reached) = nodes.get(edge.to.as_str()) else {
+                report.checked = report.checked.saturating_add(1);
                 continue;
             };
+            if self.is_ignored_target(edge, reached.kind) {
+                report.ignored = report.ignored.saturating_add(1);
+                continue;
+            }
+            report.checked = report.checked.saturating_add(1);
             let kind = match reached.kind {
                 GraphNodeKind::NotFound => UnresolvedKind::NotFound,
                 GraphNodeKind::Ambiguous => UnresolvedKind::Ambiguous,
@@ -238,6 +262,29 @@ impl VaultSearchService {
         notes.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(notes)
     }
+}
+
+/// The vault path a link names, read from the vault root, or, for a Markdown link with a relative path, from its note's
+/// folder; `None` when it climbs above the vault root. `.` segments and empty segments are dropped and `..` climbs.
+fn named_path(edge: &GraphEdge) -> Option<String> {
+    let relative_to_note =
+        matches!(edge.form, LinkForm::Markdown | LinkForm::MarkdownEmbed) && !edge.target.starts_with('/');
+    let folder = if relative_to_note {
+        edge.from.rsplit_once('/').map_or("", |(folder, _)| folder)
+    } else {
+        ""
+    };
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in folder.split('/').chain(edge.target.split('/')) {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            name => segments.push(name),
+        }
+    }
+    Some(segments.join("/"))
 }
 
 /// Whether `path` is a folder's `index.md`.
