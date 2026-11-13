@@ -850,7 +850,14 @@ pub(crate) struct BaseQueryToolInput {
     /// `{name}://{relative-path}`. Exactly one of `path` or
     /// `definition` is required.
     pub(crate) path: Option<String>,
+    /// An inline query, given instead of `path`: one view, with its keys at the top level. `filters` selects the
+    /// notes, `order` lists the columns (or `properties` names them when `order` is omitted), `sort` and `limit`
+    /// shape the rows, and `formulas` defines any `formula.*` column. It is not the shape of a `.base` file: a
+    /// `views` list, or any other key, is refused with `query/base-query-malformed` rather than ignored. For
+    /// example `{"filters": "file.inFolder(\"memory/events\")", "order": ["file.name", "kind"]}`.
     pub(crate) definition: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The view of the `.base` file at `path` to run; omit it to run the first view. Requires `path`: an inline
+    /// `definition` is itself one view, so `view` alongside it is refused with `io/invalid-argument`.
     pub(crate) view: Option<String>,
     /// The vault to scan when using `definition` (ignored for `path`,
     /// which already names a vault): `{name}://.` to select a specific

@@ -184,8 +184,7 @@ async fn task_stages(client: &McpClient, vault: &str) -> Option<Vec<TaskStage>> 
         "definition".to_owned(),
         json!({
             "filters": TASK_NOTES_FILTER,
-            "properties": { "state": {}, "task_type": {} },
-            "views": [{ "type": "table", "name": "rows", "order": ["state", "task_type"] }],
+            "order": ["state", "task_type"],
         }),
     );
     let result = match client.call_tool("base_query".to_owned(), args).await {

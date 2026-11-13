@@ -549,6 +549,61 @@ fn query_definition_from_inline_reads_the_flat_shape_without_a_views_wrapper() -
 }
 
 #[test]
+fn an_inline_definition_holding_views_is_refused_as_the_file_shape_rather_than_dropped()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The shape a `.base` file has: the view's `order` sits inside `views`, which an inline definition never reads.
+    let definition = frontmatter(json!({
+        "filters": "status == \"active\"",
+        "views": [{ "type": "table", "name": "All", "order": ["file.name"] }]
+    }));
+
+    let Err(error) = QueryDefinition::from_inline(&definition) else {
+        return Err("an inline definition holding views was accepted".into());
+    };
+    assert!(matches!(error, BaseQueryError::InlineViews), "{error:?}");
+    assert_eq!(error.code(), "query/base-query-malformed");
+    assert!(error.remediation().contains("top level"), "{}", error.remediation());
+    assert!(error.remediation().contains("path and view"), "{}", error.remediation());
+    Ok(())
+}
+
+#[test]
+fn an_inline_definition_key_outside_the_one_view_shape_is_refused_naming_it() -> Result<(), Box<dyn std::error::Error>>
+{
+    for key in ["name", "type", "groupBy", "Order", "filter"] {
+        let mut definition = frontmatter(json!({ "order": ["file.name"] }));
+        definition.insert(key.to_owned(), json!("x"));
+
+        let Err(error) = QueryDefinition::from_inline(&definition) else {
+            return Err(format!("an inline definition holding {key} was accepted").into());
+        };
+        assert!(
+            matches!(&error, BaseQueryError::UnknownInlineKey { key: named } if named == key),
+            "{key}: {error:?}"
+        );
+        assert_eq!(error.code(), "query/base-query-malformed");
+        assert!(error.to_string().contains(key), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
+fn every_key_of_the_one_view_shape_is_accepted_inline() -> Result<(), Box<dyn std::error::Error>> {
+    let definition = frontmatter(json!({
+        "filters": "status == \"active\"",
+        "order": ["file.name", "formula.label"],
+        "sort": [{ "property": "file.name", "direction": "ASC" }],
+        "limit": 3,
+        "properties": { "status": {} },
+        "formulas": { "label": "status" }
+    }));
+
+    let resolved = QueryDefinition::from_inline(&definition)?;
+    assert_eq!(resolved.columns, ["file.name", "formula.label"]);
+    Ok(())
+}
+
+#[test]
 fn compare_values_orders_missing_then_by_type_then_by_value() {
     assert_eq!(compare_values(None, Some(&json!("a"))), std::cmp::Ordering::Less);
     assert_eq!(

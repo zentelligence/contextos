@@ -305,18 +305,10 @@ pub async fn list_records(
         "definition".to_owned(),
         json!({
             "filters": format!("file.inFolder({folder}) && file.ext == \"md\" && file.basename != \"index\""),
-            "properties": {
-                "file.path": {}, "id": {}, "type": {}, "title": {}, "status": {}, "updated": {},
-                "date": {}, "created": {}, "superseded_by": {}, "decision": {},
-            },
-            "views": [{
-                "type": "table",
-                "name": "records",
-                "order": [
-                    "file.path", "id", "type", "title", "status", "updated", "date", "created", "superseded_by",
-                    "decision"
-                ],
-            }],
+            "order": [
+                "file.path", "id", "type", "title", "status", "updated", "date", "created", "superseded_by",
+                "decision"
+            ],
         }),
     );
     let result = client.call_tool("base_query".to_owned(), args).await?;

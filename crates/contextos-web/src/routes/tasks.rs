@@ -224,25 +224,12 @@ pub(super) async fn fetch_task_rows(client: &McpClient, vault_name: &str) -> Res
         "definition".to_owned(),
         json!({
             "filters": crate::tasks_config::TASK_NOTES_FILTER,
-            // `base_query` resolves an inline definition's display columns
-            // from `properties`, not from a view's own `order` alone (an
-            // `order` entry with no matching `properties` key is rejected,
-            // `query/base-query-no-columns`, confirmed against a real
-            // vault): every column this screen reads must be declared here,
-            // even with no `displayName` of its own.
-            "properties": {
-                "file.path": {}, "id": {}, "title": {}, "state": {}, "task_type": {},
-                "entity": {}, "priority": {}, "due": {}, "assignee": {}, "parent": {}, "completed": {},
-                "updated": {},
-            },
-            "views": [{
-                "type": "table",
-                "name": "rows",
-                "order": [
-                    "file.path", "id", "title", "state", "task_type", "entity",
-                    "priority", "due", "assignee", "parent", "completed", "updated"
-                ],
-            }],
+            // An inline definition is one view with its keys at the top level: `order` names every column this
+            // screen reads. A `views` list is the shape of a `.base` file, which an inline definition refuses.
+            "order": [
+                "file.path", "id", "title", "state", "task_type", "entity",
+                "priority", "due", "assignee", "parent", "completed", "updated"
+            ],
         }),
     );
     let result = client.call_tool("base_query".to_owned(), args).await?;

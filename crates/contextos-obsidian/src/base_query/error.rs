@@ -11,6 +11,14 @@ pub enum BaseQueryError {
     NoColumns { view: String },
     #[error("Base query definition is invalid at {path}: {violation}")]
     MalformedDefinition { path: String, violation: String },
+    /// An inline definition given the shape of a `.base` file, whose views it would never read.
+    #[error(
+        "Base query inline definition holds views, but an inline definition is one view: its filters, order, sort, limit, properties, and formulas sit at the top level"
+    )]
+    InlineViews,
+    /// An inline definition holding a key outside the one-view shape, which would otherwise be ignored.
+    #[error("Base query inline definition holds {key:?}, which an inline definition does not accept")]
+    UnknownInlineKey { key: String },
     #[error("Base query filter at {path} is not supported: {expression}")]
     UnsupportedFilterExpression { path: String, expression: String },
     #[error(
@@ -28,7 +36,9 @@ impl BaseQueryError {
         match self {
             Self::ViewNotFound { .. } => "query/base-view-not-found",
             Self::NoColumns { .. } => "query/base-query-no-columns",
-            Self::MalformedDefinition { .. } => "query/base-query-malformed",
+            Self::MalformedDefinition { .. } | Self::InlineViews | Self::UnknownInlineKey { .. } => {
+                "query/base-query-malformed"
+            }
             Self::UnsupportedFilterExpression { .. } => "query/base-query-unsupported-filter",
             Self::FormulaReference { .. } => "query/base-query-formula-reference",
             Self::UnsupportedFileProperty { .. } => "query/base-query-unsupported-file-property",
@@ -44,6 +54,12 @@ impl BaseQueryError {
                 "Add an order list to the view or definition, or properties to the base, before querying it."
             }
             Self::MalformedDefinition { .. } => "Correct the reported definition path and retry.",
+            Self::InlineViews => {
+                "Give filters, order, sort, limit, properties, and formulas at the top level of an inline definition, or pass path and view to run a view of a .base file."
+            }
+            Self::UnknownInlineKey { .. } => {
+                "An inline definition accepts only filters, order, sort, limit, properties, and formulas; remove the reported key."
+            }
             Self::UnsupportedFilterExpression { .. } => {
                 "Rewrite the filter using ==, !=, .contains(), .containsAny(...), .containsAll(...), file.hasTag(), file.inFolder(), &&, ||, !, or (...) grouping, or remove it."
             }

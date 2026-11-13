@@ -538,7 +538,7 @@ impl ContextOsServer {
 
     #[tool(
         name = "base_query",
-        description = "Execute a Base view's filter tree against the vault and return matching rows as a Markdown table (default), JSON, or CSV. Evaluates a documented subset of the Bases filter grammar (==, !=, .contains(), .containsAny(...), .containsAll(...), file.hasTag(), file.inFolder(), and/or/not, and every documented file.* property: ext/name/basename/path/folder/size/ctime/mtime/tags/links/embeds/backlinks/properties). A display column naming a formula evaluates it only when the formula body is a bare property reference (shown as that property's own value) or file.asLink(display?) (a link to the row's own file, display defaulting to its basename); every other formula (arithmetic, if(), date functions, etc.) is shown as an unevaluated marker, and a formula.* reference in a filter or sort key is always rejected. Prefer file.inFolder(\"...\") over file.folder == \"...\" || file.folder.contains(\".../\") to scope a query to a directory and its subdirectories: file.inFolder() also lets the scan itself narrow to that directory, where the .contains() form cannot. A filter outside the grammar is refused before any note is read. Pass ids (with path) instead of a view to fetch records by id from the base's scope in one call: each comes back with its path, frontmatter, and a content_hash usable as a later write's expected_hash, so a task can be claimed by looking it up and then updating it conditionally.",
+        description = "Execute a Base view's filter tree against the vault and return matching rows as a Markdown table (default), JSON, or CSV. Evaluates a documented subset of the Bases filter grammar (==, !=, .contains(), .containsAny(...), .containsAll(...), file.hasTag(), file.inFolder(), and/or/not, and every documented file.* property: ext/name/basename/path/folder/size/ctime/mtime/tags/links/embeds/backlinks/properties). A display column naming a formula evaluates it only when the formula body is a bare property reference (shown as that property's own value) or file.asLink(display?) (a link to the row's own file, display defaulting to its basename); every other formula (arithmetic, if(), date functions, etc.) is shown as an unevaluated marker, and a formula.* reference in a filter or sort key is always rejected. Prefer file.inFolder(\"...\") over file.folder == \"...\" || file.folder.contains(\".../\") to scope a query to a directory and its subdirectories: file.inFolder() also lets the scan itself narrow to that directory, where the .contains() form cannot. A filter outside the grammar is refused before any note is read. An inline definition is one view with its keys at the top level (filters, order, sort, limit, properties, formulas), not the views list of a .base file; any other key, and view alongside it, is refused. Pass ids (with path) instead of a view to fetch records by id from the base's scope in one call: each comes back with its path, frontmatter, and a content_hash usable as a later write's expected_hash, so a task can be claimed by looking it up and then updating it conditionally.",
         output_schema = fallible_output_schema_for::<BaseQueryToolResult>()
     )]
     async fn query_base(
@@ -578,6 +578,11 @@ impl ContextOsServer {
                     (path.root_id(), definition, diagnostics)
                 }
                 (None, Some(inline)) => {
+                    if input.view.is_some() {
+                        return Err(ToolError::Invalid(
+                            "base_query's view names a view of a .base file, so it requires path; an inline definition is itself one view",
+                        ));
+                    }
                     let definition = QueryDefinition::from_inline(inline)?;
                     let raw = input.vault.clone().unwrap_or_else(|| ".".to_owned());
                     let vault_path = VaultPath::try_from(VaultPathInput {
