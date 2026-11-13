@@ -79,6 +79,7 @@ tracing-subscriber.workspace = true
 updater-engine = { workspace = true }
 dunce.workspace = true
 git2.workspace = true
+jsonschema.workspace = true
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
 tempfile.workspace = true
 tower.workspace = true

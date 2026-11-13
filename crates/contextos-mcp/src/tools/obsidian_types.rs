@@ -202,12 +202,16 @@ impl BaseCreateToolResult {
 }
 
 /// `base_record_create`'s result: the new record note's own outcome, the
-/// key assigned to it (absent for a `FILEPATH`-keyed base), and the
-/// sidecar's own path plus any warnings raised advancing it.
+/// key assigned to it, and the sidecar's own path plus any warnings raised
+/// advancing it. `key` is left out, never `null`, when no key is assigned (a
+/// `FILEPATH`-keyed base, or an event of a kind with no key field): the
+/// advertised output schema types it as a string, and a client that checks
+/// results against that schema refuses a `null`.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BaseRecordCreateToolResult {
     path: String,
     content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     key: Option<String>,
     sidecar_path: String,
     warnings: Vec<String>,

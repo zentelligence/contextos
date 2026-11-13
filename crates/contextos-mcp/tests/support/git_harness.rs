@@ -158,7 +158,29 @@ pub async fn call_with(
     let result = client
         .call_tool(CallToolRequestParams::new(name).with_arguments(arguments))
         .await;
+    let tools = client.list_all_tools().await;
     client.close().await?;
     server_handle.await??;
-    Ok(result?)
+    let result = result?;
+    conforms_to_output_schema(name, &result, &tools?)?;
+    Ok(result)
+}
+
+/// Checks a structured result against the output schema the tool advertises, as a client such as Claude Code does
+/// before it hands the result on: a result that does not match is refused there, though the call succeeded and its
+/// write happened, so a test that read the result without this check would pass while every real client fails.
+fn conforms_to_output_schema(name: &str, result: &CallToolResult, tools: &[rmcp::model::Tool]) -> Result<(), BoxError> {
+    let (Some(content), Some(schema)) = (
+        result.structured_content.as_ref(),
+        tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .and_then(|tool| tool.output_schema.as_ref()),
+    ) else {
+        return Ok(());
+    };
+    let schema = Value::Object((**schema).clone());
+    jsonschema::validate(&schema, content).map_err(|error| {
+        format!("{name}'s structured result does not match its advertised output schema: {error}: {content}").into()
+    })
 }

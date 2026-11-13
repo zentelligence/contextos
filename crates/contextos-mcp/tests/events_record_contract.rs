@@ -101,7 +101,11 @@ async fn a_kind_with_no_key_field_returns_no_key_and_does_not_move_the_counter()
     )
     .await?;
 
-    assert!(result.get("key").is_none_or(Value::is_null), "{result}");
+    assert_eq!(
+        result.get("key"),
+        None,
+        "a kind with no key field leaves `key` out: {result}"
+    );
     let path = result.get("path").and_then(Value::as_str).ok_or("no path")?;
     let text = std::fs::read_to_string(harness.vault.path().join(path))?;
     assert!(

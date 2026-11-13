@@ -857,6 +857,7 @@ dependencies = [
  "globset",
  "hf-hub",
  "inquire",
+ "jsonschema",
  "rmcp",
  "rmcp-macros",
  "serde",

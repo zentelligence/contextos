@@ -128,7 +128,11 @@ async fn creates_a_record_with_no_id_field_for_a_filepath_keyed_base()
     .await?;
     assert_eq!(result.is_error, Some(false), "{result:?}");
     let body = structured(&result)?;
-    assert_eq!(body.get("key"), Some(&serde_json::Value::Null));
+    assert_eq!(
+        body.get("key"),
+        None,
+        "a FILEPATH-keyed base assigns no key, so `key` is left out"
+    );
     assert_eq!(body.get("path"), Some(&json!("notes/my-note.md")));
 
     let note = std::fs::read_to_string(vault.path().join("notes/my-note.md"))?;
@@ -330,7 +334,11 @@ async fn a_filepath_keyed_base_accepts_a_caller_supplied_id() -> Result<(), Box<
     let body = structured(&result)?;
     // `key` still reflects the sidecar's own scheme (none, for `FILEPATH`),
     // distinct from whatever id the caller chose to put in frontmatter.
-    assert_eq!(body.get("key"), Some(&serde_json::Value::Null));
+    assert_eq!(
+        body.get("key"),
+        None,
+        "a FILEPATH-keyed base assigns no key, so `key` is left out"
+    );
 
     let note = std::fs::read_to_string(vault.path().join("notes/my-note.md"))?;
     assert!(note.contains("id: CUSTOM-1"));
