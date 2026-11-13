@@ -52,6 +52,7 @@ impl Vault {
             root: self.dir.path().to_path_buf(),
             excludes: excludes.iter().map(|folder| (*folder).to_owned()).collect(),
             link_excludes: link_excludes.iter().map(|folder| (*folder).to_owned()).collect(),
+            link_ignore_targets: Vec::new(),
             hidden: Vec::new(),
             state_directory: self.dir.path().join(".contextos"),
             text_enabled: false,

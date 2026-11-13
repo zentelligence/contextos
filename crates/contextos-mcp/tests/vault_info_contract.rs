@@ -133,6 +133,29 @@ async fn vault_info_reports_a_configured_link_exclusion_list_in_place_of_the_def
 }
 
 #[tokio::test]
+async fn vault_info_reports_the_folders_not_checked_as_link_targets_empty_by_default()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    let defaults = ContextOsServer::try_from(support::scoped_config(vec![vault.path().to_path_buf()])?)?;
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].links.ignore_targets = vec!["inbox".to_owned(), "notes".to_owned()];
+    let configured = ContextOsServer::try_from(config)?;
+
+    for (server, expected) in [(defaults, json!([])), (configured, json!(["inbox", "notes"]))] {
+        let result = call_tool(server, "vault_info", Map::new()).await?;
+        let content = result
+            .structured_content
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("vault_info omitted structured content"))?;
+        assert_eq!(
+            content.pointer("/vaults/0/config_summary/links/ignore_targets"),
+            Some(&expected)
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn vault_info_omits_the_embedding_key_when_none_is_written_in_the_file()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let vault = tempfile::Builder::new().prefix("vault").tempdir()?;

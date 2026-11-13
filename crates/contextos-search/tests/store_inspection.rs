@@ -34,6 +34,7 @@ fn build_every_store(vault: &tempfile::TempDir) -> TestResult {
         root: vault.path().to_path_buf(),
         excludes: vec![".contextos".to_owned()],
         link_excludes: Vec::new(),
+        link_ignore_targets: Vec::new(),
         hidden: Vec::new(),
         state_directory: vault.path().join(".contextos"),
         text_enabled: true,

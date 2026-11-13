@@ -132,6 +132,9 @@ impl Config {
             if let Some(entry) = vault.links.exclude.iter().find(|entry| !is_plain_folder(entry)) {
                 return Err(ConfigError::InvalidLinkExclude { entry: entry.clone() });
             }
+            if let Some(entry) = vault.links.ignore_targets.iter().find(|entry| !is_plain_folder(entry)) {
+                return Err(ConfigError::InvalidLinkIgnoreTarget { entry: entry.clone() });
+            }
             if !vault.search.embedding.api_key.is_empty() && !vault.search.embedding.api_key_env.is_empty() {
                 return Err(ConfigError::EmbeddingKeyConflict {
                     vault: vault.path.clone(),
@@ -483,7 +486,7 @@ impl From<PathBuf> for VaultConfig {
     }
 }
 
-/// `[vault.links]`: which notes are checked as link sources.
+/// `[vault.links]`: which notes are checked as link sources, and which files as link targets.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LinksConfig {
@@ -493,12 +496,20 @@ pub struct LinksConfig {
     /// graph. Links into these folders still resolve. Each entry is a plain vault-relative folder.
     #[serde(default = "default_link_excludes")]
     pub exclude: Vec<String>,
+    /// Folders whose files are not checked as link targets by `doctor`'s `link_integrity` check and by `query_graph`'s
+    /// `unresolved` operation: a link is ignored when the file it resolves to lies under one, or, when it resolves to
+    /// no file, when the path it names does. Ambiguous links are still reported, and link resolution, the link graph,
+    /// `links_read`, and link expansion are unchanged. Empty by default, with nothing added. Each entry is a plain
+    /// vault-relative folder.
+    #[serde(default)]
+    pub ignore_targets: Vec<String>,
 }
 
 impl Default for LinksConfig {
     fn default() -> Self {
         Self {
             exclude: default_link_excludes(),
+            ignore_targets: Vec::new(),
         }
     }
 }
@@ -835,6 +846,11 @@ pub enum ConfigError {
          such as \"templates\" or \"memory/events\", with no leading or trailing slash, backslash, drive, `.` or `..`"
     )]
     InvalidLinkExclude { entry: String },
+    #[error(
+        "[vault.links] ignore_targets entry {entry:?} is not a plain vault-relative folder; write it as a forward-slash \
+         path such as \"inbox\" or \"memory/scratch\", with no leading or trailing slash, backslash, drive, `.` or `..`"
+    )]
+    InvalidLinkIgnoreTarget { entry: String },
     #[error("vault path is invalid: {path}: {source}. {}", .source.remediation())]
     VaultPath {
         path: PathBuf,
@@ -953,6 +969,7 @@ impl ConfigError {
             Self::LogRotationWithoutFile | Self::InvalidLogRotation { .. } => "config/invalid-log-rotation",
             Self::InvalidRelativePath { .. } => "config/invalid-relative-path",
             Self::InvalidLinkExclude { .. } => "config/invalid-link-exclude",
+            Self::InvalidLinkIgnoreTarget { .. } => "config/invalid-link-ignore-target",
             Self::EmbeddingKeyConflict { .. } | Self::HttpTokenConflict => "config/conflicting-secret",
             Self::HttpTokenVariableUnset { .. } => "config/missing-secret-variable",
             Self::VaultPath { .. } | Self::VaultSet { .. } => "config/invalid-vault",

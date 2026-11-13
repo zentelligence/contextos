@@ -165,3 +165,52 @@ async fn a_vault_with_the_link_graph_off_passes_saying_it_was_not_checked() -> T
     assert!(message(&check).starts_with("not checked"), "{check:?}");
     Ok(())
 }
+
+fn server_ignoring_targets_under(vault: &tempfile::TempDir, folders: &[&str]) -> Result<ContextOsServer, TestError> {
+    let mut config = support::scoped_config(vec![vault.path().to_path_buf()])?;
+    config.vaults[0].git.enabled = false;
+    config.vaults[0].index_md.enabled = false;
+    config.vaults[0].links.ignore_targets = folders.iter().map(|folder| (*folder).to_owned()).collect();
+    Ok(ContextOsServer::try_from(config)?)
+}
+
+#[tokio::test]
+async fn links_into_ignored_target_folders_pass_and_are_counted_apart_from_the_links_checked() -> TestResult {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::create_dir_all(vault.path().join("inbox"))?;
+    std::fs::write(vault.path().join("a.md"), "[[b]]\n[[inbox/gone]]\n[[kept]]\n")?;
+    std::fs::write(vault.path().join("b.md"), "x\n")?;
+    std::fs::write(vault.path().join("inbox/kept.md"), "x\n")?;
+
+    let result = call_tool(server_ignoring_targets_under(&vault, &["inbox"])?, "doctor", json!({})).await?;
+
+    let check = link_check(&result)?;
+    assert_eq!(check.get("status"), Some(&json!("pass")), "{check:?}");
+    assert_eq!(
+        message(&check),
+        "1 links checked, and 2 links into the folders [vault.links] ignore_targets names not checked"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failing_check_still_says_how_many_links_into_ignored_target_folders_it_left_unchecked() -> TestResult {
+    let vault = tempfile::Builder::new().prefix("vault").tempdir()?;
+    std::fs::write(vault.path().join("a.md"), "[[gone]]\n[[inbox/gone]]\n")?;
+
+    let result = call_tool(server_ignoring_targets_under(&vault, &["inbox"])?, "doctor", json!({})).await?;
+
+    let check = link_check(&result)?;
+    assert_eq!(check.get("status"), Some(&json!("fail")), "{check:?}");
+    assert!(
+        message(&check).starts_with("1 not-found link(s), 0 ambiguous link(s)"),
+        "{}",
+        message(&check)
+    );
+    assert!(
+        message(&check).ends_with(" 1 link(s) into the folders [vault.links] ignore_targets names were not checked."),
+        "{}",
+        message(&check)
+    );
+    Ok(())
+}

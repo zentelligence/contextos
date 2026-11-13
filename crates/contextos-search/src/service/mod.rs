@@ -66,6 +66,11 @@ pub struct VaultSearchConfig {
     /// reports. Links into them still resolve. The search `excludes` are always added to these, since a note outside
     /// the search corpus is not a graph node.
     pub link_excludes: Vec<String>,
+    /// Forward-slash relative folders whose files are not checked as link targets by the unresolved report and the
+    /// link integrity count: a link is ignored when the file it resolves to lies under one, or, when it resolves to no
+    /// file, when the path it names does. Ambiguous links are reported whatever their candidates, and the link graph
+    /// itself is unchanged. Nothing is added to these.
+    pub link_ignore_targets: Vec<String>,
     /// The vault's `hidden` patterns, which every tool that lists the vault honours. A hidden file is no part of the
     /// link graph, so a link never reaches a file those tools hide. The folders the server keeps for itself (`.git`,
     /// `.contextos`) are always hidden, whatever the patterns say.
@@ -110,6 +115,7 @@ pub struct VaultSearchService {
     root: PathBuf,
     excludes: Vec<String>,
     link_excludes: Vec<String>,
+    link_ignore_targets: Vec<String>,
     hidden: Arc<HiddenPaths>,
     state_directory: PathBuf,
     text: Option<Slot<TextStore>>,
@@ -210,6 +216,7 @@ impl TryFrom<VaultSearchConfig> for VaultSearchService {
             root: value.root,
             excludes: value.excludes,
             link_excludes: value.link_excludes,
+            link_ignore_targets: value.link_ignore_targets,
             hidden,
             state_directory: value.state_directory,
             text,

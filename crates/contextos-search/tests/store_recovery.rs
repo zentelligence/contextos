@@ -51,6 +51,7 @@ fn open(vault: &tempfile::TempDir, stores: &Stores) -> Result<VaultSearchService
         root: vault.path().to_path_buf(),
         excludes: vec![".contextos".to_owned()],
         link_excludes: Vec::new(),
+        link_ignore_targets: Vec::new(),
         hidden: Vec::new(),
         state_directory: state(vault),
         text_enabled: stores.text,

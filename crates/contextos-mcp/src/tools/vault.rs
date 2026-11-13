@@ -475,6 +475,7 @@ impl From<&VaultConfig> for VaultConfigSummaryToolResult {
             },
             links: LinksConfigSummaryToolResult {
                 exclude: value.links.exclude.clone(),
+                ignore_targets: value.links.ignore_targets.clone(),
             },
             search: SearchConfigSummaryToolResult {
                 text: managed && value.search.text,
@@ -495,10 +496,12 @@ struct LimitsConfigSummaryToolResult {
     max_batch_files: usize,
 }
 
-/// `[vault.links]`: the folders whose notes are not checked as link sources.
+/// `[vault.links]`: the folders whose notes are not checked as link sources, and those whose files are not checked as
+/// link targets.
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 struct LinksConfigSummaryToolResult {
     exclude: Vec<String>,
+    ignore_targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]

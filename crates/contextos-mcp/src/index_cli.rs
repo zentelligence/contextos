@@ -64,6 +64,7 @@ impl TryFrom<&Config> for IndexReport {
                     root: root.path().to_path_buf(),
                     excludes: vault.search.exclude.clone(),
                     link_excludes: vault.links.exclude.clone(),
+                    link_ignore_targets: vault.links.ignore_targets.clone(),
                     hidden: vault.hidden.clone(),
                     state_directory,
                     text_enabled: vault.search.text,

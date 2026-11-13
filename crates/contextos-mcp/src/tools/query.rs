@@ -105,7 +105,7 @@ impl ContextOsServer {
 
     #[tool(
         name = "query_graph",
-        description = "Traverse the link graph (wikilinks and Markdown links) or check its integrity. Traversal: neighbours, backlinks, shortest path, or orphans (notes with no links in or out). Integrity, complete and paged with offset and limit (default 200, at most 1000) and limited to a folder by path: unresolved lists every link that finds no file (not-found), finds several (ambiguous, with candidates), or sits in a note whose links cannot be read (unreadable), each with its source, line, text, target, and form; unlinked lists the notes no other note links to. Both skip the folders `[vault.links] exclude` names as link sources, and the graph is brought up to date with outside edits before it answers",
+        description = "Traverse the link graph (wikilinks and Markdown links) or check its integrity. Traversal: neighbours, backlinks, shortest path, or orphans (notes with no links in or out). Integrity, complete and paged with offset and limit (default 200, at most 1000) and limited to a folder by path: unresolved lists every link that finds no file (not-found), finds several (ambiguous, with candidates), or sits in a note whose links cannot be read (unreadable), each with its source, line, text, target, and form; unlinked lists the notes no other note links to. Both skip the folders `[vault.links] exclude` names as link sources, unresolved also leaves out a link whose target lies in a folder `[vault.links] ignore_targets` names (an ambiguous link is still listed), and the graph is brought up to date with outside edits before it answers",
         output_schema = fallible_output_schema_for::<GraphViewToolResult>()
     )]
     async fn query_graph(

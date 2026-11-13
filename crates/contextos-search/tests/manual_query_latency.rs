@@ -103,6 +103,7 @@ fn build_service(vault: &tempfile::TempDir) -> Result<VaultSearchService, Box<dy
         root: vault.path().to_path_buf(),
         excludes: vec![],
         link_excludes: Vec::new(),
+        link_ignore_targets: Vec::new(),
         hidden: Vec::new(),
         state_directory: vault.path().join(".contextos"),
         text_enabled: true,
