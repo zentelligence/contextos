@@ -216,6 +216,9 @@ fn arbitrary_entry() -> impl Strategy<Value = LedgerEntry<TestInterface>> {
         .prop_filter_map(
             "valid name",
             |(name, (a, b, c), fill, cause, source, inputs, note, seconds)| {
+                // The pattern also draws names the name check refuses, such as `prn`, which Windows reserves for a
+                // device; those are skipped, since this property is about the ledger, not about names.
+                crate::ReleaseName::try_from(name.as_str()).ok()?;
                 let at = time::OffsetDateTime::from_unix_timestamp(seconds).ok()?;
                 Some(LedgerEntry {
                     release: release(&name, &format!("{a}.{b}.{c}"), fill),
