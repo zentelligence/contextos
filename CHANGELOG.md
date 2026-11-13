@@ -8,6 +8,27 @@ Entries summarise each change; `docs/` holds the detail of current behaviour. Th
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-13
+
+### Security
+
+- Update the bundled SQLite from 3.53.2 to 3.54.1, through `rusqlite` 0.42.0, for RUSTSEC-2026-0459.
+
+### Added
+
+- `[vault.links] ignore_targets` names folders whose files are not checked as link targets, for folders whose contents come and go, such as an inbox or an outbox. `doctor`'s `link_integrity` check and `query_graph`'s `unresolved` operation leave out a link whose file, or, when it finds no file, whose named path, lies in one of them, and `doctor` says how many links it left out. Ambiguous links are still reported, and `exclude` still skips only the notes links are written in. It is empty by default. A server older than this release refuses a configuration that sets it, so upgrade every server sharing the configuration before adding it.
+- `vault_info` reports the list as `config_summary.links.ignore_targets`.
+
+### Changed
+
+- `base_query` refuses an inline `definition` that is not one view: a `views` list, the shape of a `.base` file, and any key other than `filters`, `order`, `sort`, `limit`, `properties`, and `formulas` are refused with `query/base-query-malformed`, and `view` given with a `definition` with `io/invalid-argument`. These keys used to be ignored without a word, so a definition holding `views` was reported as having no columns. Give the view's keys at the top level, or pass `path` and `view`.
+- The `definition` and `view` parameters of `base_query` describe what each takes.
+
+### Fixed
+
+- `base_record_create` leaves `key` out of its result when it assigns none, for a `FILEPATH`-keyed base or an event kind with no key field. It returned `null`, which a client checking results against the tool's advertised schema refused, so the call looked failed although the record was written.
+- `doctor`'s projection findings name the vault whose definition an entry differs from, where they read "differs from what from vault".
+
 ## [0.23.9] - 2026-11-07
 
 ### Security
